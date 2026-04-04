@@ -8,6 +8,14 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker, selecti
 Base = declarative_base()
 
 
+def normalize_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://") :]
+    return url
+
+
 class Track(Base):
     __tablename__ = "tracks"
 
@@ -146,6 +154,7 @@ class Database:
             db_path = os.path.expanduser("~/.dj_assist/dj_assist.db")
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             database_url = f"sqlite:///{db_path}"
+        database_url = normalize_database_url(database_url)
         self.engine = create_engine(database_url, pool_pre_ping=True)
         Base.metadata.create_all(self.engine)
         self._migrate_tracks_table()

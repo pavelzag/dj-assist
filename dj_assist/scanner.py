@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from tqdm import tqdm
 
@@ -193,11 +194,13 @@ def scan_directory(
     directory: str,
     db: Database,
     skip_existing: bool = True,
+    rescan_mode: str = "smart",
     bpm_lookup: str = "auto",
     fetch_album_art: bool = False,
     verbose: bool = False,
     spotify_enabled: bool = True,
     auto_double_bpm: bool = False,
+    progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     results = {"scanned": 0, "analyzed": 0, "skipped": 0, "errors": 0}
     audio_files = []
@@ -207,25 +210,85 @@ def scan_directory(
             if Path(filename).suffix.lower() in SUPPORTED_EXTENSIONS:
                 audio_files.append(os.path.join(root, filename))
 
-    print(f"\nFound {len(audio_files)} audio files")
+    total_files = len(audio_files)
+    processed = 0
+
+    def _emit(event: dict) -> None:
+        if not progress_callback:
+            return
+        payload = {
+            "current": processed,
+            "total": total_files,
+            **event,
+        }
+        progress_callback(payload)
+
+    if progress_callback:
+        _emit({"event": "scan_start", "directory": directory})
+    else:
+        print(f"\nFound {total_files} audio files")
 
     def _step(label: str, filepath: str) -> None:
+        if verbose:
+            _emit({"event": "track_step", "path": filepath, "file": Path(filepath).name, "step": label})
         if verbose:
             tqdm.write(f"  [{label}] {Path(filepath).name}")
 
     with ThreadPoolExecutor(max_workers=1) as spotify_pool:
-        for filepath in tqdm(audio_files, desc="Scanning"):
+        iterator = audio_files if progress_callback else tqdm(audio_files, desc="Scanning")
+        for filepath in iterator:
             try:
+                _emit({"event": "track_start", "path": filepath, "file": Path(filepath).name})
                 _step("db-lookup", filepath)
                 existing = db.get_track_by_path(filepath)
-                if existing and skip_existing and existing.bpm and existing.key:
-                    if not fetch_album_art or existing.album_art_url:
-                        results["skipped"] += 1
-                        continue
+                skip_reason = None
+                if existing and skip_existing:
+                    has_metadata = bool((existing.artist and existing.artist.strip()) or (existing.title and existing.title.strip()))
+                    has_analysis = bool(existing.bpm and existing.key)
+                    has_art = bool(existing.album_art_url)
+                    if rescan_mode == "smart":
+                        if has_analysis and (not fetch_album_art or has_art):
+                            skip_reason = "already_analyzed"
+                    elif rescan_mode == "missing-metadata":
+                        if has_metadata:
+                            skip_reason = "metadata_present"
+                    elif rescan_mode == "missing-analysis":
+                        if has_analysis:
+                            skip_reason = "analysis_present"
+                    elif rescan_mode == "missing-art":
+                        if not fetch_album_art or has_art:
+                            skip_reason = "album_art_present"
+
+                if skip_reason:
+                    results["skipped"] += 1
+                    processed += 1
+                    _emit(
+                        {
+                            "event": "track_complete",
+                            "path": filepath,
+                            "file": Path(filepath).name,
+                            "status": "skipped",
+                            "reason": skip_reason,
+                        }
+                    )
+                    _emit({"event": "log", "level": "info", "message": f"{Path(filepath).name}: skipped ({skip_reason})"})
+                    continue
 
                 results["scanned"] += 1
                 _step("metadata", filepath)
                 metadata = extract_metadata(filepath)
+                if verbose:
+                    _emit(
+                        {
+                            "event": "track_metadata",
+                            "path": filepath,
+                            "file": Path(filepath).name,
+                            "artist": metadata["artist"],
+                            "title": metadata["title"],
+                            "album": metadata["album"],
+                            "duration": metadata["duration"],
+                        }
+                    )
 
                 # Submit Spotify lookup to background thread immediately so it
                 # runs concurrently with BPM/key detection in the main thread.
@@ -299,6 +362,7 @@ def scan_directory(
                 except FutureTimeoutError:
                     previews = dict(_EMPTY_PREVIEWS)
                     spotify_future.cancel()
+                    _emit({"event": "log", "level": "warning", "message": f"Spotify timeout for {Path(filepath).name}"})
                     if verbose:
                         tqdm.write(f"  [spotify timeout] {Path(filepath).name}")
 
@@ -368,6 +432,34 @@ def scan_directory(
                     }
                 )
                 results["analyzed"] += 1
+                processed += 1
+                _emit(
+                    {
+                        "event": "track_complete",
+                        "path": filepath,
+                        "file": Path(filepath).name,
+                        "status": "analyzed",
+                        "artist": metadata["artist"],
+                        "title": metadata["title"],
+                        "bpm": bpm,
+                        "bpm_source": bpm_source,
+                        "key": key,
+                        "spotify_id": previews["spotify_id"],
+                        "album_art_url": album_art_url,
+                        "decode_failed": decode_failed,
+                    }
+                )
+                _emit(
+                    {
+                        "event": "log",
+                        "level": "success" if bpm else "warning",
+                        "message": (
+                            f"{Path(filepath).name}: bpm={bpm or 0:.1f} src={bpm_source or 'none'} "
+                            f"key={key or 'none'} spotify={'yes' if previews['spotify_id'] else 'no'} "
+                            f"art={'yes' if album_art_url else 'no'}"
+                        ),
+                    }
+                )
 
                 if verbose:
                     label = f"{metadata['artist'] or '?'} - {metadata['title'] or Path(filepath).stem}"
@@ -379,6 +471,20 @@ def scan_directory(
 
             except Exception as exc:
                 results["errors"] += 1
-                tqdm.write(f"\nError processing {filepath}: {exc}")
+                processed += 1
+                _emit(
+                    {
+                        "event": "track_complete",
+                        "path": filepath,
+                        "file": Path(filepath).name,
+                        "status": "error",
+                        "error": str(exc),
+                    }
+                )
+                if progress_callback:
+                    progress_callback({"event": "log", "level": "error", "message": f"Error processing {filepath}: {exc}"})
+                else:
+                    tqdm.write(f"\nError processing {filepath}: {exc}")
 
+    _emit({"event": "scan_complete", "results": results})
     return results

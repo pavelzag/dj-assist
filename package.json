@@ -2,9 +2,15 @@
   "name": "dj-assist",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20 <25"
+  },
   "scripts": {
+    "predev": "node scripts/check-node.cjs",
     "dev": "rm -rf .next && next dev",
+    "prebuild": "node scripts/check-node.cjs",
     "build": "next build",
+    "prestart": "node scripts/check-node.cjs",
     "start": "next start"
   },
   "dependencies": {

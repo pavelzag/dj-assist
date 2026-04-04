@@ -4,6 +4,13 @@ import { useEffect } from 'react';
 
 export default function ClientInit() {
   useEffect(() => {
+    type ScanSummary = {
+      scanned: number;
+      analyzed: number;
+      skipped: number;
+      errors: number;
+    };
+
     // ── DOM refs ──────────────────────────────────────────────────────────────
     const listEl = document.getElementById('track-list') as HTMLElement;
     const detailEl = document.getElementById('detail') as HTMLElement;
@@ -14,6 +21,23 @@ export default function ClientInit() {
     const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement;
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement;
     const sortsEl = document.getElementById('sorts') as HTMLElement;
+    const scanDirectoryEl = document.getElementById('scan-directory') as HTMLInputElement;
+    const scanRecentDirectoriesEl = document.getElementById('scan-recent-directories') as HTMLSelectElement;
+    const scanUseLastBtn = document.getElementById('scan-use-last-btn') as HTMLButtonElement;
+    const scanBtn = document.getElementById('scan-btn') as HTMLButtonElement;
+    const scanCancelBtn = document.getElementById('scan-cancel-btn') as HTMLButtonElement;
+    const scanRescanModeEl = document.getElementById('scan-rescan-mode') as HTMLSelectElement;
+    const scanFetchArtEl = document.getElementById('scan-fetch-art') as HTMLInputElement;
+    const scanVerboseEl = document.getElementById('scan-verbose') as HTMLInputElement;
+    const scanStatusEl = document.getElementById('scan-status') as HTMLElement;
+    const scanProgressMetaEl = document.getElementById('scan-progress-meta') as HTMLElement;
+    const scanProgressBarEl = document.getElementById('scan-progress-bar') as HTMLElement;
+    const scanProgressFileEl = document.getElementById('scan-progress-file') as HTMLElement;
+    const scanLogEl = document.getElementById('scan-log') as HTMLElement;
+    const scanLogClearBtn = document.getElementById('scan-log-clear-btn') as HTMLButtonElement;
+    const scanSummaryEl = document.getElementById('scan-summary') as HTMLElement;
+    const scanPreflightEl = document.getElementById('scan-preflight') as HTMLElement;
+    const scanHistoryEl = document.getElementById('scan-history') as HTMLElement;
     const coverModal = document.getElementById('cover-modal') as HTMLElement;
     const coverImage = document.getElementById('cover-image') as HTMLImageElement;
     const coverTitle = document.getElementById('cover-title') as HTMLElement;
@@ -27,10 +51,17 @@ export default function ClientInit() {
 
     // ── State ─────────────────────────────────────────────────────────────────
     const activeTrackKey = 'dj-assist-active-track-id';
+    const scanDirectoryKey = 'dj-assist-scan-directory';
+    const scanRecentDirectoriesKey = 'dj-assist-scan-recent-directories';
+    const scanVerboseKey = 'dj-assist-scan-verbose';
+    const scanRescanModeKey = 'dj-assist-scan-rescan-mode';
     let activeTrackId: number | null = null;
+    let activeScanJobId: string | null = null;
+    let activeScanUnsubscribe: (() => void) | null = null;
     let tracks: Record<string, unknown>[] = [];
     let sortMode = 'bpm-asc';
     let sets: Record<string, unknown>[] = [];
+    let scanHistory: Record<string, unknown>[] = [];
     let activeSetId: number | null = null;
     const trackMultipliers: Record<number, number> = {};
 
@@ -48,6 +79,102 @@ export default function ClientInit() {
       const minutes = Math.floor(s / 60);
       const remainder = Math.floor(s % 60);
       return `${minutes}:${String(remainder).padStart(2, '0')}`;
+    }
+
+    function setScanStatus(message: string, state: 'idle' | 'running' | 'success' | 'error' = 'idle') {
+      scanStatusEl.textContent = message;
+      scanStatusEl.dataset.state = state;
+    }
+
+    function setScanProgress(current: number, total: number, file = 'No scan running') {
+      const safeCurrent = Math.max(0, current);
+      const safeTotal = Math.max(0, total);
+      const percent = safeTotal > 0 ? Math.min(100, (safeCurrent / safeTotal) * 100) : 0;
+      scanProgressMetaEl.textContent = `${safeCurrent} / ${safeTotal}`;
+      scanProgressBarEl.style.width = `${percent}%`;
+      scanProgressFileEl.textContent = file;
+    }
+
+    function appendScanLog(message: string, level: 'info' | 'warning' | 'error' | 'success' = 'info') {
+      const entry = document.createElement('div');
+      entry.className = `scan-log-entry ${level}`;
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      entry.textContent = `${timestamp}  ${message}`;
+      if (scanLogEl.children.length === 1 && scanLogEl.textContent?.includes('No scan activity yet.')) {
+        scanLogEl.innerHTML = '';
+      }
+      scanLogEl.prepend(entry);
+      while (scanLogEl.children.length > 80) {
+        scanLogEl.removeChild(scanLogEl.lastElementChild!);
+      }
+    }
+
+    function resetScanLog() {
+      scanLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity yet.</div>';
+    }
+
+    function getRecentDirectories(): string[] {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(scanRecentDirectoriesKey) || '[]');
+        return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveRecentDirectories(directories: string[]) {
+      try {
+        localStorage.setItem(scanRecentDirectoriesKey, JSON.stringify(directories.slice(0, 8)));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    function pushRecentDirectory(directory: string) {
+      const normalized = directory.trim();
+      if (!normalized) return;
+      const next = [normalized, ...getRecentDirectories().filter((item) => item !== normalized)];
+      saveRecentDirectories(next);
+      renderRecentDirectories(next);
+    }
+
+    function renderRecentDirectories(directories = getRecentDirectories()) {
+      scanRecentDirectoriesEl.innerHTML = '<option value="">Recent folders…</option>' +
+        directories.map((directory) => `<option value="${esc(directory)}">${esc(directory)}</option>`).join('');
+      scanUseLastBtn.disabled = directories.length === 0;
+    }
+
+    function setScanSummary(summary?: Record<string, unknown> | null, job?: Record<string, unknown> | null) {
+      const safe = summary ?? {};
+      const created = String((job?.createdAt ?? job?.created_at ?? 'None') || 'None');
+      scanSummaryEl.innerHTML = [
+        ['Last run', created === 'None' ? 'None' : new Date(created).toLocaleString()],
+        ['BPM', String(safe.with_bpm ?? 0)],
+        ['Key', String(safe.with_key ?? 0)],
+        ['Spotify', String(safe.with_spotify ?? 0)],
+        ['Album art', String(safe.with_album_art ?? 0)],
+        ['Decode failures', String(safe.decode_failures ?? 0)],
+      ].map(([label, value]) => `<div class="scan-summary-item"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
+    }
+
+    function renderScanHistory() {
+      if (!scanHistory.length) {
+        scanHistoryEl.innerHTML = '<div class="scan-log-entry info">No scan history yet.</div>';
+        return;
+      }
+      scanHistoryEl.innerHTML = scanHistory.map((job) => `
+        <div class="scan-history-item ${job.id === activeScanJobId ? 'active' : ''}" data-scan-id="${job.id}">
+          <strong>${esc(job.directory ?? 'Unknown directory')}</strong>
+          <span>${esc(job.status ?? 'unknown')} · ${esc(((job.options as Record<string, unknown> | undefined)?.rescanMode ?? 'smart'))}</span>
+          <span>${esc(job.createdAt ? new Date(String(job.createdAt)).toLocaleString() : 'Unknown time')}</span>
+        </div>
+      `).join('');
+      scanHistoryEl.querySelectorAll('.scan-history-item[data-scan-id]').forEach((item) => {
+        item.addEventListener('click', async () => {
+          const id = (item as HTMLElement).dataset.scanId!;
+          await loadScanJob(id, true);
+        });
+      });
     }
 
     // ── BPM display helpers ───────────────────────────────────────────────────
@@ -270,6 +397,10 @@ export default function ClientInit() {
             </div>
             <div class="chips">
               ${track.album ? `<span class="chip">${esc(track.album)}</span>` : ''}
+              ${track.spotify_album_name && track.spotify_album_name !== track.album ? `<span class="chip subtle">${esc(track.spotify_album_name)}</span>` : ''}
+              ${track.album_art_url ? '<span class="chip success">Album art</span>' : '<span class="chip subtle">No album art</span>'}
+              ${track.analysis_status ? `<span class="chip subtle">${esc(track.analysis_status)}</span>` : ''}
+              ${track.bpm_source ? `<span class="chip subtle">BPM ${esc(track.bpm_source)}</span>` : ''}
               ${track.decode_failed === 'true' ? '<span class="chip warn">Unreadable audio</span>' : ''}
             </div>
           </div>
@@ -277,6 +408,7 @@ export default function ClientInit() {
         <div class="detail-inner">
           <div class="buttons">
             <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
+            ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
             ${track.youtube_url ? `<a class="btn" href="${esc(track.youtube_url)}" target="_blank" rel="noreferrer">YouTube</a>` : ''}
             ${sets.length > 0 ? `
               <div style="display:inline-flex;gap:6px;align-items:center;">
@@ -293,6 +425,11 @@ export default function ClientInit() {
               <div class="scrub-row"><span id="${scrubId}-current">0:00</span><span class="scrub-separator">/</span><span id="${scrubId}-duration">0:00</span></div>
               <input id="${scrubId}" type="range" min="0" max="0" value="0" step="0.01" />
             </div>
+          </div>
+          <div class="chips" style="margin-bottom:14px;">
+            ${track.analysis_stage ? `<span class="chip subtle">Stage ${esc(track.analysis_stage)}</span>` : ''}
+            ${track.spotify_id ? `<span class="chip success">Spotify matched</span>` : `<span class="chip subtle">No Spotify match</span>`}
+            ${track.analysis_error ? `<span class="chip warn">${esc(track.analysis_error)}</span>` : ''}
           </div>
           <h3>Can play next</h3>
           <div class="suggestions">
@@ -352,6 +489,7 @@ export default function ClientInit() {
 
       // Audio player
       const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
+      const coverBtn = document.getElementById('cover-btn') as HTMLButtonElement | null;
       const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
       const scrubRange = document.getElementById(scrubId) as HTMLInputElement | null;
       const currentTimeEl = document.getElementById(`${scrubId}-current`);
@@ -408,6 +546,15 @@ export default function ClientInit() {
         });
         // Sync global button to current state (e.g. resumed track)
         setPlaying(!localAudio.paused);
+      }
+
+      if (coverBtn && track.album_art_url) {
+        coverBtn.addEventListener('click', () => {
+          coverImage.src = String(track.album_art_url);
+          coverTitle.textContent = String(track.spotify_album_name ?? track.album ?? 'Album cover');
+          coverModal.classList.add('open');
+          coverModal.setAttribute('aria-hidden', 'false');
+        });
       }
     }
 
@@ -514,6 +661,199 @@ export default function ClientInit() {
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
     }
 
+    async function loadScanHistory() {
+      const res = await fetch('/api/scan');
+      if (!res.ok) return;
+      const payload = await res.json();
+      scanHistory = payload.jobs ?? [];
+      renderScanHistory();
+    }
+
+    function stopStreamingScanJob() {
+      if (activeScanUnsubscribe) {
+        activeScanUnsubscribe();
+        activeScanUnsubscribe = null;
+      }
+    }
+
+    async function subscribeToScanJob(jobId: string) {
+      stopStreamingScanJob();
+      let cancelled = false;
+      activeScanUnsubscribe = () => { cancelled = true; };
+
+      const res = await fetch(`/api/scan/${jobId}/stream`);
+      if (!res.ok || !res.body) return;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      const handleJobEvent = async (event: Record<string, unknown>) => {
+        const type = String(event.event ?? '');
+        if (type === 'job_state') {
+          const summary = (event.summary as Record<string, unknown> | null) ?? null;
+          setScanStatus(String(event.status ?? 'running'), ['failed', 'cancelled'].includes(String(event.status ?? '')) ? 'error' : String(event.status ?? '') === 'completed' ? 'success' : 'running');
+          setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), String(event.current_file ?? event.directory ?? ''));
+          setScanSummary(summary, { createdAt: scanHistory.find((job) => job.id === jobId)?.createdAt ?? null });
+          if (['completed', 'failed', 'cancelled'].includes(String(event.status ?? ''))) {
+            await loadScanHistory();
+            if (String(event.status ?? '') === 'completed') {
+              await loadTracks(searchEl.value.trim());
+            }
+          }
+          return;
+        }
+
+        if (type === 'log') {
+          const rawLevel = String(event.level ?? 'info');
+          const level = (rawLevel === 'error' || rawLevel === 'warning' || rawLevel === 'success' ? rawLevel : 'info') as 'info' | 'warning' | 'error' | 'success';
+          appendScanLog(String(event.message ?? ''), level);
+          return;
+        }
+
+        if (type === 'track_start') {
+          setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), String(event.file ?? event.path ?? 'Scanning…'));
+          return;
+        }
+
+        if (type === 'track_complete') {
+          const status = String(event.status ?? '');
+          const reason = String(event.reason ?? '');
+          const label = String(event.file ?? event.path ?? 'Track');
+          setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), `${label} · ${status}`);
+          if (reason) appendScanLog(`${label}: ${status} (${reason})`, status === 'skipped' ? 'warning' : status === 'error' ? 'error' : 'success');
+          return;
+        }
+
+        if (type === 'scan_failed') {
+          setScanStatus('failed', 'error');
+          appendScanLog(String(event.error ?? 'Scan failed'), 'error');
+          await loadScanHistory();
+        }
+      };
+
+      while (!cancelled) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex = buffer.indexOf('\n');
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (line) {
+            try {
+              await handleJobEvent(JSON.parse(line) as Record<string, unknown>);
+            } catch {
+              // Ignore malformed stream lines.
+            }
+          }
+          newlineIndex = buffer.indexOf('\n');
+        }
+      }
+    }
+
+    async function loadScanJob(jobId: string, reconnect = false) {
+      const res = await fetch(`/api/scan/${jobId}`);
+      if (!res.ok) return;
+      const payload = await res.json();
+      const job = payload.job as Record<string, unknown>;
+      activeScanJobId = String(job.id);
+      if (typeof job.directory === 'string' && job.directory) {
+        scanDirectoryEl.value = job.directory;
+        pushRecentDirectory(job.directory);
+      }
+      setScanStatus(String(job.status ?? 'idle'), ['failed', 'cancelled'].includes(String(job.status ?? '')) ? 'error' : String(job.status ?? '') === 'completed' ? 'success' : 'running');
+      setScanProgress(Number(job.processedFiles ?? 0), Number(job.totalFiles ?? 0), String(job.currentFile ?? job.directory ?? ''));
+      setScanSummary(job.summary as Record<string, unknown>, job);
+      scanPreflightEl.textContent = JSON.stringify(job.validation ?? {});
+      resetScanLog();
+      for (const log of ((job.logs ?? []) as Record<string, unknown>[]).slice().reverse()) {
+        const level = String(log.level ?? 'info') as 'info' | 'warning' | 'error' | 'success';
+        appendScanLog(String(log.message ?? ''), level);
+      }
+      renderScanHistory();
+      if (reconnect && ['queued', 'running'].includes(String(job.status ?? ''))) {
+        await subscribeToScanJob(jobId);
+      }
+    }
+
+    async function preflightDirectory(directory: string) {
+      if (!directory.trim()) {
+        scanPreflightEl.textContent = 'No directory validation yet.';
+        return;
+      }
+      const res = await fetch(`/api/scan/validate?directory=${encodeURIComponent(directory)}`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        scanPreflightEl.textContent = String(payload.error ?? 'Validation failed');
+        return;
+      }
+      const validation = payload.validation ?? {};
+      scanPreflightEl.textContent = `Supported audio files: ${validation.audio_file_count ?? 0}${validation.empty ? ' · directory looks empty' : ''}`;
+    }
+
+    // ── Scanning ──────────────────────────────────────────────────────────────
+    async function triggerScan() {
+      const directory = scanDirectoryEl.value.trim();
+      if (!directory) {
+        setScanStatus('Enter a music folder path', 'error');
+        setScanProgress(0, 0, 'Enter a music folder path');
+        scanDirectoryEl.focus();
+        return;
+      }
+
+      scanBtn.disabled = true;
+      setScanStatus('Scanning library…', 'running');
+      setScanProgress(0, 0, directory);
+      warningBanner.style.display = 'none';
+      resetScanLog();
+      appendScanLog(`Starting scan for ${directory}`);
+
+      try {
+      try { localStorage.setItem(scanDirectoryKey, directory); } catch { /* ignore */ }
+      try { localStorage.setItem(scanVerboseKey, String(scanVerboseEl.checked)); } catch { /* ignore */ }
+      try { localStorage.setItem(scanRescanModeKey, scanRescanModeEl.value); } catch { /* ignore */ }
+      pushRecentDirectory(directory);
+
+        const res = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            directory,
+            fetchAlbumArt: scanFetchArtEl.checked,
+            autoDoubleBpm: true,
+            verbose: scanVerboseEl.checked,
+            rescanMode: scanRescanModeEl.value,
+          }),
+        });
+
+        if (!res.ok) {
+          const detail = await res.text();
+          setScanStatus('Scan failed', 'error');
+          setScanProgress(0, 0, 'Scan request failed');
+          appendScanLog(`Scan request failed: ${detail.slice(0, 200)}`, 'error');
+          warningBanner.style.display = 'block';
+          warningBanner.innerHTML = `<strong>Scan failed:</strong> ${esc(detail.slice(0, 400))}`;
+          return;
+        }
+
+        const payload = await res.json();
+        const job = payload.job as Record<string, unknown>;
+        activeScanJobId = String(job.id);
+        appendScanLog(`Scan job created: ${activeScanJobId}`, 'info');
+        await loadScanHistory();
+        await loadScanJob(activeScanJobId, true);
+      } catch (error) {
+        setScanStatus('Scan failed', 'error');
+        setScanProgress(0, 0, 'Scan failed');
+        appendScanLog(error instanceof Error ? error.message : String(error), 'error');
+        warningBanner.style.display = 'block';
+        warningBanner.innerHTML = `<strong>Scan failed:</strong> ${esc(error instanceof Error ? error.message : String(error))}`;
+      } finally {
+        scanBtn.disabled = false;
+      }
+    }
+
     // ── Track loading ─────────────────────────────────────────────────────────
     async function loadTracks(query = '') {
       const params = new URLSearchParams();
@@ -593,7 +933,59 @@ export default function ClientInit() {
     });
 
     // ── Boot ──────────────────────────────────────────────────────────────────
+    try {
+      const savedDirectory = localStorage.getItem(scanDirectoryKey);
+      if (savedDirectory) scanDirectoryEl.value = savedDirectory;
+      scanVerboseEl.checked = localStorage.getItem(scanVerboseKey) === 'true';
+      scanRescanModeEl.value = localStorage.getItem(scanRescanModeKey) || 'smart';
+    } catch {
+      /* ignore */
+    }
+    scanBtn.addEventListener('click', () => { void triggerScan(); });
+    scanCancelBtn.addEventListener('click', async () => {
+      if (!activeScanJobId) return;
+      await fetch(`/api/scan/${activeScanJobId}`, { method: 'DELETE' });
+      appendScanLog('Cancellation requested', 'warning');
+    });
+    scanRecentDirectoriesEl.addEventListener('change', () => {
+      if (!scanRecentDirectoriesEl.value) return;
+      scanDirectoryEl.value = scanRecentDirectoriesEl.value;
+      void preflightDirectory(scanDirectoryEl.value);
+    });
+    scanUseLastBtn.addEventListener('click', () => {
+      const recent = getRecentDirectories();
+      if (!recent.length) return;
+      scanDirectoryEl.value = recent[0];
+      void preflightDirectory(scanDirectoryEl.value);
+    });
+    scanLogClearBtn.addEventListener('click', () => { resetScanLog(); });
+    scanVerboseEl.addEventListener('change', () => {
+      try { localStorage.setItem(scanVerboseKey, String(scanVerboseEl.checked)); } catch { /* ignore */ }
+    });
+    scanRescanModeEl.addEventListener('change', () => {
+      try { localStorage.setItem(scanRescanModeKey, scanRescanModeEl.value); } catch { /* ignore */ }
+    });
+    scanDirectoryEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void triggerScan();
+      }
+    });
+    scanDirectoryEl.addEventListener('blur', () => { void preflightDirectory(scanDirectoryEl.value); });
+    setScanStatus('Idle');
+    setScanProgress(0, 0, 'No scan running');
+    resetScanLog();
+    renderRecentDirectories();
+    void preflightDirectory(scanDirectoryEl.value);
     loadSets().then(() => loadTracks());
+    void loadScanHistory().then(async () => {
+      const running = scanHistory.find((job) => ['queued', 'running'].includes(String(job.status ?? '')));
+      if (running?.id) {
+        await loadScanJob(String(running.id), true);
+      } else if (scanHistory[0]?.id) {
+        await loadScanJob(String(scanHistory[0].id), false);
+      }
+    });
   }, []);
 
   return null;

@@ -4,17 +4,87 @@ export default function Page() {
   return (
     <>
       <header>
-        <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
-        <button type="button" id="global-play-btn" className="global-play-btn">▶</button>
-        <input id="search" placeholder="Search tracks, artist, album..." />
-        <div className="filters">
-          <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
-          <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
-          <input id="key-filter" placeholder="Key" />
-          <label>
-            <input id="show-only-no-bpm" type="checkbox" /> Show only no BPM
+        <div className="header-main">
+          <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
+          <button type="button" id="global-play-btn" className="global-play-btn">▶</button>
+          <input id="search" placeholder="Search tracks, artist, album..." />
+          <div className="filters">
+            <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
+            <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
+            <input id="key-filter" placeholder="Key" />
+            <label>
+              <input id="show-only-no-bpm" type="checkbox" /> Show only no BPM
+            </label>
+            <span className="badge" id="hidden-count-badge">Hidden: 0</span>
+          </div>
+        </div>
+
+        <div className="scan-bar">
+          <input id="scan-directory" placeholder="Music folder path…" />
+          <select id="scan-recent-directories" defaultValue="">
+            <option value="">Recent folders…</option>
+          </select>
+          <button type="button" className="btn" id="scan-use-last-btn">Use Last</button>
+          <button type="button" className="btn" id="scan-btn">Scan Library</button>
+          <button type="button" className="btn" id="scan-cancel-btn">Stop</button>
+          <select id="scan-rescan-mode" defaultValue="smart">
+            <option value="smart">Smart</option>
+            <option value="missing-metadata">Missing metadata</option>
+            <option value="missing-analysis">Missing BPM/key</option>
+            <option value="missing-art">Missing album art</option>
+            <option value="full">Full rescan</option>
+          </select>
+          <label className="scan-option">
+            <input id="scan-fetch-art" type="checkbox" defaultChecked /> Fetch album art
           </label>
-          <span className="badge" id="hidden-count-badge">Hidden: 0</span>
+          <label className="scan-option">
+            <input id="scan-verbose" type="checkbox" /> Verbose diagnostics
+          </label>
+          <div className="scan-progress" id="scan-progress">
+            <div className="scan-progress-head">
+              <span className="scan-status" id="scan-status">Idle</span>
+              <span className="scan-progress-meta" id="scan-progress-meta">0 / 0</span>
+            </div>
+            <div className="scan-progress-track">
+              <div className="scan-progress-bar" id="scan-progress-bar" />
+            </div>
+            <div className="scan-progress-file" id="scan-progress-file">No scan running</div>
+          </div>
+        </div>
+
+        <div className="scan-log-panel">
+          <div className="scan-log-head">
+            <strong>Scan Log</strong>
+            <button type="button" className="icon-btn" id="scan-log-clear-btn">Clear</button>
+          </div>
+          <div className="scan-log" id="scan-log">
+            <div className="scan-log-entry info">No scan activity yet.</div>
+          </div>
+        </div>
+
+        <div className="scan-meta-grid">
+          <div className="scan-summary-panel">
+            <div className="scan-log-head">
+              <strong>Scan Summary</strong>
+            </div>
+            <div className="scan-summary" id="scan-summary">
+              <div className="scan-summary-item"><span>Last run</span><strong>None</strong></div>
+              <div className="scan-summary-item"><span>BPM</span><strong>0</strong></div>
+              <div className="scan-summary-item"><span>Key</span><strong>0</strong></div>
+              <div className="scan-summary-item"><span>Spotify</span><strong>0</strong></div>
+              <div className="scan-summary-item"><span>Album art</span><strong>0</strong></div>
+              <div className="scan-summary-item"><span>Decode failures</span><strong>0</strong></div>
+            </div>
+            <div className="scan-preflight" id="scan-preflight">No directory validation yet.</div>
+          </div>
+          <div className="scan-history-panel">
+            <div className="scan-log-head">
+              <strong>Scan History</strong>
+            </div>
+            <div className="scan-history" id="scan-history">
+              <div className="scan-log-entry info">No scan history yet.</div>
+            </div>
+          </div>
         </div>
       </header>
 

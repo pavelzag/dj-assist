@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -121,6 +122,13 @@ def main() -> None:
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--no-skip-existing", is_flag=True, help="Re-analyze every file.")
 @click.option(
+    "--rescan-mode",
+    type=click.Choice(["smart", "missing-metadata", "missing-analysis", "missing-art", "full"], case_sensitive=False),
+    default="smart",
+    show_default=True,
+    help="Choose when existing tracks should be rescanned.",
+)
+@click.option(
     "--bpm-lookup",
     type=click.Choice(["auto", "local", "tag", "spotify", "both", "off"], case_sensitive=False),
     default="auto",
@@ -136,29 +144,45 @@ def main() -> None:
 @click.option("--verbose", "-v", is_flag=True, help="Print per-track debug output.")
 @click.option("--no-spotify", is_flag=True, help="Skip all Spotify/album-art lookups.")
 @click.option("--auto-double", is_flag=True, help="Double and round BPM for tracks detected in the 60–80 BPM range.")
-def scan(directory: Path, no_skip_existing: bool, bpm_lookup: str, fetch_album_art: bool, verbose: bool, no_spotify: bool, auto_double: bool) -> None:
+@click.option("--json-progress", is_flag=True, help="Emit newline-delimited JSON progress events.")
+def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: str, fetch_album_art: bool, verbose: bool, no_spotify: bool, auto_double: bool, json_progress: bool) -> None:
     db = _db()
     spotify_enabled = not no_spotify
+
+    def emit(event: dict) -> None:
+        click.echo(json.dumps(event), err=False)
+
     if spotify_enabled:
         missing = SpotifyClient().missing_credentials()
         if missing:
-            console.print(f"[yellow]Spotify env missing:[/yellow] {', '.join(missing)}")
+            if json_progress:
+                emit({"event": "log", "level": "warning", "message": f"Spotify env missing: {', '.join(missing)}"})
+            else:
+                console.print(f"[yellow]Spotify env missing:[/yellow] {', '.join(missing)}")
             spotify_enabled = False
     if not spotify_enabled:
-        console.print("[dim]Spotify disabled — skipping metadata lookups.[/dim]")
+        if json_progress:
+            emit({"event": "log", "level": "info", "message": "Spotify disabled — skipping metadata lookups."})
+        else:
+            console.print("[dim]Spotify disabled — skipping metadata lookups.[/dim]")
     results = scan_directory(
         str(directory),
         db,
         skip_existing=not no_skip_existing,
+        rescan_mode="full" if no_skip_existing else rescan_mode.lower(),
         bpm_lookup=bpm_lookup.lower(),
         fetch_album_art=fetch_album_art and spotify_enabled,
         verbose=verbose,
         spotify_enabled=spotify_enabled,
         auto_double_bpm=auto_double,
+        progress_callback=emit if json_progress else None,
     )
-    console.print(
-        f"Scanned: {results['scanned']}  Analyzed: {results['analyzed']}  Skipped: {results['skipped']}  Errors: {results['errors']}"
-    )
+    if json_progress:
+        emit({"event": "summary", "results": results})
+    else:
+        console.print(
+            f"Scanned: {results['scanned']}  Analyzed: {results['analyzed']}  Skipped: {results['skipped']}  Errors: {results['errors']}"
+        )
 
 
 @main.command()

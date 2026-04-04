@@ -14,6 +14,53 @@ function getDb(): postgres.Sql {
   return global._pgConn;
 }
 
+let scanSchemaEnsured = false;
+
+export async function ensureScanSchema(): Promise<void> {
+  if (scanSchemaEnsured) return;
+  const sql = getDb();
+  await sql`
+    CREATE TABLE IF NOT EXISTS scan_runs (
+      id TEXT PRIMARY KEY,
+      directory TEXT NOT NULL,
+      status TEXT NOT NULL,
+      rescan_mode TEXT NOT NULL,
+      fetch_album_art BOOLEAN NOT NULL DEFAULT TRUE,
+      verbose_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      total_files INTEGER NOT NULL DEFAULT 0,
+      processed_files INTEGER NOT NULL DEFAULT 0,
+      scanned INTEGER NOT NULL DEFAULT 0,
+      analyzed INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      errors INTEGER NOT NULL DEFAULT 0,
+      with_bpm INTEGER NOT NULL DEFAULT 0,
+      with_key INTEGER NOT NULL DEFAULT 0,
+      with_spotify INTEGER NOT NULL DEFAULT 0,
+      with_album_art INTEGER NOT NULL DEFAULT 0,
+      decode_failures INTEGER NOT NULL DEFAULT 0,
+      fatal_error TEXT,
+      current_file TEXT,
+      validation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at TIMESTAMPTZ
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS scan_logs (
+      id BIGSERIAL PRIMARY KEY,
+      scan_run_id TEXT NOT NULL REFERENCES scan_runs(id) ON DELETE CASCADE,
+      level TEXT NOT NULL,
+      message TEXT NOT NULL,
+      event_type TEXT NOT NULL DEFAULT 'log',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  scanSchemaEnsured = true;
+}
+
 export interface Track {
   id: number;
   path: string | null;
@@ -44,6 +91,151 @@ export interface Track {
   analysis_debug: string | null;
   file_hash: string | null;
   created_at: Date | null;
+}
+
+export interface ScanRun {
+  id: string;
+  directory: string;
+  status: string;
+  rescan_mode: string;
+  fetch_album_art: boolean;
+  verbose_enabled: boolean;
+  total_files: number;
+  processed_files: number;
+  scanned: number;
+  analyzed: number;
+  skipped: number;
+  errors: number;
+  with_bpm: number;
+  with_key: number;
+  with_spotify: number;
+  with_album_art: number;
+  decode_failures: number;
+  fatal_error: string | null;
+  current_file: string | null;
+  validation: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  created_at: Date | null;
+  updated_at: Date | null;
+  finished_at: Date | null;
+}
+
+export interface ScanLog {
+  id: number;
+  scan_run_id: string;
+  level: string;
+  message: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: Date | null;
+}
+
+export async function createScanRun(input: {
+  id: string;
+  directory: string;
+  rescanMode: string;
+  fetchAlbumArt: boolean;
+  verbose: boolean;
+  validation: Record<string, unknown>;
+}): Promise<void> {
+  await ensureScanSchema();
+  const sql = getDb();
+  await sql`
+    INSERT INTO scan_runs (
+      id, directory, status, rescan_mode, fetch_album_art, verbose_enabled, validation
+    ) VALUES (
+      ${input.id},
+      ${input.directory},
+      'queued',
+      ${input.rescanMode},
+      ${input.fetchAlbumArt},
+      ${input.verbose},
+      ${sql.json(input.validation as never)}
+    )
+  `;
+}
+
+export async function updateScanRun(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await ensureScanSchema();
+  const sql = getDb();
+  const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+  if (!entries.length) return;
+  const values: unknown[] = [];
+  const assignments = entries.map(([key, value], index) => {
+    const escapedKey = key.replace(/[^a-z0-9_]/gi, '');
+    values.push(key === 'validation' || key === 'summary' ? JSON.stringify(value) : value);
+    return `${escapedKey} = $${index + 1}${key === 'validation' || key === 'summary' ? '::jsonb' : ''}`;
+  });
+  values.push(id);
+  await sql.unsafe(
+    `UPDATE scan_runs SET ${assignments.join(', ')}, updated_at = NOW() WHERE id = $${values.length}`,
+    values as never[],
+  );
+}
+
+export async function finalizeScanRun(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await updateScanRun(id, patch);
+  const sql = getDb();
+  await sql`
+    UPDATE scan_runs
+    SET finished_at = COALESCE(finished_at, NOW()), updated_at = NOW()
+    WHERE id = ${id}
+  `;
+}
+
+export async function addScanLog(input: {
+  scanRunId: string;
+  level: string;
+  message: string;
+  eventType?: string;
+  payload?: Record<string, unknown>;
+}): Promise<void> {
+  await ensureScanSchema();
+  const sql = getDb();
+  await sql`
+    INSERT INTO scan_logs (scan_run_id, level, message, event_type, payload)
+    VALUES (
+      ${input.scanRunId},
+      ${input.level},
+      ${input.message},
+      ${input.eventType ?? 'log'},
+      ${sql.json((input.payload ?? {}) as never)}
+    )
+  `;
+}
+
+export async function listScanRuns(limit = 20): Promise<ScanRun[]> {
+  await ensureScanSchema();
+  const sql = getDb();
+  return sql<ScanRun[]>`
+    SELECT * FROM scan_runs
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+}
+
+export async function getScanRunById(id: string): Promise<ScanRun | null> {
+  await ensureScanSchema();
+  const sql = getDb();
+  const rows = await sql<ScanRun[]>`SELECT * FROM scan_runs WHERE id = ${id}`;
+  return rows[0] ?? null;
+}
+
+export async function getScanLogs(scanRunId: string, limit = 200): Promise<ScanLog[]> {
+  await ensureScanSchema();
+  const sql = getDb();
+  return sql<ScanLog[]>`
+    SELECT * FROM scan_logs
+    WHERE scan_run_id = ${scanRunId}
+    ORDER BY id DESC
+    LIMIT ${limit}
+  `;
 }
 
 export function serializeTrack(track: Track) {
