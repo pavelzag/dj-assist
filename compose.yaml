@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dj_assist
+      POSTGRES_USER: dj_assist
+      POSTGRES_PASSWORD: dj_assist
+    ports:
+      - "5432:5432"
+    volumes:
+      - dj_assist_pgdata:/var/lib/postgresql/data
+
+volumes:
+  dj_assist_pgdata:
