@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllSets, createSet } from '@/lib/db';
 
+export const runtime = 'nodejs';
+
 export async function GET() {
   const sets = await getAllSets();
   return NextResponse.json({ sets });

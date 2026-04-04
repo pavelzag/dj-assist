@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { addWatchFolder, listWatchFolders, removeWatchFolder } from '@/lib/watch-folders';
 
+export const runtime = 'nodejs';
+
 export async function GET() {
   return NextResponse.json({ watches: await listWatchFolders() });
 }

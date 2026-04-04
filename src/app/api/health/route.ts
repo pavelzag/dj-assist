@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { resolveWorkingPython } from '@/lib/scan';
 
+export const runtime = 'nodejs';
+
 export async function GET() {
   let python: string | null = null;
   let pythonError: string | null = null;

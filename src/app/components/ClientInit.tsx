@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
+import type { PlatformAdapter } from './platform';
 
-export default function ClientInit() {
+export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
   useEffect(() => {
+    const isElectronApp = adapter.platform === 'electron';
     type ScanSummary = {
       scanned: number;
       analyzed: number;
@@ -26,6 +28,7 @@ export default function ClientInit() {
     const scanDirectoryEl = document.getElementById('scan-directory') as HTMLInputElement;
     const scanRecentDirectoriesEl = document.getElementById('scan-recent-directories') as HTMLSelectElement;
     const scanUseLastBtn = document.getElementById('scan-use-last-btn') as HTMLButtonElement;
+    const scanPickDirectoryBtn = document.getElementById('scan-pick-directory-btn') as HTMLButtonElement | null;
     const scanBtn = document.getElementById('scan-btn') as HTMLButtonElement;
     const scanCancelBtn = document.getElementById('scan-cancel-btn') as HTMLButtonElement;
     const scanRescanModeEl = document.getElementById('scan-rescan-mode') as HTMLSelectElement;
@@ -57,7 +60,6 @@ export default function ClientInit() {
     const panelLibrary = document.getElementById('panel-library') as HTMLElement;
     const setsPanel = document.getElementById('sets-panel') as HTMLElement;
     const libraryPanel = document.getElementById('library-panel') as HTMLElement;
-    const globalPlayBtn = document.getElementById('global-play-btn') as HTMLButtonElement;
 
     // ── State ─────────────────────────────────────────────────────────────────
     const activeTrackKey = 'dj-assist-active-track-id';
@@ -1114,10 +1116,6 @@ export default function ClientInit() {
         const setPlaying = (playing: boolean) => {
           playBtn.classList.toggle('playing', playing);
           playBtn.innerHTML = playing ? '<span class="btn-icon">❚❚</span> Pause' : '<span class="btn-icon">▶</span> Play';
-          if (globalPlayBtn) {
-            globalPlayBtn.classList.toggle('playing', playing);
-            globalPlayBtn.textContent = playing ? '❚❚' : '▶';
-          }
         };
         localAudio.addEventListener('play', () => { setPlaying(true); saveResumeState(); });
         localAudio.addEventListener('pause', () => { setPlaying(false); saveResumeState(); });
@@ -1743,10 +1741,14 @@ export default function ClientInit() {
       }
     }
 
-    // ── Global play/pause ─────────────────────────────────────────────────────
-    globalPlayBtn?.addEventListener('click', () => {
+    // ── Keyboard playback toggle ─────────────────────────────────────────────
+    document.addEventListener('keydown', (event) => {
+      if (event.code !== 'Space') return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, button, [contenteditable="true"]')) return;
       const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
       if (!audio) return;
+      event.preventDefault();
       if (audio.paused) audio.play().catch(() => {}); else audio.pause();
     });
 
@@ -1806,6 +1808,16 @@ export default function ClientInit() {
       scanDirectoryEl.value = recent[0];
       void preflightDirectory(scanDirectoryEl.value);
     });
+    if (scanPickDirectoryBtn) {
+      scanPickDirectoryBtn.addEventListener('click', async () => {
+        if (!adapter.supportsNativeFolderPicker) return;
+        const directory = await adapter.pickDirectory();
+        if (!directory) return;
+        scanDirectoryEl.value = directory;
+        pushRecentDirectory(directory);
+        void preflightDirectory(directory);
+      });
+    }
     scanLogClearBtn.addEventListener('click', () => { resetScanLog(); });
     initCollapsiblePanel('scan-log', scanLogToggleBtn, scanLogBodyEl, false);
     initCollapsiblePanel('scan-summary', scanSummaryToggleBtn, scanSummaryBodyEl, false);
@@ -1845,7 +1857,7 @@ export default function ClientInit() {
         await loadScanJob(String(scanHistory[0].id), false);
       }
     });
-  }, []);
+  }, [adapter]);
 
   return null;
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTracks, searchTracks, serializeTrack } from '@/lib/db';
 
+export const runtime = 'nodejs';
+
 async function checkSpotifyConnection(
   clientId: string,
   clientSecret: string,

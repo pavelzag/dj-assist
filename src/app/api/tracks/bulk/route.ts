@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bulkTrackAction } from '@/lib/db';
 
+export const runtime = 'nodejs';
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const ids = Array.isArray(body.ids) ? body.ids.map((value: unknown) => parseInt(String(value), 10)).filter((value: number) => Number.isFinite(value)) : [];

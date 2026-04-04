@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllTracks, getTrackById, serializeTrack } from '@/lib/db';
 import { getRecommendedNextTracks } from '@/lib/analyzer';
 
+export const runtime = 'nodejs';
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

@@ -8,21 +8,24 @@
   "scripts": {
     "predev": "node scripts/check-node.cjs",
     "dev": "rm -rf .next && next dev",
+    "electron:dev": "node scripts/check-node.cjs && node scripts/electron-dev.cjs",
     "prebuild": "node scripts/check-node.cjs",
     "build": "next build",
     "prestart": "node scripts/check-node.cjs",
-    "start": "next start"
+    "start": "next start",
+    "electron:start": "node scripts/check-node.cjs && node scripts/electron-start.cjs"
   },
   "dependencies": {
     "next": "^15.3.0",
+    "postgres": "^3.4.5",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "postgres": "^3.4.5"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "electron": "^41.1.1",
     "typescript": "^5.7.0"
   }
 }

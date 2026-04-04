@@ -6,6 +6,8 @@ import { createReadStream, existsSync, statSync } from 'fs';
 import path from 'path';
 import { getTrackById } from '@/lib/db';
 
+export const runtime = 'nodejs';
+
 function getMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
   const map: Record<string, string> = {

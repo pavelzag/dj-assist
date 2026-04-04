@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSetById, deleteSet } from '@/lib/db';
 
+export const runtime = 'nodejs';
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
