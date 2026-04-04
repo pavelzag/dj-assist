@@ -20,6 +20,8 @@ export default function ClientInit() {
     const keyFilterEl = document.getElementById('key-filter') as HTMLInputElement;
     const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement;
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement;
+    const browseScopeEl = document.getElementById('browse-scope') as HTMLElement;
+    const bulkToolbarEl = document.getElementById('bulk-toolbar') as HTMLElement;
     const sortsEl = document.getElementById('sorts') as HTMLElement;
     const scanDirectoryEl = document.getElementById('scan-directory') as HTMLInputElement;
     const scanRecentDirectoriesEl = document.getElementById('scan-recent-directories') as HTMLSelectElement;
@@ -35,9 +37,15 @@ export default function ClientInit() {
     const scanProgressFileEl = document.getElementById('scan-progress-file') as HTMLElement;
     const scanLogEl = document.getElementById('scan-log') as HTMLElement;
     const scanLogClearBtn = document.getElementById('scan-log-clear-btn') as HTMLButtonElement;
+    const scanLogToggleBtn = document.getElementById('scan-log-toggle-btn') as HTMLButtonElement;
+    const scanLogBodyEl = document.getElementById('scan-log-body') as HTMLElement;
     const scanSummaryEl = document.getElementById('scan-summary') as HTMLElement;
+    const scanSummaryToggleBtn = document.getElementById('scan-summary-toggle-btn') as HTMLButtonElement;
+    const scanSummaryBodyEl = document.getElementById('scan-summary-body') as HTMLElement;
     const scanPreflightEl = document.getElementById('scan-preflight') as HTMLElement;
     const scanHistoryEl = document.getElementById('scan-history') as HTMLElement;
+    const scanHistoryToggleBtn = document.getElementById('scan-history-toggle-btn') as HTMLButtonElement;
+    const scanHistoryBodyEl = document.getElementById('scan-history-body') as HTMLElement;
     const coverModal = document.getElementById('cover-modal') as HTMLElement;
     const coverImage = document.getElementById('cover-image') as HTMLImageElement;
     const coverTitle = document.getElementById('cover-title') as HTMLElement;
@@ -46,7 +54,9 @@ export default function ClientInit() {
     const statusbar = document.getElementById('statusbar') as HTMLElement;
     const panelTrack = document.getElementById('panel-track') as HTMLElement;
     const panelSets = document.getElementById('panel-sets') as HTMLElement;
+    const panelLibrary = document.getElementById('panel-library') as HTMLElement;
     const setsPanel = document.getElementById('sets-panel') as HTMLElement;
+    const libraryPanel = document.getElementById('library-panel') as HTMLElement;
     const globalPlayBtn = document.getElementById('global-play-btn') as HTMLButtonElement;
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -55,15 +65,24 @@ export default function ClientInit() {
     const scanRecentDirectoriesKey = 'dj-assist-scan-recent-directories';
     const scanVerboseKey = 'dj-assist-scan-verbose';
     const scanRescanModeKey = 'dj-assist-scan-rescan-mode';
+    const scanPanelStateKey = 'dj-assist-scan-panel-state';
     let activeTrackId: number | null = null;
     let activeScanJobId: string | null = null;
     let activeScanUnsubscribe: (() => void) | null = null;
     let tracks: Record<string, unknown>[] = [];
     let sortMode = 'bpm-asc';
+    let activeArtistScope = '';
+    let activeAlbumScope = '';
     let sets: Record<string, unknown>[] = [];
     let scanHistory: Record<string, unknown>[] = [];
+    let libraryOverview: Record<string, unknown> | null = null;
+    let watchFolders: Record<string, unknown>[] = [];
+    let runtimeHealth: Record<string, unknown> | null = null;
     let activeSetId: number | null = null;
     const trackMultipliers: Record<number, number> = {};
+    const nextTracksPageByTrackId: Record<number, number> = {};
+    const detailSectionCollapsed: Record<string, boolean> = {};
+    const selectedTrackIds = new Set<number>();
 
     // ── Utilities ─────────────────────────────────────────────────────────────
     function esc(value: unknown): string {
@@ -79,6 +98,103 @@ export default function ClientInit() {
       const minutes = Math.floor(s / 60);
       const remainder = Math.floor(s % 60);
       return `${minutes}:${String(remainder).padStart(2, '0')}`;
+    }
+
+    function normalizeText(value: unknown): string {
+      return String(value ?? '').trim().toLocaleLowerCase();
+    }
+
+    function albumNameFor(track: Record<string, unknown>): string {
+      return String(track.album ?? track.spotify_album_name ?? '').trim();
+    }
+
+    function matchesBrowseScope(track: Record<string, unknown>): boolean {
+      const artistMatches = !activeArtistScope || normalizeText(track.artist) === normalizeText(activeArtistScope);
+      const albumMatches = !activeAlbumScope || normalizeText(albumNameFor(track)) === normalizeText(activeAlbumScope);
+      return artistMatches && albumMatches;
+    }
+
+    function artistAlbums(artist: string): string[] {
+      if (!artist) return [];
+      const normalizedArtist = normalizeText(artist);
+      const albums = new Set<string>();
+      for (const track of tracks) {
+        if (normalizeText(track.artist) !== normalizedArtist) continue;
+        const album = albumNameFor(track);
+        if (album) albums.add(album);
+      }
+      return [...albums].sort((a, b) => a.localeCompare(b));
+    }
+
+    function relatedArtistTracks(track: Record<string, unknown>): Record<string, unknown>[] {
+      const artist = normalizeText(track.artist);
+      if (!artist) return [];
+      return tracks
+        .filter((item) => item.id !== track.id && normalizeText(item.artist) === artist)
+        .sort(compareTracks)
+        .slice(0, 12);
+    }
+
+    function renderBrowseScope() {
+      if (!activeArtistScope && !activeAlbumScope) {
+        browseScopeEl.innerHTML = '<span class="browse-scope-empty">Browsing entire library</span>';
+        return;
+      }
+      const parts = [];
+      if (activeArtistScope) {
+        parts.push(`<button type="button" class="scope-pill" data-nav-kind="artist" data-nav-value="${esc(activeArtistScope)}">Artist: ${esc(activeArtistScope)}</button>`);
+      }
+      if (activeAlbumScope) {
+        parts.push(`<button type="button" class="scope-pill" data-nav-kind="album" data-nav-value="${esc(activeAlbumScope)}">Album: ${esc(activeAlbumScope)}</button>`);
+      }
+      browseScopeEl.innerHTML = `
+        <span class="browse-scope-label">Browsing</span>
+        ${parts.join('')}
+        <button type="button" class="scope-clear-btn" id="browse-scope-clear">Clear</button>
+      `;
+      document.getElementById('browse-scope-clear')?.addEventListener('click', () => {
+        activeArtistScope = '';
+        activeAlbumScope = '';
+        renderBrowseScope();
+        renderList(tracks);
+      });
+    }
+
+    function navigateLibrary(kind: 'artist' | 'album', value: string, artistForAlbum = '') {
+      if (kind === 'artist') {
+        activeArtistScope = value.trim();
+        activeAlbumScope = '';
+      } else {
+        activeAlbumScope = value.trim();
+        if (artistForAlbum.trim()) activeArtistScope = artistForAlbum.trim();
+      }
+      renderBrowseScope();
+      renderList(tracks);
+    }
+
+    function bindLibraryNavLinks(root: ParentNode) {
+      root.querySelectorAll('[data-nav-kind][data-nav-value]').forEach((node) => {
+        node.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const target = event.currentTarget as HTMLElement;
+          const kind = target.dataset.navKind === 'album' ? 'album' : 'artist';
+          const value = target.dataset.navValue ?? '';
+          const artist = target.dataset.navArtist ?? '';
+          navigateLibrary(kind, value, artist);
+        });
+      });
+    }
+
+    function visibleTracks(items: Record<string, unknown>[]) {
+      return [...items]
+        .filter((track) => matchesBrowseScope(track))
+        .filter((track) => showOnlyNoBpmEl.checked ? !hasBpm(track) : hasBpm(track))
+        .sort(compareTracks);
+    }
+
+    function selectedTracks(): Record<string, unknown>[] {
+      return tracks.filter((track) => selectedTrackIds.has(Number(track.id)));
     }
 
     function setScanStatus(message: string, state: 'idle' | 'running' | 'success' | 'error' = 'idle') {
@@ -111,6 +227,58 @@ export default function ClientInit() {
 
     function resetScanLog() {
       scanLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity yet.</div>';
+    }
+
+    function getScanPanelState(): Record<string, boolean> {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(scanPanelStateKey) || '{}');
+        return parsed && typeof parsed === 'object' ? parsed as Record<string, boolean> : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function saveScanPanelState(next: Record<string, boolean>) {
+      try {
+        localStorage.setItem(scanPanelStateKey, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    function applyPanelCollapsedState(
+      panelId: string,
+      button: HTMLButtonElement,
+      body: HTMLElement,
+      collapsed: boolean,
+    ) {
+      body.hidden = collapsed;
+      button.textContent = collapsed ? 'Expand' : 'Collapse';
+      button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      button.dataset.collapsed = collapsed ? 'true' : 'false';
+      button.closest('.scan-log-panel, .scan-summary-panel, .scan-history-panel')?.classList.toggle('collapsed', collapsed);
+    }
+
+    function initCollapsiblePanel(
+      panelId: string,
+      button: HTMLButtonElement,
+      body: HTMLElement,
+      defaultCollapsed = false,
+    ) {
+      const state = getScanPanelState();
+      let collapsed = state[panelId] ?? defaultCollapsed;
+      applyPanelCollapsedState(panelId, button, body, collapsed);
+      button.addEventListener('click', () => {
+        collapsed = !collapsed;
+        applyPanelCollapsedState(panelId, button, body, collapsed);
+        saveScanPanelState({ ...getScanPanelState(), [panelId]: collapsed });
+      });
+      button.closest('.scan-log-head')?.addEventListener('click', (event) => {
+        if ((event.target as HTMLElement).closest('button')) return;
+        collapsed = !collapsed;
+        applyPanelCollapsedState(panelId, button, body, collapsed);
+        saveScanPanelState({ ...getScanPanelState(), [panelId]: collapsed });
+      });
     }
 
     function getRecentDirectories(): string[] {
@@ -177,6 +345,62 @@ export default function ClientInit() {
       });
     }
 
+    function renderBulkToolbar() {
+      const selected = selectedTracks();
+      if (!selected.length) {
+        bulkToolbarEl.innerHTML = '<div class="bulk-toolbar-empty">No tracks selected.</div>';
+        return;
+      }
+
+      const setOptions = sets.map((set) => `<option value="${set.id}">${esc(set.name)}</option>`).join('');
+      bulkToolbarEl.innerHTML = `
+        <div class="bulk-toolbar-main">
+          <strong>${selected.length} selected</strong>
+          <button type="button" class="btn" id="bulk-ignore-btn">Ignore</button>
+          <button type="button" class="btn" id="bulk-unignore-btn">Unignore</button>
+          <button type="button" class="btn" id="bulk-tags-btn">Add Tags</button>
+          <button type="button" class="btn" id="bulk-clear-tags-btn">Clear Tags</button>
+          ${sets.length ? `
+            <select id="bulk-set-select">
+              ${setOptions}
+            </select>
+            <button type="button" class="btn" id="bulk-add-set-btn">Add To Playlist</button>
+          ` : ''}
+          <button type="button" class="icon-btn" id="bulk-clear-selection-btn">Clear</button>
+        </div>
+      `;
+
+      const runBulkAction = async (action: string, extra: Record<string, unknown> = {}) => {
+        const res = await fetch('/api/tracks/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: [...selectedTrackIds], action, ...extra }),
+        });
+        if (!res.ok) return;
+        await loadTracks(searchEl.value.trim());
+        await loadLibraryOverview();
+      };
+
+      document.getElementById('bulk-ignore-btn')?.addEventListener('click', () => { void runBulkAction('ignore'); });
+      document.getElementById('bulk-unignore-btn')?.addEventListener('click', () => { void runBulkAction('unignore'); });
+      document.getElementById('bulk-tags-btn')?.addEventListener('click', () => {
+        const input = prompt('Add comma-separated tags to selected tracks');
+        if (!input) return;
+        void runBulkAction('add_tags', { tags: input.split(',').map((tag) => tag.trim()).filter(Boolean) });
+      });
+      document.getElementById('bulk-clear-tags-btn')?.addEventListener('click', () => { void runBulkAction('clear_tags'); });
+      document.getElementById('bulk-add-set-btn')?.addEventListener('click', () => {
+        const select = document.getElementById('bulk-set-select') as HTMLSelectElement | null;
+        if (!select?.value) return;
+        void runBulkAction('add_to_set', { setId: parseInt(select.value, 10) });
+      });
+      document.getElementById('bulk-clear-selection-btn')?.addEventListener('click', () => {
+        selectedTrackIds.clear();
+        renderBulkToolbar();
+        renderList(tracks);
+      });
+    }
+
     // ── BPM display helpers ───────────────────────────────────────────────────
     function getMult(trackId: number): number {
       return trackMultipliers[trackId] ?? 1;
@@ -208,6 +432,167 @@ export default function ClientInit() {
       });
     }
 
+    async function saveTrackMetadata(trackId: number, patch: Record<string, unknown>) {
+      const res = await fetch(`/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) return null;
+      await loadTracks(searchEl.value.trim());
+      await loadLibraryOverview();
+      const payload = await res.json();
+      renderDetail(payload);
+      return payload;
+    }
+
+    async function drawWaveform(
+      trackId: number,
+      src: string,
+      cues: Array<{ time: number; label?: string }>,
+      audio: HTMLAudioElement | null,
+    ) {
+      const canvas = document.getElementById(`waveform-${trackId}`) as HTMLCanvasElement | null;
+      if (!canvas) return;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      const width = canvas.clientWidth || 640;
+      const height = canvas.clientHeight || 120;
+      canvas.width = width;
+      canvas.height = height;
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = 'rgba(255,255,255,0.04)';
+      context.fillRect(0, 0, width, height);
+      context.strokeStyle = 'rgba(255,108,0,0.9)';
+      context.lineWidth = 1;
+
+      try {
+        const res = await fetch(src);
+        const arrayBuffer = await res.arrayBuffer();
+        const audioContext = new AudioContext();
+        const buffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        const channel = buffer.getChannelData(0);
+        const step = Math.ceil(channel.length / width);
+        const amp = height / 2;
+        const peaks: Array<{ min: number; max: number }> = [];
+        for (let i = 0; i < width; i += 1) {
+          let min = 1;
+          let max = -1;
+          for (let j = 0; j < step; j += 1) {
+            const datum = channel[(i * step) + j] ?? 0;
+            if (datum < min) min = datum;
+            if (datum > max) max = datum;
+          }
+          peaks.push({ min, max });
+        }
+
+        let rafId = 0;
+        const renderFrame = (currentTime = audio?.currentTime ?? 0) => {
+          context.clearRect(0, 0, width, height);
+          context.fillStyle = 'rgba(255,255,255,0.04)';
+          context.fillRect(0, 0, width, height);
+          const progressRatio = buffer.duration > 0 ? Math.max(0, Math.min(1, currentTime / buffer.duration)) : 0;
+          const progressX = progressRatio * width;
+
+          context.strokeStyle = 'rgba(255,255,255,0.18)';
+          context.lineWidth = 1;
+          context.beginPath();
+          peaks.forEach((peak, index) => {
+            context.moveTo(index + 0.5, (1 + peak.min) * amp);
+            context.lineTo(index + 0.5, Math.max(1, (1 + peak.max) * amp));
+          });
+          context.stroke();
+
+          context.save();
+          context.beginPath();
+          context.rect(0, 0, progressX, height);
+          context.clip();
+          context.strokeStyle = 'rgba(255,108,0,0.95)';
+          context.lineWidth = 1.2;
+          context.beginPath();
+          peaks.forEach((peak, index) => {
+            context.moveTo(index + 0.5, (1 + peak.min) * amp);
+            context.lineTo(index + 0.5, Math.max(1, (1 + peak.max) * amp));
+          });
+          context.stroke();
+          context.restore();
+
+          context.strokeStyle = 'rgba(255,212,138,0.95)';
+          context.lineWidth = 1;
+          for (const cue of cues) {
+            const x = buffer.duration > 0 ? (cue.time / buffer.duration) * width : 0;
+            context.beginPath();
+            context.moveTo(x, 0);
+            context.lineTo(x, height);
+            context.stroke();
+          }
+
+          context.strokeStyle = 'rgba(255,255,255,0.95)';
+          context.lineWidth = 2;
+          context.beginPath();
+          context.moveTo(progressX, 0);
+          context.lineTo(progressX, height);
+          context.stroke();
+        };
+
+        const seekFromPointer = (clientX: number) => {
+          if (!audio || !Number.isFinite(buffer.duration) || buffer.duration <= 0) return;
+          const rect = canvas.getBoundingClientRect();
+          const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+          audio.currentTime = ratio * buffer.duration;
+          renderFrame(audio.currentTime);
+        };
+
+        renderFrame();
+
+        if (audio) {
+          let scrubbing = false;
+          const stopScrub = () => { scrubbing = false; };
+          const syncWaveform = () => { renderFrame(audio.currentTime); };
+          const tick = () => {
+            renderFrame(audio.currentTime);
+            if (!audio.paused && !audio.ended) rafId = requestAnimationFrame(tick);
+          };
+
+          canvas.addEventListener('pointerdown', (event) => {
+            scrubbing = true;
+            canvas.setPointerCapture(event.pointerId);
+            seekFromPointer(event.clientX);
+          });
+          canvas.addEventListener('pointermove', (event) => {
+            if (!scrubbing) return;
+            seekFromPointer(event.clientX);
+          });
+          canvas.addEventListener('pointerup', stopScrub);
+          canvas.addEventListener('pointercancel', stopScrub);
+          canvas.addEventListener('click', (event) => {
+            if (scrubbing) return;
+            seekFromPointer(event.clientX);
+          });
+
+          audio.addEventListener('timeupdate', syncWaveform);
+          audio.addEventListener('seeked', syncWaveform);
+          audio.addEventListener('loadedmetadata', syncWaveform);
+          audio.addEventListener('pause', () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = 0;
+            syncWaveform();
+          });
+          audio.addEventListener('play', () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(tick);
+          });
+        }
+
+        await audioContext.close();
+      } catch {
+        context.fillStyle = 'rgba(255,209,209,0.9)';
+        context.font = '12px sans-serif';
+        context.fillText('Waveform preview unavailable', 12, 20);
+      }
+    }
+
     // ── Panel switching ───────────────────────────────────────────────────────
     document.querySelectorAll('.panel-tab').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -216,7 +601,9 @@ export default function ClientInit() {
         btn.classList.add('active');
         panelTrack.style.display = panel === 'track' ? '' : 'none';
         panelSets.style.display = panel === 'sets' ? '' : 'none';
+        panelLibrary.style.display = panel === 'library' ? '' : 'none';
         if (panel === 'sets') renderSetsPanel();
+        if (panel === 'library') renderLibraryPanel();
       });
     });
 
@@ -279,15 +666,18 @@ export default function ClientInit() {
     }
 
     function renderList(items: Record<string, unknown>[]) {
-      const sorted = [...items].filter((t) => showOnlyNoBpmEl.checked ? !hasBpm(t) : hasBpm(t)).sort(compareTracks);
+      const sorted = visibleTracks(items);
       hiddenCountBadge.textContent = `Hidden: ${Math.max(0, items.length - sorted.length)}`;
-      statusbar.innerHTML = `Tracks: <strong>${tracks.length}</strong> | Showing: <strong>${sorted.length}</strong>`;
+      statusbar.innerHTML = `Tracks: <strong>${tracks.length}</strong> | Showing: <strong>${sorted.length}</strong>${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''}`;
       listEl.innerHTML = sorted.map((track) => `
         <div class="row ${track.id === activeTrackId ? 'active' : ''}" data-id="${track.id}">
+          <label class="row-check">
+            <input type="checkbox" class="track-select" data-track-id="${track.id}" ${selectedTrackIds.has(Number(track.id)) ? 'checked' : ''} />
+          </label>
           ${track.album_art_url ? `<img class="thumb" src="${esc(track.album_art_url)}" alt="" />` : '<div class="thumb placeholder">♪</div>'}
           <div>
-            <strong>${esc(track.artist ?? 'Unknown Artist')} - ${esc(track.title ?? 'Untitled')}</strong>
-            <span>${esc(track.path)}</span>
+            <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</strong>
+            <span>${albumNameFor(track) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button> · ` : ''}${Array.isArray(track.custom_tags) && track.custom_tags.length ? `${esc((track.custom_tags as string[]).join(', '))} · ` : ''}${esc(track.path)}</span>
           </div>
           <div class="bpm-cell" data-track-id="${track.id}" title="Click to cycle BPM multiplier">
             <strong>${displayBpm(track.effective_bpm, track.id as number)}</strong>
@@ -299,6 +689,18 @@ export default function ClientInit() {
       listEl.querySelectorAll('.row').forEach((row) => {
         row.addEventListener('click', () => selectTrack((row as HTMLElement).dataset.id!, true));
       });
+      listEl.querySelectorAll('.track-select[data-track-id]').forEach((checkbox) => {
+        checkbox.addEventListener('click', (event) => {
+          event.stopPropagation();
+        });
+        checkbox.addEventListener('change', () => {
+          const trackId = parseInt((checkbox as HTMLInputElement).dataset.trackId!, 10);
+          if ((checkbox as HTMLInputElement).checked) selectedTrackIds.add(trackId);
+          else selectedTrackIds.delete(trackId);
+          renderBulkToolbar();
+        });
+      });
+      bindLibraryNavLinks(listEl);
       listEl.querySelectorAll('.bpm-cell[data-track-id]').forEach((cell) => {
         cell.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -315,6 +717,7 @@ export default function ClientInit() {
           }
         });
       });
+      renderBulkToolbar();
     }
 
     // ── BPM editing ───────────────────────────────────────────────────────────
@@ -360,14 +763,38 @@ export default function ClientInit() {
       });
     }
 
+    function sectionStateKey(trackId: number, section: string): string {
+      return `${trackId}:${section}`;
+    }
+
+    function isDetailSectionCollapsed(trackId: number, section: string): boolean {
+      return Boolean(detailSectionCollapsed[sectionStateKey(trackId, section)]);
+    }
+
+    function setDetailSectionCollapsed(trackId: number, section: string, collapsed: boolean) {
+      detailSectionCollapsed[sectionStateKey(trackId, section)] = collapsed;
+    }
+
     // ── Track detail ──────────────────────────────────────────────────────────
     function renderDetail(payload: Record<string, unknown>) {
       const track = payload.track as Record<string, unknown>;
+      const otherTracks = relatedArtistTracks(track);
+      const albums = artistAlbums(String(track.artist ?? ''));
+      const nextTracks = (payload.next_tracks ?? []) as Record<string, unknown>[];
       const coverUrl = (track.album_art_url as string) || '';
       const coverLabel = (track.album ?? track.title ?? 'Unknown') as string;
       const scrubId = `scrub-${track.id}`;
       const trackId = track.id as number;
       const mult = getMult(trackId);
+      const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
+      const cues = Array.isArray(track.manual_cues) ? track.manual_cues as Array<{ time: number; label?: string }> : [];
+      const nextPageSize = 10;
+      const nextPageCount = Math.max(1, Math.ceil(nextTracks.length / nextPageSize));
+      const currentNextPage = Math.min(nextTracksPageByTrackId[trackId] ?? 0, nextPageCount - 1);
+      nextTracksPageByTrackId[trackId] = currentNextPage;
+      const pagedNextTracks = nextTracks.slice(currentNextPage * nextPageSize, (currentNextPage + 1) * nextPageSize);
+      const nextCollapsed = isDetailSectionCollapsed(trackId, 'next-tracks');
+      const artistCollapsed = isDetailSectionCollapsed(trackId, 'artist-tracks');
       const bpmDisplay = track.effective_bpm
         ? `<span class="bpm-val" id="bpm-display-${trackId}" data-bpm="${track.effective_bpm}" title="Click to edit">${displayBpm(track.effective_bpm, trackId)}</span>`
         : `<span class="bpm-val" id="bpm-display-${trackId}" data-bpm="" title="Click to set BPM">--</span>`;
@@ -388,7 +815,7 @@ export default function ClientInit() {
             ${coverUrl ? `<img src="${esc(coverUrl)}" alt="Album cover" />` : `<div class="cover-placeholder"><div class="icon">♪</div><div>No cover</div><small>${esc(coverLabel)}</small></div>`}
           </div>
           <div class="hero-copy">
-            <h2>${esc(track.artist ?? 'Unknown Artist')} - ${esc(track.title ?? 'Untitled')}</h2>
+            <h2><button type="button" class="nav-link hero-link" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</h2>
             <div class="meta">
               <span>ID ${track.id}</span>
               <span>${bpmDisplay} BPM ${multButtons}</span>
@@ -396,8 +823,7 @@ export default function ClientInit() {
               <span>${formatDuration(track.duration)}</span>
             </div>
             <div class="chips">
-              ${track.album ? `<span class="chip">${esc(track.album)}</span>` : ''}
-              ${track.spotify_album_name && track.spotify_album_name !== track.album ? `<span class="chip subtle">${esc(track.spotify_album_name)}</span>` : ''}
+              ${albumNameFor(track) ? `<button type="button" class="chip nav-chip" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>` : ''}
               ${track.album_art_url ? '<span class="chip success">Album art</span>' : '<span class="chip subtle">No album art</span>'}
               ${track.analysis_status ? `<span class="chip subtle">${esc(track.analysis_status)}</span>` : ''}
               ${track.bpm_source ? `<span class="chip subtle">BPM ${esc(track.bpm_source)}</span>` : ''}
@@ -426,28 +852,96 @@ export default function ClientInit() {
               <input id="${scrubId}" type="range" min="0" max="0" value="0" step="0.01" />
             </div>
           </div>
+          <div class="waveform-panel">
+            <div class="scan-log-head">
+              <strong>Waveform And Cues</strong>
+              <div class="scan-panel-actions">
+                <button class="icon-btn" id="add-cue-btn" type="button">Add Cue</button>
+                <button class="icon-btn" id="clear-cues-btn" type="button">Clear Cues</button>
+              </div>
+            </div>
+            <canvas class="waveform-canvas" id="waveform-${track.id}"></canvas>
+            <div class="cue-list" id="cue-list-${track.id}">
+              ${cues.length ? cues.map((cue, index) => `<button type="button" class="chip nav-chip cue-chip" data-cue-index="${index}" data-cue-time="${cue.time}">${esc(cue.label ?? `Cue ${index + 1}`)} · ${formatDuration(cue.time)}</button>`).join('') : '<span class="chip subtle">No cue points yet</span>'}
+            </div>
+          </div>
           <div class="chips" style="margin-bottom:14px;">
             ${track.analysis_stage ? `<span class="chip subtle">Stage ${esc(track.analysis_stage)}</span>` : ''}
             ${track.spotify_id ? `<span class="chip success">Spotify matched</span>` : `<span class="chip subtle">No Spotify match</span>`}
             ${track.analysis_error ? `<span class="chip warn">${esc(track.analysis_error)}</span>` : ''}
           </div>
-          <h3>Can play next</h3>
-          <div class="suggestions">
-            ${((payload.next_tracks ?? []) as Record<string, unknown>[]).map((item) => `
-              <div class="suggestion" data-track-id="${item.id}">
-                <strong>${esc(item.artist ?? 'Unknown Artist')} - ${esc(item.title ?? 'Untitled')}</strong><br>
-                <small><span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${esc(item.reason ?? '')}</small>
+          <section class="detail-section ${nextCollapsed ? 'collapsed' : ''}" id="next-tracks-section" data-section="next-tracks">
+            <div class="detail-section-head" id="next-tracks-head">
+              <h3>Can play next</h3>
+              <div class="detail-section-actions">
+                <span class="detail-page-indicator" id="next-page-indicator">Page ${currentNextPage + 1} / ${nextPageCount}</span>
+                <button type="button" class="icon-btn detail-page-btn" id="next-first-btn" ${currentNextPage === 0 ? 'disabled' : ''}>First</button>
+                <button type="button" class="icon-btn detail-page-btn" id="next-prev-btn" ${currentNextPage === 0 ? 'disabled' : ''}>Previous</button>
+                <button type="button" class="icon-btn detail-page-btn" id="next-next-btn" ${currentNextPage >= nextPageCount - 1 ? 'disabled' : ''}>Next</button>
+                <button type="button" class="icon-btn detail-toggle-btn" id="next-tracks-toggle-btn">${nextCollapsed ? 'Expand' : 'Collapse'}</button>
               </div>
-            `).join('') || '<div class="empty">No compatible tracks found.</div>'}
+            </div>
+            <div class="detail-section-body" id="next-tracks-body" ${nextCollapsed ? 'hidden' : ''}>
+              <div class="suggestions">
+                ${pagedNextTracks.map((item) => `
+                  <div class="suggestion" data-track-id="${item.id}">
+                    <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
+                    <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${esc(item.reason ?? '')}</small>
+                  </div>
+                `).join('') || '<div class="empty">No compatible tracks found.</div>'}
+              </div>
+            </div>
+          </section>
+          <div class="artist-nav-panel">
+            <div class="artist-nav-block">
+              <h3>Artist Catalog</h3>
+              <div class="chips">
+                <button type="button" class="chip nav-chip" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">All songs by ${esc(track.artist ?? 'Unknown Artist')}</button>
+                ${albums.map((album) => `<button type="button" class="chip nav-chip subtle" data-nav-kind="album" data-nav-value="${esc(album)}" data-nav-artist="${esc(track.artist ?? '')}">${esc(album)}</button>`).join('') || '<span class="chip subtle">No album metadata</span>'}
+              </div>
+            </div>
+            <section class="artist-nav-block detail-section ${artistCollapsed ? 'collapsed' : ''}" id="artist-tracks-section" data-section="artist-tracks">
+              <div class="detail-section-head" id="artist-tracks-head">
+                <h3>Other Songs By Artist</h3>
+                <div class="detail-section-actions">
+                  <button type="button" class="icon-btn detail-toggle-btn" id="artist-tracks-toggle-btn">${artistCollapsed ? 'Expand' : 'Collapse'}</button>
+                </div>
+              </div>
+              <div class="detail-section-body" id="artist-tracks-body" ${artistCollapsed ? 'hidden' : ''}>
+                <div class="suggestions compact">
+                  ${otherTracks.map((item) => `
+                    <div class="suggestion" data-track-id="${item.id}">
+                      <strong>${esc(item.title ?? 'Untitled')}</strong><br>
+                      <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')}</small>
+                    </div>
+                  `).join('') || '<div class="empty">No other songs by this artist in the library.</div>'}
+                </div>
+              </div>
+            </section>
           </div>
           ${track.analysis_debug ? `
             <details class="debug"><summary>Debug info</summary>
             <pre class="debug-text">${esc(track.analysis_debug)}</pre></details>
           ` : ''}
+          <div class="metadata-editor">
+            <h3>Edit Metadata</h3>
+            <div class="metadata-grid">
+              <label><span>Artist</span><input id="meta-artist" value="${esc(track.artist ?? '')}" /></label>
+              <label><span>Title</span><input id="meta-title" value="${esc(track.title ?? '')}" /></label>
+              <label><span>Album</span><input id="meta-album" value="${esc(track.album ?? '')}" /></label>
+              <label><span>Key</span><input id="meta-key" value="${esc(track.key ?? track.effective_key ?? '')}" /></label>
+              <label class="metadata-wide"><span>Tags</span><input id="meta-tags" value="${esc(trackTags.join(', '))}" placeholder="warmup, vocal, peak-time" /></label>
+              <label class="metadata-toggle"><input id="meta-ignored" type="checkbox" ${track.ignored ? 'checked' : ''} /><span>Ignored</span></label>
+            </div>
+            <div class="buttons">
+              <button class="btn" id="save-metadata-btn" type="button">Save Metadata</button>
+            </div>
+          </div>
         </div>
       `;
 
       attachBpmEdit(trackId);
+      bindLibraryNavLinks(detailEl);
 
       document.getElementById(`bpm-mult-${trackId}`)?.querySelectorAll('button[data-mult]').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -486,12 +980,99 @@ export default function ClientInit() {
       detailEl.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
         card.addEventListener('click', () => selectTrack((card as HTMLElement).dataset.trackId!, true));
       });
+      const bindSectionSuggestions = (root: ParentNode) => {
+        root.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
+          card.addEventListener('click', () => selectTrack((card as HTMLElement).dataset.trackId!, true));
+        });
+        bindLibraryNavLinks(root);
+      };
+      const renderNextTracksPage = () => {
+        const nextSection = document.getElementById('next-tracks-section');
+        const nextBody = document.getElementById('next-tracks-body');
+        const nextToggleBtn = document.getElementById('next-tracks-toggle-btn') as HTMLButtonElement | null;
+        const nextIndicator = document.getElementById('next-page-indicator');
+        const nextFirstBtn = document.getElementById('next-first-btn') as HTMLButtonElement | null;
+        const nextPrevBtn = document.getElementById('next-prev-btn') as HTMLButtonElement | null;
+        const nextNextBtn = document.getElementById('next-next-btn') as HTMLButtonElement | null;
+        if (!nextSection || !nextBody || !nextToggleBtn || !nextIndicator || !nextFirstBtn || !nextPrevBtn || !nextNextBtn) return;
+        const page = Math.min(nextPageCount - 1, Math.max(0, nextTracksPageByTrackId[trackId] ?? 0));
+        nextTracksPageByTrackId[trackId] = page;
+        const collapsed = isDetailSectionCollapsed(trackId, 'next-tracks');
+        const items = nextTracks.slice(page * nextPageSize, (page + 1) * nextPageSize);
+        nextSection.classList.toggle('collapsed', collapsed);
+        nextBody.hidden = collapsed;
+        nextToggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
+        nextIndicator.textContent = `Page ${page + 1} / ${nextPageCount}`;
+        nextFirstBtn.disabled = page === 0;
+        nextPrevBtn.disabled = page === 0;
+        nextNextBtn.disabled = page >= nextPageCount - 1;
+        nextBody.innerHTML = `
+          <div class="suggestions">
+            ${items.map((item) => `
+              <div class="suggestion" data-track-id="${item.id}">
+                <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
+                <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${esc(item.reason ?? '')}</small>
+              </div>
+            `).join('') || '<div class="empty">No compatible tracks found.</div>'}
+          </div>
+        `;
+        bindSectionSuggestions(nextBody);
+      };
+      const applyArtistTracksState = () => {
+        const section = document.getElementById('artist-tracks-section');
+        const body = document.getElementById('artist-tracks-body');
+        const toggleBtn = document.getElementById('artist-tracks-toggle-btn') as HTMLButtonElement | null;
+        if (!section || !body || !toggleBtn) return;
+        const collapsed = isDetailSectionCollapsed(trackId, 'artist-tracks');
+        section.classList.toggle('collapsed', collapsed);
+        body.hidden = collapsed;
+        toggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
+      };
+      const toggleDetailSection = (section: 'next-tracks' | 'artist-tracks') => {
+        setDetailSectionCollapsed(trackId, section, !isDetailSectionCollapsed(trackId, section));
+        if (section === 'next-tracks') renderNextTracksPage();
+        else applyArtistTracksState();
+      };
+      document.getElementById('next-first-btn')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        nextTracksPageByTrackId[trackId] = 0;
+        renderNextTracksPage();
+      });
+      document.getElementById('next-prev-btn')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        nextTracksPageByTrackId[trackId] = Math.max(0, (nextTracksPageByTrackId[trackId] ?? 0) - 1);
+        renderNextTracksPage();
+      });
+      document.getElementById('next-next-btn')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        nextTracksPageByTrackId[trackId] = Math.min(nextPageCount - 1, (nextTracksPageByTrackId[trackId] ?? 0) + 1);
+        renderNextTracksPage();
+      });
+      document.getElementById('next-tracks-toggle-btn')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleDetailSection('next-tracks');
+      });
+      document.getElementById('artist-tracks-toggle-btn')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleDetailSection('artist-tracks');
+      });
+      document.getElementById('next-tracks-head')?.addEventListener('click', (event) => {
+        if ((event.target as HTMLElement).closest('.detail-page-btn')) return;
+        toggleDetailSection('next-tracks');
+      });
+      document.getElementById('artist-tracks-head')?.addEventListener('click', () => {
+        toggleDetailSection('artist-tracks');
+      });
+      renderNextTracksPage();
+      applyArtistTracksState();
 
       // Audio player
       const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
       const coverBtn = document.getElementById('cover-btn') as HTMLButtonElement | null;
       const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
       const scrubRange = document.getElementById(scrubId) as HTMLInputElement | null;
+      const addCueBtn = document.getElementById('add-cue-btn') as HTMLButtonElement | null;
+      const clearCuesBtn = document.getElementById('clear-cues-btn') as HTMLButtonElement | null;
       const currentTimeEl = document.getElementById(`${scrubId}-current`);
       const durationTimeEl = document.getElementById(`${scrubId}-duration`);
       const resumeKey = `dj-assist-resume-${track.id}`;
@@ -547,6 +1128,40 @@ export default function ClientInit() {
         // Sync global button to current state (e.g. resumed track)
         setPlaying(!localAudio.paused);
       }
+
+      void drawWaveform(trackId, `/api/tracks/${track.id}/stream`, cues, localAudio);
+      detailEl.querySelectorAll(`.cue-chip[data-cue-time]`).forEach((chip) => {
+        chip.addEventListener('click', () => {
+          if (!localAudio) return;
+          localAudio.currentTime = Number((chip as HTMLElement).dataset.cueTime ?? 0);
+          localAudio.play().catch(() => {});
+        });
+      });
+      addCueBtn?.addEventListener('click', async () => {
+        if (!localAudio) return;
+        const nextCues = [...cues, { time: Number(localAudio.currentTime.toFixed(2)), label: `Cue ${cues.length + 1}` }];
+        await saveTrackMetadata(trackId, { manual_cues: nextCues });
+      });
+      clearCuesBtn?.addEventListener('click', async () => {
+        await saveTrackMetadata(trackId, { manual_cues: [] });
+      });
+
+      document.getElementById('save-metadata-btn')?.addEventListener('click', async () => {
+        const artistInput = document.getElementById('meta-artist') as HTMLInputElement;
+        const titleInput = document.getElementById('meta-title') as HTMLInputElement;
+        const albumInput = document.getElementById('meta-album') as HTMLInputElement;
+        const keyInput = document.getElementById('meta-key') as HTMLInputElement;
+        const tagsInput = document.getElementById('meta-tags') as HTMLInputElement;
+        const ignoredInput = document.getElementById('meta-ignored') as HTMLInputElement;
+        await saveTrackMetadata(trackId, {
+          artist: artistInput.value.trim(),
+          title: titleInput.value.trim(),
+          album: albumInput.value.trim(),
+          key: keyInput.value.trim(),
+          custom_tags: tagsInput.value.split(',').map((tag) => tag.trim()).filter(Boolean),
+          ignored: ignoredInput.checked,
+        });
+      });
 
       if (coverBtn && track.album_art_url) {
         coverBtn.addEventListener('click', () => {
@@ -615,12 +1230,13 @@ export default function ClientInit() {
           tracksDiv.innerHTML = set.tracks.map((t: Record<string, unknown>) => `
             <div class="set-track-row" data-set-id="${setId}" data-position="${t.position}">
               <div>
-                <strong>${esc(t.artist ?? 'Unknown')} - ${esc(t.title ?? 'Untitled')}</strong>
-                <span>${t.bpm ? displayBpm(t.bpm, t.id as number) + ' BPM' : '--'} · ${esc(t.key ?? '--')}</span>
+                <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(t.artist ?? 'Unknown')}">${esc(t.artist ?? 'Unknown')}</button> - ${esc(t.title ?? 'Untitled')}</strong>
+                <span>${albumNameFor(t) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(t))}" data-nav-artist="${esc(t.artist ?? '')}">${esc(albumNameFor(t))}</button> · ` : ''}${t.bpm ? displayBpm(t.bpm, t.id as number) + ' BPM' : '--'} · ${esc(t.key ?? '--')}</span>
               </div>
               <button class="icon-btn danger remove-track-btn" data-set-id="${setId}" data-position="${t.position}" title="Remove">✕</button>
             </div>
-          `).join('');
+          `).join('') + `<div class="set-suggestions" id="set-suggestions-${setId}"><div class="scan-log-entry info">Loading intelligent suggestions…</div></div>`;
+          bindLibraryNavLinks(tracksDiv);
           tracksDiv.querySelectorAll('.remove-track-btn').forEach((btn) => {
             btn.addEventListener('click', async () => {
               const sid = parseInt((btn as HTMLElement).dataset.setId!, 10);
@@ -629,6 +1245,32 @@ export default function ClientInit() {
               renderSetsPanel();
             });
           });
+          const lastTrack = set.tracks[set.tracks.length - 1];
+          if (lastTrack?.id) {
+            const nextRes = await fetch(`/api/tracks/${lastTrack.id}`);
+            const nextPayload = await nextRes.json();
+            const suggestions = (nextPayload.next_tracks ?? []) as Record<string, unknown>[];
+            const container = document.getElementById(`set-suggestions-${setId}`);
+            if (container) {
+              container.innerHTML = `
+                <h4>Playlist Intelligence</h4>
+                <div class="suggestions compact">
+                  ${suggestions.slice(0, 6).map((item) => `
+                    <div class="suggestion" data-track-id="${item.id}">
+                      <strong>${esc(item.artist ?? 'Unknown')} - ${esc(item.title ?? 'Untitled')}</strong><br>
+                      <small>${esc(item.reason ?? 'Suggested')} · ${displayBpm(item.effective_bpm, item.id as number)} BPM · ${esc(item.effective_key ?? '--')}</small>
+                    </div>
+                  `).join('') || '<div class="empty">No recommendations available.</div>'}
+                </div>
+              `;
+              container.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
+                card.addEventListener('click', () => {
+                  document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+                  void selectTrack((card as HTMLElement).dataset.trackId!, false);
+                });
+              });
+            }
+          }
         });
       });
 
@@ -659,6 +1301,207 @@ export default function ClientInit() {
       };
       btn.addEventListener('click', create);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
+    }
+
+    async function loadLibraryOverview() {
+      const res = await fetch('/api/library');
+      if (!res.ok) return;
+      libraryOverview = await res.json();
+      renderLibraryPanel();
+    }
+
+    async function loadRuntimeHealth() {
+      const res = await fetch('/api/health');
+      if (!res.ok) return;
+      runtimeHealth = (await res.json()).runtime ?? null;
+      renderLibraryPanel();
+    }
+
+    async function loadWatchFolders() {
+      const res = await fetch('/api/watch');
+      if (!res.ok) return;
+      watchFolders = (await res.json()).watches ?? [];
+      renderLibraryPanel();
+    }
+
+    function applySmartCrate(query: string) {
+      if (query === 'bpm:missing') {
+        showOnlyNoBpmEl.checked = true;
+        loadTracks(searchEl.value.trim());
+        return;
+      }
+      if (query === 'ignored:true') {
+        searchEl.value = '';
+        renderList(tracks.filter((track) => Boolean(track.ignored)));
+        return;
+      }
+      if (query === 'art:missing') {
+        searchEl.value = '';
+        renderList(tracks.filter((track) => !track.album_art_url));
+        return;
+      }
+      if (query === 'spotify:missing') {
+        renderList(tracks.filter((track) => !track.spotify_id));
+        return;
+      }
+      if (query === 'decode:failed') {
+        renderList(tracks.filter((track) => String(track.decode_failed ?? '') === 'true'));
+        return;
+      }
+      if (query === 'key:missing') {
+        renderList(tracks.filter((track) => !track.effective_key));
+      }
+    }
+
+    function renderLibraryPanel() {
+      if (!libraryOverview) {
+        libraryPanel.innerHTML = '<div class="empty">Loading library tools…</div>';
+        return;
+      }
+
+      const health = (libraryOverview.health as Record<string, unknown>) ?? {};
+      const smartCrates = (libraryOverview.smart_crates as Record<string, unknown>[]) ?? [];
+      const duplicates = (libraryOverview.duplicates as Record<string, unknown>[]) ?? [];
+      const artists = (libraryOverview.artists as Record<string, unknown>[]) ?? [];
+      const albums = (libraryOverview.albums as Record<string, unknown>[]) ?? [];
+      const tags = (libraryOverview.tags as Record<string, unknown>[]) ?? [];
+
+      libraryPanel.innerHTML = `
+        <div class="library-grid">
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Collection Health</strong></div>
+            <div class="scan-summary">
+              ${Object.entries(health).map(([label, value]) => `<div class="scan-summary-item"><span>${esc(label.replace(/_/g, ' '))}</span><strong>${esc(value)}</strong></div>`).join('')}
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Runtime Health</strong></div>
+            <div class="runtime-list">
+              <div><strong>Node</strong><span>${esc(runtimeHealth?.node ?? 'unknown')}</span></div>
+              <div><strong>Python</strong><span>${esc(runtimeHealth?.python ?? runtimeHealth?.python_error ?? 'unknown')}</span></div>
+              <div><strong>Database</strong><span>${runtimeHealth?.database_url_set ? 'configured' : 'missing DATABASE_URL'}</span></div>
+              <div><strong>Spotify</strong><span>${Array.isArray(runtimeHealth?.spotify_missing) && runtimeHealth?.spotify_missing.length ? esc((runtimeHealth?.spotify_missing as string[]).join(', ')) : 'configured'}</span></div>
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Smart Crates</strong></div>
+            <div class="chips">
+              ${smartCrates.map((crate) => `<button type="button" class="chip nav-chip smart-crate-btn" data-query="${esc(crate.query)}">${esc(crate.label)} · ${esc(crate.count)}</button>`).join('')}
+            </div>
+            <div class="chips">
+              ${tags.slice(0, 12).map((tag) => `<button type="button" class="chip nav-chip tag-filter-btn" data-tag="${esc(tag.tag)}">${esc(tag.tag)} · ${esc(tag.count)}</button>`).join('') || '<span class="chip subtle">No tags yet</span>'}
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Watch Folders</strong></div>
+            <div class="watch-form">
+              <input id="watch-directory-input" placeholder="Folder to watch…" value="${esc(scanDirectoryEl.value)}" />
+              <button type="button" class="btn" id="add-watch-btn">Add Watch</button>
+            </div>
+            <div class="scan-history">
+              ${watchFolders.map((watch) => `
+                <div class="scan-history-item">
+                  <strong>${esc(watch.directory ?? '')}</strong>
+                  <span>${esc(watch.status ?? 'watching')} ${watch.lastChangedPath ? `· ${esc(watch.lastChangedPath)}` : ''}</span>
+                  <button type="button" class="icon-btn danger remove-watch-btn" data-directory="${esc(watch.directory ?? '')}">Remove</button>
+                </div>
+              `).join('') || '<div class="scan-log-entry info">No folders watched yet.</div>'}
+            </div>
+          </section>
+          <section class="library-card library-span">
+            <div class="scan-log-head"><strong>Duplicate Detection</strong></div>
+            <div class="duplicate-list">
+              ${duplicates.map((group) => `
+                <details class="duplicate-group">
+                  <summary>${esc(group.type)} · ${esc((group.tracks as Record<string, unknown>[]).length)} tracks</summary>
+                  <div class="suggestions compact">
+                    ${((group.tracks as Record<string, unknown>[])).map((track) => `
+                      <div class="suggestion" data-track-id="${track.id}">
+                        <strong>${esc(track.artist ?? 'Unknown')} - ${esc(track.title ?? 'Untitled')}</strong><br>
+                        <small>${esc(track.path ?? '')}</small>
+                      </div>
+                    `).join('')}
+                  </div>
+                </details>
+              `).join('') || '<div class="scan-log-entry info">No duplicates detected.</div>'}
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Artist Browser</strong></div>
+            <div class="scan-history">
+              ${artists.map((artist) => `
+                <div class="scan-history-item">
+                  <strong><button type="button" class="nav-link inline artist-browser-btn" data-artist="${esc(artist.name)}">${esc(artist.name)}</button></strong>
+                  <span>${esc(artist.track_count)} tracks · ${esc(artist.album_count)} albums</span>
+                  <span>${esc((artist.albums as string[]).join(', '))}</span>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Album Browser</strong></div>
+            <div class="scan-history">
+              ${albums.map((album) => `
+                <div class="scan-history-item">
+                  <strong><button type="button" class="nav-link inline album-browser-btn" data-album="${esc(album.name)}" data-artist="${esc(album.artist)}">${esc(album.name)}</button></strong>
+                  <span>${esc(album.artist)} · ${esc(album.track_count)} tracks</span>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        </div>
+      `;
+
+      libraryPanel.querySelectorAll('.smart-crate-btn[data-query]').forEach((button) => {
+        button.addEventListener('click', () => {
+          document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+          applySmartCrate((button as HTMLElement).dataset.query ?? '');
+        });
+      });
+      libraryPanel.querySelectorAll('.tag-filter-btn[data-tag]').forEach((button) => {
+        button.addEventListener('click', () => {
+          searchEl.value = String((button as HTMLElement).dataset.tag ?? '');
+          void loadTracks(searchEl.value.trim());
+          document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+        });
+      });
+      libraryPanel.querySelectorAll('.artist-browser-btn[data-artist]').forEach((button) => {
+        button.addEventListener('click', () => {
+          navigateLibrary('artist', (button as HTMLElement).dataset.artist ?? '');
+          document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+        });
+      });
+      libraryPanel.querySelectorAll('.album-browser-btn[data-album]').forEach((button) => {
+        button.addEventListener('click', () => {
+          navigateLibrary('album', (button as HTMLElement).dataset.album ?? '', (button as HTMLElement).dataset.artist ?? '');
+          document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+        });
+      });
+      libraryPanel.querySelectorAll('.duplicate-group .suggestion[data-track-id]').forEach((card) => {
+        card.addEventListener('click', () => {
+          document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+          void selectTrack((card as HTMLElement).dataset.trackId!, false);
+        });
+      });
+      document.getElementById('add-watch-btn')?.addEventListener('click', async () => {
+        const input = document.getElementById('watch-directory-input') as HTMLInputElement;
+        const res = await fetch('/api/watch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ directory: input.value.trim() }),
+        });
+        if (res.ok) await loadWatchFolders();
+      });
+      libraryPanel.querySelectorAll('.remove-watch-btn[data-directory]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          await fetch('/api/watch', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ directory: (button as HTMLElement).dataset.directory }),
+          });
+          await loadWatchFolders();
+        });
+      });
     }
 
     async function loadScanHistory() {
@@ -699,6 +1542,7 @@ export default function ClientInit() {
             await loadScanHistory();
             if (String(event.status ?? '') === 'completed') {
               await loadTracks(searchEl.value.trim());
+              await loadLibraryOverview();
             }
           }
           return;
@@ -864,6 +1708,9 @@ export default function ClientInit() {
       const res = await fetch(`/api/tracks?${params.toString()}`);
       const response = await res.json();
       tracks = response.tracks ?? [];
+      for (const id of [...selectedTrackIds]) {
+        if (!tracks.some((track) => Number(track.id) === id)) selectedTrackIds.delete(id);
+      }
       const debug = response.debug ?? {};
       const missingEnv: string[] = debug.spotify_missing ?? [];
       if (missingEnv.length) {
@@ -873,6 +1720,7 @@ export default function ClientInit() {
         warningBanner.style.display = 'none';
       }
       renderList(tracks);
+      renderBulkToolbar();
       if (tracks.length && !activeTrackId) {
         let storedId: number | null = null;
         try { storedId = Number(sessionStorage.getItem(activeTrackKey) || 0) || null; } catch { /* ignore */ }
@@ -959,6 +1807,9 @@ export default function ClientInit() {
       void preflightDirectory(scanDirectoryEl.value);
     });
     scanLogClearBtn.addEventListener('click', () => { resetScanLog(); });
+    initCollapsiblePanel('scan-log', scanLogToggleBtn, scanLogBodyEl, false);
+    initCollapsiblePanel('scan-summary', scanSummaryToggleBtn, scanSummaryBodyEl, false);
+    initCollapsiblePanel('scan-history', scanHistoryToggleBtn, scanHistoryBodyEl, false);
     scanVerboseEl.addEventListener('change', () => {
       try { localStorage.setItem(scanVerboseKey, String(scanVerboseEl.checked)); } catch { /* ignore */ }
     });
@@ -976,8 +1827,16 @@ export default function ClientInit() {
     setScanProgress(0, 0, 'No scan running');
     resetScanLog();
     renderRecentDirectories();
+    renderBrowseScope();
+    renderBulkToolbar();
     void preflightDirectory(scanDirectoryEl.value);
-    loadSets().then(() => loadTracks());
+    loadSets().then(() => {
+      renderBulkToolbar();
+      return loadTracks();
+    });
+    void loadLibraryOverview();
+    void loadRuntimeHealth();
+    void loadWatchFolders();
     void loadScanHistory().then(async () => {
       const running = scanHistory.find((job) => ['queued', 'running'].includes(String(job.status ?? '')));
       if (running?.id) {

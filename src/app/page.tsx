@@ -18,6 +18,9 @@ export default function Page() {
             <span className="badge" id="hidden-count-badge">Hidden: 0</span>
           </div>
         </div>
+        <div className="browse-scope" id="browse-scope">
+          <span className="browse-scope-empty">Browsing entire library</span>
+        </div>
 
         <div className="scan-bar">
           <input id="scan-directory" placeholder="Music folder path…" />
@@ -55,10 +58,15 @@ export default function Page() {
         <div className="scan-log-panel">
           <div className="scan-log-head">
             <strong>Scan Log</strong>
-            <button type="button" className="icon-btn" id="scan-log-clear-btn">Clear</button>
+            <div className="scan-panel-actions">
+              <button type="button" className="icon-btn" id="scan-log-clear-btn">Clear</button>
+              <button type="button" className="icon-btn" id="scan-log-toggle-btn" aria-expanded="true" aria-controls="scan-log-body">Collapse</button>
+            </div>
           </div>
-          <div className="scan-log" id="scan-log">
-            <div className="scan-log-entry info">No scan activity yet.</div>
+          <div className="scan-panel-body" id="scan-log-body">
+            <div className="scan-log" id="scan-log">
+              <div className="scan-log-entry info">No scan activity yet.</div>
+            </div>
           </div>
         </div>
 
@@ -66,23 +74,29 @@ export default function Page() {
           <div className="scan-summary-panel">
             <div className="scan-log-head">
               <strong>Scan Summary</strong>
+              <button type="button" className="icon-btn" id="scan-summary-toggle-btn" aria-expanded="true" aria-controls="scan-summary-body">Collapse</button>
             </div>
-            <div className="scan-summary" id="scan-summary">
-              <div className="scan-summary-item"><span>Last run</span><strong>None</strong></div>
-              <div className="scan-summary-item"><span>BPM</span><strong>0</strong></div>
-              <div className="scan-summary-item"><span>Key</span><strong>0</strong></div>
-              <div className="scan-summary-item"><span>Spotify</span><strong>0</strong></div>
-              <div className="scan-summary-item"><span>Album art</span><strong>0</strong></div>
-              <div className="scan-summary-item"><span>Decode failures</span><strong>0</strong></div>
+            <div className="scan-panel-body" id="scan-summary-body">
+              <div className="scan-summary" id="scan-summary">
+                <div className="scan-summary-item"><span>Last run</span><strong>None</strong></div>
+                <div className="scan-summary-item"><span>BPM</span><strong>0</strong></div>
+                <div className="scan-summary-item"><span>Key</span><strong>0</strong></div>
+                <div className="scan-summary-item"><span>Spotify</span><strong>0</strong></div>
+                <div className="scan-summary-item"><span>Album art</span><strong>0</strong></div>
+                <div className="scan-summary-item"><span>Decode failures</span><strong>0</strong></div>
+              </div>
+              <div className="scan-preflight" id="scan-preflight">No directory validation yet.</div>
             </div>
-            <div className="scan-preflight" id="scan-preflight">No directory validation yet.</div>
           </div>
           <div className="scan-history-panel">
             <div className="scan-log-head">
               <strong>Scan History</strong>
+              <button type="button" className="icon-btn" id="scan-history-toggle-btn" aria-expanded="true" aria-controls="scan-history-body">Collapse</button>
             </div>
-            <div className="scan-history" id="scan-history">
-              <div className="scan-log-entry info">No scan history yet.</div>
+            <div className="scan-panel-body" id="scan-history-body">
+              <div className="scan-history" id="scan-history">
+                <div className="scan-log-entry info">No scan history yet.</div>
+              </div>
             </div>
           </div>
         </div>
@@ -93,6 +107,9 @@ export default function Page() {
 
       <main>
         <section className="pane">
+          <div className="bulk-toolbar" id="bulk-toolbar">
+            <div className="bulk-toolbar-empty">No tracks selected.</div>
+          </div>
           <div className="sorts" id="sorts">
             <button type="button" data-sort="name" className="active">Name</button>
             <button type="button" data-sort="artist-asc" id="sort-artist">Artist ▲</button>
@@ -107,6 +124,7 @@ export default function Page() {
           <div className="panel-tabs">
             <button type="button" className="panel-tab active" id="tab-track" data-panel="track">Track</button>
             <button type="button" className="panel-tab" id="tab-sets" data-panel="sets">Playlists</button>
+            <button type="button" className="panel-tab" id="tab-library" data-panel="library">Library</button>
           </div>
           <div id="panel-track">
             <div className="detail" id="detail">
@@ -116,6 +134,11 @@ export default function Page() {
           <div id="panel-sets" style={{ display: 'none' }}>
             <div className="sets-panel" id="sets-panel">
               <div className="empty">Loading playlists…</div>
+            </div>
+          </div>
+          <div id="panel-library" style={{ display: 'none' }}>
+            <div className="library-panel" id="library-panel">
+              <div className="empty">Loading library tools…</div>
             </div>
           </div>
         </section>

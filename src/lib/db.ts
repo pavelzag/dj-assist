@@ -15,6 +15,7 @@ function getDb(): postgres.Sql {
 }
 
 let scanSchemaEnsured = false;
+let trackManagementSchemaEnsured = false;
 
 export async function ensureScanSchema(): Promise<void> {
   if (scanSchemaEnsured) return;
@@ -61,6 +62,48 @@ export async function ensureScanSchema(): Promise<void> {
   scanSchemaEnsured = true;
 }
 
+async function ensureTrackManagementSchema(): Promise<void> {
+  if (trackManagementSchemaEnsured) return;
+  const sql = getDb();
+  await sql`
+    ALTER TABLE tracks
+    ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS custom_tags TEXT,
+    ADD COLUMN IF NOT EXISTS artist_canonical TEXT,
+    ADD COLUMN IF NOT EXISTS album_canonical TEXT,
+    ADD COLUMN IF NOT EXISTS manual_cues JSONB NOT NULL DEFAULT '[]'::jsonb
+  `;
+  trackManagementSchemaEnsured = true;
+}
+
+function canonicalizeText(value: string): string {
+  return value
+    .toLocaleLowerCase()
+    .replace(/[()[\]{}]/g, ' ')
+    .replace(/\b(feat|ft|featuring|with|vs|x)\b.*$/i, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim();
+}
+
+export function canonicalizeArtistName(value: string | null): string {
+  return canonicalizeText(String(value ?? ''));
+}
+
+export function canonicalizeAlbumName(value: string | null): string {
+  return canonicalizeText(String(value ?? ''));
+}
+
+function parseTags(value: string | null): string[] {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function serializeTags(tags: string[]): string {
+  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].join(', ');
+}
+
 export interface Track {
   id: number;
   path: string | null;
@@ -90,6 +133,11 @@ export interface Track {
   analysis_stage: string | null;
   analysis_debug: string | null;
   file_hash: string | null;
+  ignored: boolean | null;
+  custom_tags: string | null;
+  artist_canonical: string | null;
+  album_canonical: string | null;
+  manual_cues: Array<{ time: number; label?: string }> | null;
   created_at: Date | null;
 }
 
@@ -277,6 +325,12 @@ export function serializeTrack(track: Track) {
     decode_failed: track.decode_failed,
     analysis_stage: track.analysis_stage,
     analysis_debug: track.analysis_debug,
+    file_hash: track.file_hash,
+    ignored: Boolean(track.ignored),
+    custom_tags: parseTags(track.custom_tags),
+    artist_canonical: track.artist_canonical ?? canonicalizeArtistName(track.artist),
+    album_canonical: track.album_canonical ?? canonicalizeAlbumName(track.album ?? track.spotify_album_name),
+    manual_cues: Array.isArray(track.manual_cues) ? track.manual_cues : [],
     effective_bpm: effectiveBpm,
     effective_key: effectiveKey,
   };
@@ -301,12 +355,14 @@ function uniqueTracks(tracks: Track[]): Track[] {
 }
 
 export async function getAllTracks(): Promise<Track[]> {
+  await ensureTrackManagementSchema();
   const sql = getDb();
   const rows = await sql<Track[]>`SELECT * FROM tracks ORDER BY artist, title, id`;
   return uniqueTracks(rows);
 }
 
 export async function getTrackById(id: number): Promise<Track | null> {
+  await ensureTrackManagementSchema();
   const sql = getDb();
   const rows = await sql<Track[]>`SELECT * FROM tracks WHERE id = ${id}`;
   return rows[0] ?? null;
@@ -320,6 +376,7 @@ export interface SearchParams {
 }
 
 export async function searchTracks(params: SearchParams): Promise<Track[]> {
+  await ensureTrackManagementSchema();
   const sql = getDb();
   const { query, bpmMin, bpmMax, key } = params;
   const likeQuery = query ? `%${query}%` : null;
@@ -328,7 +385,7 @@ export async function searchTracks(params: SearchParams): Promise<Track[]> {
   const rows = await sql<Track[]>`
     SELECT * FROM tracks
     WHERE 1=1
-    ${likeQuery != null ? sql`AND (title ILIKE ${likeQuery} OR artist ILIKE ${likeQuery})` : sql``}
+    ${likeQuery != null ? sql`AND (title ILIKE ${likeQuery} OR artist ILIKE ${likeQuery} OR album ILIKE ${likeQuery} OR spotify_album_name ILIKE ${likeQuery} OR COALESCE(custom_tags, '') ILIKE ${likeQuery})` : sql``}
     ${bpmMin != null ? sql`AND COALESCE(bpm, spotify_tempo) >= ${bpmMin}` : sql``}
     ${bpmMax != null ? sql`AND COALESCE(bpm, spotify_tempo) <= ${bpmMax}` : sql``}
     ${normKey != null ? sql`AND (UPPER(key) = ${normKey} OR UPPER(spotify_key) = ${normKey} OR UPPER(key_numeric) = ${normKey})` : sql``}
@@ -338,8 +395,82 @@ export async function searchTracks(params: SearchParams): Promise<Track[]> {
 }
 
 export async function updateTrackBpm(id: number, bpm: number): Promise<void> {
+  await ensureTrackManagementSchema();
   const sql = getDb();
   await sql`UPDATE tracks SET bpm = ${bpm}, bpm_source = 'manual' WHERE id = ${id}`;
+}
+
+export async function updateTrackMetadata(
+  id: number,
+  patch: {
+    title?: string | null;
+    artist?: string | null;
+    album?: string | null;
+    key?: string | null;
+    ignored?: boolean;
+    custom_tags?: string[];
+    manual_cues?: Array<{ time: number; label?: string }>;
+  },
+): Promise<void> {
+  await ensureTrackManagementSchema();
+  const sql = getDb();
+  const title = patch.title ?? null;
+  const artist = patch.artist ?? null;
+  const album = patch.album ?? null;
+  const customTags = patch.custom_tags ? serializeTags(patch.custom_tags) : null;
+  await sql`
+    UPDATE tracks
+    SET
+      title = COALESCE(${title}, title),
+      artist = COALESCE(${artist}, artist),
+      album = COALESCE(${album}, album),
+      key = COALESCE(${patch.key ?? null}, key),
+      ignored = COALESCE(${patch.ignored ?? null}, ignored),
+      custom_tags = COALESCE(${customTags}, custom_tags),
+      artist_canonical = COALESCE(${artist != null ? canonicalizeArtistName(artist) : null}, artist_canonical, ${canonicalizeArtistName(artist)}),
+      album_canonical = COALESCE(${album != null ? canonicalizeAlbumName(album) : null}, album_canonical, ${canonicalizeAlbumName(album)}),
+      manual_cues = COALESCE(${patch.manual_cues ? sql.json(patch.manual_cues as never) : null}, manual_cues)
+    WHERE id = ${id}
+  `;
+}
+
+export async function bulkTrackAction(input: {
+  ids: number[];
+  action: 'ignore' | 'unignore' | 'add_tags' | 'remove_tags' | 'clear_tags' | 'add_to_set';
+  tags?: string[];
+  setId?: number;
+}): Promise<{ updated: number }> {
+  await ensureTrackManagementSchema();
+  const sql = getDb();
+  const ids = [...new Set(input.ids.filter((id) => Number.isFinite(id)))];
+  if (!ids.length) return { updated: 0 };
+
+  if (input.action === 'add_to_set') {
+    if (!input.setId) return { updated: 0 };
+    for (const id of ids) {
+      await addTrackToSet(input.setId, id);
+    }
+    return { updated: ids.length };
+  }
+
+  const rows = await sql<Track[]>`SELECT * FROM tracks WHERE id = ANY(${sql.array(ids)})`;
+  for (const row of rows) {
+    const currentTags = parseTags(row.custom_tags);
+    let nextTags = currentTags;
+    let nextIgnored = Boolean(row.ignored);
+    if (input.action === 'ignore') nextIgnored = true;
+    if (input.action === 'unignore') nextIgnored = false;
+    if (input.action === 'add_tags') nextTags = [...new Set([...currentTags, ...(input.tags ?? [])])];
+    if (input.action === 'remove_tags') nextTags = currentTags.filter((tag) => !(input.tags ?? []).includes(tag));
+    if (input.action === 'clear_tags') nextTags = [];
+    await sql`
+      UPDATE tracks
+      SET ignored = ${nextIgnored}, custom_tags = ${serializeTags(nextTags)}
+      WHERE id = ${row.id}
+    `;
+  }
+
+  return { updated: rows.length };
 }
 
 // ── Sets ─────────────────────────────────────────────────────────────────────
@@ -412,4 +543,112 @@ export async function removeTrackFromSet(setId: number, position: number): Promi
   const sql = getDb();
   await sql`DELETE FROM set_tracks WHERE set_id = ${setId} AND position = ${position}`;
   await sql`UPDATE set_tracks SET position = position - 1 WHERE set_id = ${setId} AND position > ${position}`;
+}
+
+export interface LibraryOverview {
+  health: Record<string, number>;
+  smart_crates: Array<{ id: string; label: string; count: number; query: string }>;
+  duplicates: Array<{ type: string; key: string; tracks: ReturnType<typeof serializeTrack>[] }>;
+  artists: Array<{ name: string; canonical: string; track_count: number; album_count: number; albums: string[] }>;
+  albums: Array<{ name: string; artist: string; canonical: string; track_count: number; with_art: number }>;
+  tags: Array<{ tag: string; count: number }>;
+}
+
+export async function getLibraryOverview(): Promise<LibraryOverview> {
+  const allTracks = (await getAllTracks()).map((track) => serializeTrack(track));
+
+  const health = {
+    total: allTracks.length,
+    ignored: allTracks.filter((track) => track.ignored).length,
+    missing_bpm: allTracks.filter((track) => !track.effective_bpm).length,
+    missing_key: allTracks.filter((track) => !track.effective_key).length,
+    missing_album_art: allTracks.filter((track) => !track.album_art_url).length,
+    decode_failures: allTracks.filter((track) => String(track.decode_failed ?? '') === 'true').length,
+    no_spotify_match: allTracks.filter((track) => !track.spotify_id).length,
+    tagged: allTracks.filter((track) => Array.isArray(track.custom_tags) && track.custom_tags.length > 0).length,
+  };
+
+  const smartCrates = [
+    { id: 'missing-bpm', label: 'Missing BPM', count: health.missing_bpm, query: 'bpm:missing' },
+    { id: 'missing-key', label: 'Missing Key', count: health.missing_key, query: 'key:missing' },
+    { id: 'missing-art', label: 'Missing Album Art', count: health.missing_album_art, query: 'art:missing' },
+    { id: 'decode-failures', label: 'Decode Failures', count: health.decode_failures, query: 'decode:failed' },
+    { id: 'no-spotify', label: 'No Spotify Match', count: health.no_spotify_match, query: 'spotify:missing' },
+    { id: 'ignored', label: 'Ignored', count: health.ignored, query: 'ignored:true' },
+  ];
+
+  const duplicateGroups = new Map<string, { type: string; key: string; tracks: typeof allTracks }>();
+  for (const track of allTracks) {
+    const signature = `${track.artist_canonical}|${canonicalizeText(String(track.title ?? ''))}|${Math.round(Number(track.duration ?? 0))}`;
+    const keys = [
+      track.file_hash ? ['file_hash', String(track.file_hash)] : null,
+      track.spotify_id ? ['spotify_id', String(track.spotify_id)] : null,
+      signature.includes('||0') ? null : ['signature', signature],
+    ].filter(Boolean) as Array<[string, string]>;
+    for (const [type, key] of keys) {
+      const groupKey = `${type}:${key}`;
+      const group = duplicateGroups.get(groupKey) ?? { type, key, tracks: [] };
+      group.tracks.push(track);
+      duplicateGroups.set(groupKey, group);
+    }
+  }
+
+  const duplicates = [...duplicateGroups.values()]
+    .filter((group) => group.tracks.length > 1)
+    .sort((a, b) => b.tracks.length - a.tracks.length)
+    .slice(0, 20);
+
+  const artistMap = new Map<string, { name: string; canonical: string; track_count: number; albums: Set<string> }>();
+  const albumMap = new Map<string, { name: string; artist: string; canonical: string; track_count: number; with_art: number }>();
+  const tagMap = new Map<string, number>();
+
+  for (const track of allTracks) {
+    const artistName = String(track.artist ?? 'Unknown Artist');
+    const artistCanonical = String(track.artist_canonical ?? canonicalizeArtistName(track.artist));
+    const artistEntry = artistMap.get(artistCanonical) ?? { name: artistName, canonical: artistCanonical, track_count: 0, albums: new Set<string>() };
+    artistEntry.track_count += 1;
+    const albumName = String(track.album ?? track.spotify_album_name ?? '').trim();
+    if (albumName) artistEntry.albums.add(albumName);
+    artistMap.set(artistCanonical, artistEntry);
+
+    if (albumName) {
+      const albumKey = `${artistCanonical}:${canonicalizeAlbumName(albumName)}`;
+      const albumEntry = albumMap.get(albumKey) ?? {
+        name: albumName,
+        artist: artistName,
+        canonical: canonicalizeAlbumName(albumName),
+        track_count: 0,
+        with_art: 0,
+      };
+      albumEntry.track_count += 1;
+      if (track.album_art_url) albumEntry.with_art += 1;
+      albumMap.set(albumKey, albumEntry);
+    }
+
+    for (const tag of (track.custom_tags as string[]) ?? []) {
+      tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
+    }
+  }
+
+  return {
+    health,
+    smart_crates: smartCrates,
+    duplicates,
+    artists: [...artistMap.values()]
+      .map((artist) => ({
+        name: artist.name,
+        canonical: artist.canonical,
+        track_count: artist.track_count,
+        album_count: artist.albums.size,
+        albums: [...artist.albums].sort((a, b) => a.localeCompare(b)).slice(0, 6),
+      }))
+      .sort((a, b) => b.track_count - a.track_count)
+      .slice(0, 50),
+    albums: [...albumMap.values()]
+      .sort((a, b) => b.track_count - a.track_count)
+      .slice(0, 50),
+    tags: [...tagMap.entries()]
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count),
+  };
 }

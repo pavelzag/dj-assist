@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllTracks, getTrackById, serializeTrack, updateTrackBpm } from '@/lib/db';
+import { getAllTracks, getTrackById, serializeTrack, updateTrackBpm, updateTrackMetadata } from '@/lib/db';
 import { getRecommendedNextTracks } from '@/lib/analyzer';
 
 export async function GET(
@@ -44,10 +44,27 @@ export async function PATCH(
   if (isNaN(trackId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 });
 
   const body = await request.json();
-  const bpm = parseFloat(body.bpm);
-  if (isNaN(bpm) || bpm <= 0) return NextResponse.json({ error: 'invalid bpm' }, { status: 400 });
+  if (body.bpm !== undefined) {
+    const bpm = parseFloat(body.bpm);
+    if (isNaN(bpm) || bpm <= 0) return NextResponse.json({ error: 'invalid bpm' }, { status: 400 });
+    await updateTrackBpm(trackId, bpm);
+  }
 
-  await updateTrackBpm(trackId, bpm);
+  if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined) {
+    await updateTrackMetadata(trackId, {
+      artist: body.artist,
+      title: body.title,
+      album: body.album,
+      key: body.key,
+      ignored: body.ignored,
+      custom_tags: Array.isArray(body.custom_tags) ? body.custom_tags.map((item: unknown) => String(item)) : undefined,
+      manual_cues: Array.isArray(body.manual_cues) ? body.manual_cues.map((cue: Record<string, unknown>) => ({
+        time: Number(cue.time ?? 0),
+        label: cue.label ? String(cue.label) : undefined,
+      })) : undefined,
+    });
+  }
+
   const track = await getTrackById(trackId);
   return NextResponse.json({ track: serializeTrack(track!) });
 }
