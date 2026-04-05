@@ -2,29 +2,30 @@ import type { ReactNode } from 'react';
 
 export default function AppShell({
   clientInit,
-  platform,
 }: {
   clientInit: ReactNode;
-  platform: 'web' | 'electron';
 }) {
   return (
     <>
-      <header data-platform={platform}>
+      <header data-platform="electron">
         <div className="header-main">
-          <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
-          <input id="search" placeholder="Search tracks, artist, album..." />
+          <div className="header-brand">
+            <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
+            <span className="badge desktop-badge" id="desktop-status-badge">Desktop app</span>
+          </div>
+          <input id="search" placeholder="Search collection, artist, album..." />
           <div className="filters">
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
             <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
             <input id="key-filter" placeholder="Key" />
             <label>
-              <input id="show-only-no-bpm" type="checkbox" /> Show only no BPM
+              <input id="show-only-no-bpm" type="checkbox" /> Only missing BPM
             </label>
             <span className="badge" id="hidden-count-badge">Hidden: 0</span>
           </div>
         </div>
         <div className="browse-scope" id="browse-scope">
-          <span className="browse-scope-empty">Browsing entire library</span>
+          <span className="browse-scope-empty">Viewing full collection</span>
         </div>
       </header>
 
@@ -50,11 +51,11 @@ export default function AppShell({
           <div className="panel-tabs">
             <button type="button" className="panel-tab active" id="tab-track" data-panel="track">Track</button>
             <button type="button" className="panel-tab" id="tab-sets" data-panel="sets">Playlists</button>
-            <button type="button" className="panel-tab" id="tab-library" data-panel="library">Library</button>
+            <button type="button" className="panel-tab" id="tab-library" data-panel="library">Collection</button>
           </div>
           <div id="panel-track">
             <div className="detail" id="detail">
-              <div className="empty">Select a track to see details and what can follow it.</div>
+              <div className="empty">Select a track to inspect playback, analysis, and transitions.</div>
             </div>
           </div>
           <div id="panel-sets" style={{ display: 'none' }}>
@@ -64,7 +65,7 @@ export default function AppShell({
           </div>
           <div id="panel-library" style={{ display: 'none' }}>
             <div className="library-panel" id="library-panel">
-              <div className="empty">Loading library tools…</div>
+              <div className="empty">Loading collection tools…</div>
             </div>
           </div>
         </section>
@@ -72,16 +73,14 @@ export default function AppShell({
 
       <div className="scan-dock">
         <div className="scan-bar">
-          <input id="scan-directory" placeholder="Music folder path…" />
-          {platform === 'electron' ? (
-            <button type="button" className="btn" id="scan-pick-directory-btn">Choose Folder</button>
-          ) : null}
+          <input id="scan-directory" placeholder="Music folder…" />
+          <button type="button" className="btn" id="scan-pick-directory-btn">Choose Folder</button>
           <select id="scan-recent-directories" defaultValue="">
             <option value="">Recent folders…</option>
           </select>
           <button type="button" className="btn" id="scan-use-last-btn">Use Last</button>
-          <button type="button" className="btn" id="scan-btn">Scan Library</button>
-          <button type="button" className="btn" id="scan-cancel-btn">Stop</button>
+          <button type="button" className="btn" id="scan-btn">Start Scan</button>
+          <button type="button" className="btn" id="scan-cancel-btn">Stop Scan</button>
           <select id="scan-rescan-mode" defaultValue="smart">
             <option value="smart">Smart</option>
             <option value="missing-metadata">Missing metadata</option>
@@ -90,7 +89,7 @@ export default function AppShell({
             <option value="full">Full rescan</option>
           </select>
           <label className="scan-option">
-            <input id="scan-fetch-art" type="checkbox" defaultChecked /> Fetch album art
+            <input id="scan-fetch-art" type="checkbox" defaultChecked /> Fetch cover art
           </label>
           <label className="scan-option">
             <input id="scan-verbose" type="checkbox" /> Verbose diagnostics
@@ -103,7 +102,7 @@ export default function AppShell({
             <div className="scan-progress-track">
               <div className="scan-progress-bar" id="scan-progress-bar" />
             </div>
-            <div className="scan-progress-file" id="scan-progress-file">No scan running</div>
+            <div className="scan-progress-file" id="scan-progress-file">No scan in progress</div>
           </div>
         </div>
 
@@ -117,7 +116,7 @@ export default function AppShell({
           </div>
           <div className="scan-panel-body" id="scan-log-body">
             <div className="scan-log" id="scan-log">
-              <div className="scan-log-entry info">No scan activity yet.</div>
+              <div className="scan-log-entry info">No scan activity.</div>
             </div>
           </div>
         </div>
@@ -137,7 +136,7 @@ export default function AppShell({
                 <div className="scan-summary-item"><span>Album art</span><strong>0</strong></div>
                 <div className="scan-summary-item"><span>Decode failures</span><strong>0</strong></div>
               </div>
-              <div className="scan-preflight" id="scan-preflight">No directory validation yet.</div>
+              <div className="scan-preflight" id="scan-preflight">Choose a music folder to check.</div>
             </div>
           </div>
           <div className="scan-history-panel">
@@ -147,7 +146,7 @@ export default function AppShell({
             </div>
             <div className="scan-panel-body" id="scan-history-body">
               <div className="scan-history" id="scan-history">
-                <div className="scan-log-entry info">No scan history yet.</div>
+                <div className="scan-log-entry info">No scan runs yet.</div>
               </div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ _EMPTY_PREVIEWS: dict = {
     "spotify_key": "", "spotify_mode": "", "album_art_url": "",
     "spotify_album_name": "", "spotify_match_score": 0.0,
     "spotify_high_confidence": False, "spotify_debug": "",
+    "spotify_track_number": 0, "spotify_release_year": 0,
 }
 
 # Max seconds to wait for Spotify before skipping it for a given track.
@@ -120,8 +122,76 @@ def _parse_filename_metadata(filepath: str) -> dict:
     return {"artist": artist, "title": title}
 
 
+def _parse_int_tag(value: Optional[str]) -> int:
+    if not value:
+        return 0
+    match = re.search(r"(\d+)", value)
+    return int(match.group(1)) if match else 0
+
+
+def _extract_embedded_art(audio) -> tuple[str, str]:
+    mime = ""
+    data = b""
+
+    try:
+        pictures = getattr(audio, "pictures", None) or []
+        if pictures:
+            picture = pictures[0]
+            mime = getattr(picture, "mime", "") or "image/jpeg"
+            data = getattr(picture, "data", b"") or b""
+    except Exception:
+        pass
+
+    tags = getattr(audio, "tags", None)
+    if not data and tags:
+        try:
+            apic_keys = [key for key in tags.keys() if str(key).startswith("APIC")]
+            if apic_keys:
+                apic = tags.get(apic_keys[0])
+                mime = getattr(apic, "mime", "") or "image/jpeg"
+                data = getattr(apic, "data", b"") or b""
+        except Exception:
+            pass
+
+    if not data and tags:
+        try:
+            covr = tags.get("covr")
+            cover = covr[0] if isinstance(covr, list) and covr else covr
+            if cover:
+                data = bytes(cover)
+                imageformat = int(getattr(cover, "imageformat", 0) or 0)
+                mime = "image/png" if imageformat == 14 else "image/jpeg"
+        except Exception:
+            pass
+
+    if not data:
+        return "", ""
+
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{mime or 'image/jpeg'};base64,{encoded}", mime or "image/jpeg"
+
+
+def _album_group_key(artist: Optional[str], album: Optional[str]) -> str:
+    normalized_artist = _normalize_text(artist)
+    normalized_album = _normalize_text(album)
+    if not normalized_artist or not normalized_album:
+        return ""
+    return f"{normalized_artist}::{normalized_album}"
+
+
 def extract_metadata(filepath: str) -> dict:
-    metadata = {"title": None, "artist": None, "album": None, "duration": 0.0, "bpm": 0.0}
+    metadata = {
+        "title": None,
+        "artist": None,
+        "album": None,
+        "duration": 0.0,
+        "bitrate": 0.0,
+        "bpm": 0.0,
+        "track_number": 0,
+        "release_year": 0,
+        "embedded_album_art_url": "",
+        "embedded_album_art_mime": "",
+    }
 
     try:
         from mutagen import File as MutagenFile
@@ -133,16 +203,23 @@ def extract_metadata(filepath: str) -> dict:
         metadata["title"] = _tag_value(audio.tags, "TIT2", "title")
         metadata["artist"] = _normalize_artist(_tag_value(audio.tags, "TPE1", "artist"))
         metadata["album"] = _tag_value(audio.tags, "TALB", "album")
+        metadata["track_number"] = _parse_int_tag(_tag_value(audio.tags, "TRCK", "tracknumber"))
+        metadata["release_year"] = _parse_int_tag(_tag_value(audio.tags, "TDRC", "date", "year"))
         bpm_text = _tag_value(audio.tags, "TBPM", "bpm")
         if bpm_text:
             try:
                 metadata["bpm"] = float(bpm_text)
             except ValueError:
                 metadata["bpm"] = 0.0
+        art_url, art_mime = _extract_embedded_art(audio)
+        metadata["embedded_album_art_url"] = art_url
+        metadata["embedded_album_art_mime"] = art_mime
 
         info = getattr(audio, "info", None)
         if info and hasattr(info, "length"):
             metadata["duration"] = float(info.length)
+        if info and hasattr(info, "bitrate"):
+            metadata["bitrate"] = round(float(getattr(info, "bitrate", 0.0) or 0.0) / 1000.0, 1)
     except Exception:
         pass
 
@@ -190,6 +267,82 @@ def _art_debug_reason(previews: dict, fetch_album_art: bool) -> str:
     return f"ok (score={score:.1f})"
 
 
+def _resolve_album_art(
+    metadata: dict,
+    previews: dict,
+    fetch_album_art: bool,
+    album_art_cache: dict[str, dict],
+) -> dict:
+    spotify_album_name = str(previews.get("spotify_album_name") or "")
+    album_group_key = _album_group_key(metadata.get("artist"), metadata.get("album") or spotify_album_name)
+    embedded_url = str(metadata.get("embedded_album_art_url") or "")
+    spotify_url = str(previews.get("album_art_url") or "")
+    spotify_score = float(previews.get("spotify_match_score") or 0.0)
+    cached = album_art_cache.get(album_group_key, {}) if album_group_key else {}
+
+    result = {
+        "album_art_url": "",
+        "album_art_source": "",
+        "album_art_confidence": 0.0,
+        "album_art_review_status": "missing" if fetch_album_art else "disabled",
+        "album_art_review_notes": "album art lookup disabled" if not fetch_album_art else "no artwork matched",
+        "album_group_key": album_group_key,
+        "embedded_album_art": False,
+    }
+
+    if embedded_url:
+        result.update(
+            {
+                "album_art_url": embedded_url,
+                "album_art_source": "embedded",
+                "album_art_confidence": 100.0,
+                "album_art_review_status": "approved",
+                "album_art_review_notes": "embedded artwork extracted from file tags",
+                "embedded_album_art": True,
+            }
+        )
+    elif fetch_album_art and cached.get("album_art_url"):
+        cached_confidence = float(cached.get("album_art_confidence") or 0.0)
+        result.update(
+            {
+                "album_art_url": str(cached.get("album_art_url") or ""),
+                "album_art_source": "album_cache",
+                "album_art_confidence": cached_confidence,
+                "album_art_review_status": "approved" if cached_confidence >= 18.0 else "needs_review",
+                "album_art_review_notes": f"reused artwork from album cluster {album_group_key}",
+            }
+        )
+    elif fetch_album_art and spotify_url:
+        high_confidence = bool(previews.get("spotify_high_confidence"))
+        result.update(
+            {
+                "album_art_url": spotify_url,
+                "album_art_source": "spotify",
+                "album_art_confidence": spotify_score,
+                "album_art_review_status": "approved" if high_confidence else "needs_review",
+                "album_art_review_notes": "spotify album match accepted" if high_confidence else "spotify match below auto-approve threshold",
+            }
+        )
+    elif fetch_album_art and previews.get("spotify_id"):
+        result.update(
+            {
+                "album_art_review_status": "needs_review",
+                "album_art_review_notes": _art_debug_reason(previews, fetch_album_art),
+            }
+        )
+
+    if album_group_key and result["album_art_url"]:
+        existing = album_art_cache.get(album_group_key)
+        if not existing or float(result["album_art_confidence"]) >= float(existing.get("album_art_confidence") or 0.0):
+            album_art_cache[album_group_key] = {
+                "album_art_url": result["album_art_url"],
+                "album_art_source": result["album_art_source"],
+                "album_art_confidence": result["album_art_confidence"],
+            }
+
+    return result
+
+
 def scan_directory(
     directory: str,
     db: Database,
@@ -233,6 +386,8 @@ def scan_directory(
             _emit({"event": "track_step", "path": filepath, "file": Path(filepath).name, "step": label})
         if verbose:
             tqdm.write(f"  [{label}] {Path(filepath).name}")
+
+    album_art_cache: dict[str, dict] = {}
 
     with ThreadPoolExecutor(max_workers=1) as spotify_pool:
         iterator = audio_files if progress_callback else tqdm(audio_files, desc="Scanning")
@@ -287,6 +442,10 @@ def scan_directory(
                             "title": metadata["title"],
                             "album": metadata["album"],
                             "duration": metadata["duration"],
+                            "bitrate": metadata["bitrate"],
+                            "track_number": metadata["track_number"],
+                            "release_year": metadata["release_year"],
+                            "embedded_album_art": bool(metadata["embedded_album_art_url"]),
                         }
                     )
 
@@ -299,7 +458,10 @@ def scan_directory(
                         build_media_links,
                         metadata["artist"],
                         metadata["title"],
+                        metadata["album"],
                         metadata["duration"],
+                        metadata["track_number"],
+                        metadata["release_year"],
                         fetch_album_art,
                     )
                 else:
@@ -398,7 +560,13 @@ def scan_directory(
                 if not key:
                     debug_parts.append("key=missing")
 
-                album_art_url = previews["album_art_url"] if previews.get("spotify_id") and previews.get("album_art_url") else ""
+                album_art = _resolve_album_art(metadata, previews, fetch_album_art, album_art_cache)
+                album_art_url = str(album_art["album_art_url"] or "")
+                debug_parts.append(f"album_art_source={album_art['album_art_source'] or 'none'}")
+                debug_parts.append(f"album_art_confidence={float(album_art['album_art_confidence'] or 0.0):.1f}")
+                debug_parts.append(f"album_art_review={album_art['album_art_review_status']}")
+                if album_art.get("album_group_key"):
+                    debug_parts.append(f"album_group={album_art['album_group_key']}")
 
                 db.add_track(
                     {
@@ -407,6 +575,7 @@ def scan_directory(
                         "artist": metadata["artist"],
                         "album": metadata["album"],
                         "duration": metadata["duration"],
+                        "bitrate": metadata["bitrate"],
                         "bpm": bpm,
                         "key": key,
                         "key_numeric": key_numeric,
@@ -421,6 +590,25 @@ def scan_directory(
                         "spotify_album_name": previews["spotify_album_name"],
                         "spotify_match_score": float(previews.get("spotify_match_score") or 0.0),
                         "spotify_high_confidence": str(previews.get("spotify_high_confidence") or False).lower(),
+                        "album_art_source": album_art["album_art_source"],
+                        "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
+                        "album_art_review_status": album_art["album_art_review_status"],
+                        "album_art_review_notes": album_art["album_art_review_notes"],
+                        "album_group_key": album_art["album_group_key"],
+                        "embedded_album_art": bool(album_art.get("embedded_album_art")),
+                        "album_art_match_debug": json.dumps(
+                            {
+                                "source": album_art["album_art_source"],
+                                "confidence": float(album_art.get("album_art_confidence") or 0.0),
+                                "review_status": album_art["album_art_review_status"],
+                                "review_notes": album_art["album_art_review_notes"],
+                                "group_key": album_art["album_group_key"],
+                                "spotify_debug": previews.get("spotify_debug") or "",
+                                "spotify_album_name": previews.get("spotify_album_name") or "",
+                                "spotify_track_number": previews.get("spotify_track_number") or 0,
+                                "spotify_release_year": previews.get("spotify_release_year") or 0,
+                            }
+                        ),
                         "youtube_url": previews["youtube_url"],
                         "analysis_status": "ok" if bpm else "needs_review",
                         "analysis_error": bpm_error,
@@ -446,6 +634,9 @@ def scan_directory(
                         "key": key,
                         "spotify_id": previews["spotify_id"],
                         "album_art_url": album_art_url,
+                        "album_art_source": album_art["album_art_source"],
+                        "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
+                        "album_art_review_status": album_art["album_art_review_status"],
                         "decode_failed": decode_failed,
                     }
                 )
@@ -456,7 +647,8 @@ def scan_directory(
                         "message": (
                             f"{Path(filepath).name}: bpm={bpm or 0:.1f} src={bpm_source or 'none'} "
                             f"key={key or 'none'} spotify={'yes' if previews['spotify_id'] else 'no'} "
-                            f"art={'yes' if album_art_url else 'no'}"
+                            f"art={'yes' if album_art_url else 'no'} source={album_art['album_art_source'] or 'none'} "
+                            f"review={album_art['album_art_review_status']}"
                         ),
                     }
                 )

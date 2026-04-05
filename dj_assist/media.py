@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from functools import lru_cache
 import json
 import os
@@ -44,6 +45,8 @@ class SpotifyMatch:
     match_score: float = 0.0
     high_confidence: bool = False
     debug: str = ""
+    track_number: int = 0
+    release_year: int = 0
 
 
 class SpotifyClient:
@@ -147,14 +150,36 @@ class SpotifyClient:
             return ""
         value = value.lower()
         value = re.sub(r"\([^)]*\)", " ", value)
+        value = re.sub(r"\[[^\]]*\]", " ", value)
+        value = re.sub(r"\b(feat|ft|featuring|with|vs|remix|mix|edit|version|extended|radio)\b", " ", value)
         value = re.sub(r"[^a-z0-9]+", " ", value)
         return re.sub(r"\s+", " ", value).strip()
+
+    @staticmethod
+    def _text_similarity(left: str | None, right: str | None) -> float:
+        a = SpotifyClient._normalize_text(left)
+        b = SpotifyClient._normalize_text(right)
+        if not a or not b:
+            return 0.0
+        if a == b:
+            return 1.0
+        return SequenceMatcher(None, a, b).ratio()
+
+    @staticmethod
+    def _parse_release_year(value: str | None) -> int:
+        if not value:
+            return 0
+        match = re.search(r"(\d{4})", value)
+        return int(match.group(1)) if match else 0
 
     def search_track(
         self,
         artist: str | None,
         title: str | None,
+        album: str | None = None,
         duration: float | None = None,
+        track_number: int | None = None,
+        release_year: int | None = None,
         include_album_art: bool = False,
     ) -> SpotifyMatch:
         if not self.enabled() or not title:
@@ -186,7 +211,10 @@ class SpotifyClient:
                     items,
                     artist=artist,
                     title=title,
+                    album=album,
                     duration=duration,
+                    track_number=track_number,
+                    release_year=release_year,
                     duration_tolerance=self._duration_tolerance_seconds(),
                 )
                 if best:
@@ -197,6 +225,8 @@ class SpotifyClient:
                     album_art_url = ""
                     if include_album_art and images and best_score >= self._art_confidence_threshold():
                         album_art_url = images[0].get("url", "")
+                    album_track_number = int(best_item.get("track_number") or 0)
+                    album_release_year = self._parse_release_year(album.get("release_date"))
                     return SpotifyMatch(
                         spotify_id=best_item.get("id", ""),
                         spotify_uri=best_item.get("uri", ""),
@@ -210,6 +240,8 @@ class SpotifyClient:
                         match_score=best_score,
                         high_confidence=best_score >= self._art_confidence_threshold(),
                         debug=json.dumps({**debug, "matched": best_item.get("id", ""), "score": best_score}),
+                        track_number=album_track_number,
+                        release_year=album_release_year,
                     )
             except Exception as exc:
                 debug.setdefault("errors", []).append({"query": query, "error": str(exc)})
@@ -222,7 +254,10 @@ class SpotifyClient:
         items: list[dict],
         artist: str | None,
         title: str | None,
+        album: str | None,
         duration: float | None,
+        track_number: int | None,
+        release_year: int | None,
         duration_tolerance: float = 6.0,
     ) -> tuple[dict, float] | None:
         if not items:
@@ -233,30 +268,39 @@ class SpotifyClient:
         def score(item: dict) -> float:
             value = 0.0
             item_name = (item.get("name") or "")
-            artists = " ".join(a.get("name", "") for a in item.get("artists", []))
-            norm_title = SpotifyClient._normalize_text(title)
-            norm_artist = SpotifyClient._normalize_text(artist)
-            norm_item_name = SpotifyClient._normalize_text(item_name)
-            norm_artists = SpotifyClient._normalize_text(artists)
+            artists = [a.get("name", "") for a in item.get("artists", [])]
+            album_name = (item.get("album") or {}).get("name", "")
+            artist_similarity = max([SpotifyClient._text_similarity(artist, candidate) for candidate in artists] + [0.0])
+            title_similarity = SpotifyClient._text_similarity(title, item_name)
+            album_similarity = SpotifyClient._text_similarity(album, album_name)
 
-            if title:
-                if norm_title and norm_title == norm_item_name:
-                    value += 8.0
-                elif norm_title and norm_title in norm_item_name:
-                    value += 5.0
-            if artist:
-                if norm_artist and norm_artist == norm_artists:
-                    value += 8.0
-                elif norm_artist and norm_artist in norm_artists:
-                    value += 5.0
+            value += title_similarity * 14.0
+            value += artist_similarity * 12.0
+            value += album_similarity * 7.0
+
+            if title_similarity >= 0.98:
+                value += 4.0
+            if artist_similarity >= 0.98:
+                value += 4.0
+            if album and album_similarity >= 0.98:
+                value += 2.0
+
             if duration:
                 item_ms = item.get("duration_ms") or 0
                 diff = abs((item_ms / 1000.0) - duration)
                 if diff > duration_tolerance:
                     return float("-inf")
-                value += max(0.0, duration_tolerance - diff) * 2.0
+                value += max(0.0, duration_tolerance - diff) * 1.8
                 value += 10.0 - min(diff, 10.0)
-            if norm_title and norm_artist and norm_title in norm_item_name and norm_artist in norm_artists:
+            if track_number:
+                item_track_number = int(item.get("track_number") or 0)
+                if item_track_number and item_track_number == track_number:
+                    value += 3.0
+            if release_year:
+                item_release_year = SpotifyClient._parse_release_year((item.get("album") or {}).get("release_date"))
+                if item_release_year:
+                    value += max(0.0, 3.0 - min(abs(item_release_year - release_year), 3))
+            if title_similarity >= 0.92 and artist_similarity >= 0.92:
                 value += 4.0
             return value
 
@@ -270,7 +314,7 @@ class SpotifyClient:
 
         candidates.sort(key=lambda pair: pair[0], reverse=True)
         best_score, best_item = candidates[0]
-        if best_score < 8.0:
+        if best_score < 12.0:
             return None
         return best_item, best_score
 
@@ -307,9 +351,12 @@ class SpotifyClient:
 def build_media_links(
     artist: str | None,
     title: str | None,
+    album: str | None = None,
     duration: float | None = None,
+    track_number: int | None = None,
+    release_year: int | None = None,
     fetch_album_art: bool = False,
-) -> dict[str, str | float]:
+) -> dict[str, str | float | bool | int]:
     query = " ".join(part for part in [artist, title] if part)
     if not query:
         return {
@@ -319,11 +366,26 @@ def build_media_links(
             "spotify_uri": "",
             "spotify_id": "",
             "spotify_tempo": 0.0,
+            "spotify_key": "",
+            "spotify_mode": "",
             "album_art_url": "",
             "spotify_album_name": "",
-    }
+            "spotify_match_score": 0.0,
+            "spotify_high_confidence": False,
+            "spotify_debug": "",
+            "spotify_track_number": 0,
+            "spotify_release_year": 0,
+        }
 
-    spotify = SpotifyClient().search_track(artist, title, duration, include_album_art=fetch_album_art)
+    spotify = SpotifyClient().search_track(
+        artist,
+        title,
+        album=album,
+        duration=duration,
+        track_number=track_number,
+        release_year=release_year,
+        include_album_art=fetch_album_art,
+    )
     return {
         "youtube_url": youtube_preview_url(query),
         "spotify_url": spotify.spotify_url or spotify_search_url(query),
@@ -338,4 +400,6 @@ def build_media_links(
         "spotify_match_score": spotify.match_score,
         "spotify_high_confidence": spotify.high_confidence,
         "spotify_debug": spotify.debug,
+        "spotify_track_number": spotify.track_number,
+        "spotify_release_year": spotify.release_year,
     }

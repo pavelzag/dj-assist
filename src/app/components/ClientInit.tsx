@@ -5,7 +5,6 @@ import type { PlatformAdapter } from './platform';
 
 export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
   useEffect(() => {
-    const isElectronApp = adapter.platform === 'electron';
     type ScanSummary = {
       scanned: number;
       analyzed: number;
@@ -22,6 +21,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const keyFilterEl = document.getElementById('key-filter') as HTMLInputElement;
     const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement;
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement;
+    const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
     const browseScopeEl = document.getElementById('browse-scope') as HTMLElement;
     const bulkToolbarEl = document.getElementById('bulk-toolbar') as HTMLElement;
     const sortsEl = document.getElementById('sorts') as HTMLElement;
@@ -70,7 +70,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const scanPanelStateKey = 'dj-assist-scan-panel-state';
     let activeTrackId: number | null = null;
     let activeScanJobId: string | null = null;
+    let activeScanStatus = 'idle';
     let activeScanUnsubscribe: (() => void) | null = null;
+    let backgroundRefreshTimer: ReturnType<typeof setInterval> | null = null;
+    let queuedDbRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshInFlight = false;
+    let refreshQueued = false;
     let tracks: Record<string, unknown>[] = [];
     let sortMode = 'bpm-asc';
     let activeArtistScope = '';
@@ -100,6 +105,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const minutes = Math.floor(s / 60);
       const remainder = Math.floor(s % 60);
       return `${minutes}:${String(remainder).padStart(2, '0')}`;
+    }
+
+    function formatBitrate(value: unknown): string {
+      const bitrate = Number(value ?? 0);
+      if (!Number.isFinite(bitrate) || bitrate <= 0) return '-- kbps';
+      return `${Math.round(bitrate)} kbps`;
     }
 
     function normalizeText(value: unknown): string {
@@ -139,7 +150,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function renderBrowseScope() {
       if (!activeArtistScope && !activeAlbumScope) {
-        browseScopeEl.innerHTML = '<span class="browse-scope-empty">Browsing entire library</span>';
+        browseScopeEl.innerHTML = '<span class="browse-scope-empty">Viewing full collection</span>';
         return;
       }
       const parts = [];
@@ -150,7 +161,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         parts.push(`<button type="button" class="scope-pill" data-nav-kind="album" data-nav-value="${esc(activeAlbumScope)}">Album: ${esc(activeAlbumScope)}</button>`);
       }
       browseScopeEl.innerHTML = `
-        <span class="browse-scope-label">Browsing</span>
+        <span class="browse-scope-label">Scope</span>
         ${parts.join('')}
         <button type="button" class="scope-clear-btn" id="browse-scope-clear">Clear</button>
       `;
@@ -202,9 +213,36 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function setScanStatus(message: string, state: 'idle' | 'running' | 'success' | 'error' = 'idle') {
       scanStatusEl.textContent = message;
       scanStatusEl.dataset.state = state;
+      updateDesktopStatusBadge();
     }
 
-    function setScanProgress(current: number, total: number, file = 'No scan running') {
+    function updateDesktopStatusBadge() {
+      if (!desktopStatusBadge) return;
+      if (activeScanStatus === 'queued' || activeScanStatus === 'running') {
+        desktopStatusBadge.textContent = 'Background scan active';
+        desktopStatusBadge.dataset.state = 'running';
+        return;
+      }
+      if (activeScanStatus === 'completed') {
+        desktopStatusBadge.textContent = 'Desktop collection ready';
+        desktopStatusBadge.dataset.state = 'success';
+        return;
+      }
+      if (activeScanStatus === 'failed') {
+        desktopStatusBadge.textContent = 'Background scan failed';
+        desktopStatusBadge.dataset.state = 'error';
+        return;
+      }
+      if (activeScanStatus === 'cancelled') {
+        desktopStatusBadge.textContent = 'Background scan stopped';
+        desktopStatusBadge.dataset.state = 'idle';
+        return;
+      }
+      desktopStatusBadge.textContent = 'Desktop app';
+      desktopStatusBadge.dataset.state = 'idle';
+    }
+
+    function setScanProgress(current: number, total: number, file = 'No scan in progress') {
       const safeCurrent = Math.max(0, current);
       const safeTotal = Math.max(0, total);
       const percent = safeTotal > 0 ? Math.min(100, (safeCurrent / safeTotal) * 100) : 0;
@@ -218,7 +256,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       entry.className = `scan-log-entry ${level}`;
       const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       entry.textContent = `${timestamp}  ${message}`;
-      if (scanLogEl.children.length === 1 && scanLogEl.textContent?.includes('No scan activity yet.')) {
+      if (scanLogEl.children.length === 1 && scanLogEl.textContent?.includes('No scan activity.')) {
         scanLogEl.innerHTML = '';
       }
       scanLogEl.prepend(entry);
@@ -228,7 +266,59 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function resetScanLog() {
-      scanLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity yet.</div>';
+      scanLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity.</div>';
+    }
+
+    function isScanRunning(): boolean {
+      return activeScanStatus === 'queued' || activeScanStatus === 'running';
+    }
+
+    function currentRefreshIntervalMs(): number {
+      return isScanRunning() ? 4000 : 20000;
+    }
+
+    async function refreshFromDb(options?: { includeLibrary?: boolean; includeHistory?: boolean }) {
+      if (refreshInFlight) {
+        refreshQueued = true;
+        return;
+      }
+      refreshInFlight = true;
+      try {
+        await loadTracks(searchEl.value.trim());
+        if (options?.includeLibrary) await loadLibraryOverview();
+        if (options?.includeHistory) await loadScanHistory();
+      } finally {
+        refreshInFlight = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          void refreshFromDb(options);
+        }
+      }
+    }
+
+    function ensureBackgroundRefreshLoop() {
+      if (backgroundRefreshTimer) {
+        clearInterval(backgroundRefreshTimer);
+        backgroundRefreshTimer = null;
+      }
+      backgroundRefreshTimer = setInterval(() => {
+        if (document.hidden) return;
+        void refreshFromDb({
+          includeLibrary: isScanRunning(),
+          includeHistory: isScanRunning(),
+        });
+      }, currentRefreshIntervalMs());
+    }
+
+    function queueDbRefresh(delayMs = 1200) {
+      if (queuedDbRefreshTimer) clearTimeout(queuedDbRefreshTimer);
+      queuedDbRefreshTimer = setTimeout(() => {
+        queuedDbRefreshTimer = null;
+        void refreshFromDb({
+          includeLibrary: true,
+          includeHistory: true,
+        });
+      }, delayMs);
     }
 
     function getScanPanelState(): Record<string, boolean> {
@@ -329,7 +419,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function renderScanHistory() {
       if (!scanHistory.length) {
-        scanHistoryEl.innerHTML = '<div class="scan-log-entry info">No scan history yet.</div>';
+        scanHistoryEl.innerHTML = '<div class="scan-log-entry info">No scan runs yet.</div>';
         return;
       }
       scanHistoryEl.innerHTML = scanHistory.map((job) => `
@@ -670,7 +760,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function renderList(items: Record<string, unknown>[]) {
       const sorted = visibleTracks(items);
       hiddenCountBadge.textContent = `Hidden: ${Math.max(0, items.length - sorted.length)}`;
-      statusbar.innerHTML = `Tracks: <strong>${tracks.length}</strong> | Showing: <strong>${sorted.length}</strong>${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''}`;
+      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''}`;
       listEl.innerHTML = sorted.map((track) => `
         <div class="row ${track.id === activeTrackId ? 'active' : ''}" data-id="${track.id}">
           <label class="row-check">
@@ -679,7 +769,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           ${track.album_art_url ? `<img class="thumb" src="${esc(track.album_art_url)}" alt="" />` : '<div class="thumb placeholder">♪</div>'}
           <div>
             <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</strong>
-            <span>${albumNameFor(track) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button> · ` : ''}${Array.isArray(track.custom_tags) && track.custom_tags.length ? `${esc((track.custom_tags as string[]).join(', '))} · ` : ''}${esc(track.path)}</span>
+            <span>${albumNameFor(track) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button> · ` : ''}${formatBitrate(track.bitrate)} · ${Array.isArray(track.custom_tags) && track.custom_tags.length ? `${esc((track.custom_tags as string[]).join(', '))} · ` : ''}${esc(track.path)}</span>
           </div>
           <div class="bpm-cell" data-track-id="${track.id}" title="Click to cycle BPM multiplier">
             <strong>${displayBpm(track.effective_bpm, track.id as number)}</strong>
@@ -785,7 +875,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const nextTracks = (payload.next_tracks ?? []) as Record<string, unknown>[];
       const coverUrl = (track.album_art_url as string) || '';
       const coverLabel = (track.album ?? track.title ?? 'Unknown') as string;
-      const scrubId = `scrub-${track.id}`;
       const trackId = track.id as number;
       const mult = getMult(trackId);
       const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
@@ -797,6 +886,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const pagedNextTracks = nextTracks.slice(currentNextPage * nextPageSize, (currentNextPage + 1) * nextPageSize);
       const nextCollapsed = isDetailSectionCollapsed(trackId, 'next-tracks');
       const artistCollapsed = isDetailSectionCollapsed(trackId, 'artist-tracks');
+      const coverReviewStatus = String(track.album_art_review_status ?? (track.album_art_url ? 'approved' : 'missing'));
+      const coverReviewNotes = String(track.album_art_review_notes ?? '');
+      const coverSource = String(track.album_art_source ?? (track.album_art_url ? 'unknown' : 'none'));
+      const coverConfidence = Number(track.album_art_confidence ?? 0);
+      const coverStatusClass = coverReviewStatus === 'approved' ? 'success' : coverReviewStatus === 'missing' ? 'subtle' : 'warn';
       const bpmDisplay = track.effective_bpm
         ? `<span class="bpm-val" id="bpm-display-${trackId}" data-bpm="${track.effective_bpm}" title="Click to edit">${displayBpm(track.effective_bpm, trackId)}</span>`
         : `<span class="bpm-val" id="bpm-display-${trackId}" data-bpm="" title="Click to set BPM">--</span>`;
@@ -823,6 +917,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <span>${bpmDisplay} BPM ${multButtons}</span>
               <span>${esc(track.effective_key ?? '--')}</span>
               <span>${formatDuration(track.duration)}</span>
+              <span>${formatBitrate(track.bitrate)}</span>
             </div>
             <div class="chips">
               ${albumNameFor(track) ? `<button type="button" class="chip nav-chip" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>` : ''}
@@ -848,11 +943,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             ` : `<button class="btn" id="open-sets-btn" type="button">+ Add to playlist</button>`}
           </div>
           <div class="local-player">
-            <audio id="local-audio" controls preload="metadata" src="${esc(`/api/tracks/${track.id}/stream`)}"></audio>
-            <div class="scrub-wrap">
-              <div class="scrub-row"><span id="${scrubId}-current">0:00</span><span class="scrub-separator">/</span><span id="${scrubId}-duration">0:00</span></div>
-              <input id="${scrubId}" type="range" min="0" max="0" value="0" step="0.01" />
-            </div>
+            <audio id="local-audio" class="local-audio-hidden" preload="metadata" src="${esc(`/api/tracks/${track.id}/stream`)}"></audio>
+            <div class="audio-status" id="audio-status">Ready</div>
           </div>
           <div class="waveform-panel">
             <div class="scan-log-head">
@@ -870,7 +962,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <div class="chips" style="margin-bottom:14px;">
             ${track.analysis_stage ? `<span class="chip subtle">Stage ${esc(track.analysis_stage)}</span>` : ''}
             ${track.spotify_id ? `<span class="chip success">Spotify matched</span>` : `<span class="chip subtle">No Spotify match</span>`}
+            <span class="chip ${coverStatusClass}">Cover ${esc(coverReviewStatus)}</span>
+            <span class="chip subtle">Source ${esc(coverSource || 'none')}</span>
+            <span class="chip subtle">Score ${esc(coverConfidence.toFixed(1))}</span>
             ${track.analysis_error ? `<span class="chip warn">${esc(track.analysis_error)}</span>` : ''}
+          </div>
+          <div class="metadata-editor cover-review-panel">
+            <h3>Cover Match</h3>
+            <div class="scan-summary">
+              <div class="scan-summary-item"><span>Source</span><strong>${esc(coverSource || 'none')}</strong></div>
+              <div class="scan-summary-item"><span>Confidence</span><strong>${esc(coverConfidence.toFixed(1))}</strong></div>
+              <div class="scan-summary-item"><span>Status</span><strong>${esc(coverReviewStatus)}</strong></div>
+              <div class="scan-summary-item"><span>Embedded</span><strong>${track.embedded_album_art ? 'yes' : 'no'}</strong></div>
+            </div>
+            <div class="chips">
+              ${track.album_art_url ? '<button class="btn" id="approve-cover-btn" type="button">Approve Cover</button>' : ''}
+              <button class="btn" id="mark-cover-review-btn" type="button">Needs Review</button>
+            </div>
+            ${coverReviewNotes ? `<div class="scan-preflight">${esc(coverReviewNotes)}</div>` : ''}
           </div>
           <section class="detail-section ${nextCollapsed ? 'collapsed' : ''}" id="next-tracks-section" data-section="next-tracks">
             <div class="detail-section-head" id="next-tracks-head">
@@ -888,7 +997,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 ${pagedNextTracks.map((item) => `
                   <div class="suggestion" data-track-id="${item.id}">
                     <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
-                    <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${esc(item.reason ?? '')}</small>
+                    <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)} · ${esc(item.reason ?? '')}</small>
                   </div>
                 `).join('') || '<div class="empty">No compatible tracks found.</div>'}
               </div>
@@ -914,7 +1023,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   ${otherTracks.map((item) => `
                     <div class="suggestion" data-track-id="${item.id}">
                       <strong>${esc(item.title ?? 'Untitled')}</strong><br>
-                      <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')}</small>
+                      <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)}</small>
                     </div>
                   `).join('') || '<div class="empty">No other songs by this artist in the library.</div>'}
                 </div>
@@ -1013,7 +1122,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             ${items.map((item) => `
               <div class="suggestion" data-track-id="${item.id}">
                 <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
-                <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${esc(item.reason ?? '')}</small>
+                <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)} · ${esc(item.reason ?? '')}</small>
               </div>
             `).join('') || '<div class="empty">No compatible tracks found.</div>'}
           </div>
@@ -1072,11 +1181,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
       const coverBtn = document.getElementById('cover-btn') as HTMLButtonElement | null;
       const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
-      const scrubRange = document.getElementById(scrubId) as HTMLInputElement | null;
+      const audioStatusEl = document.getElementById('audio-status') as HTMLElement | null;
       const addCueBtn = document.getElementById('add-cue-btn') as HTMLButtonElement | null;
       const clearCuesBtn = document.getElementById('clear-cues-btn') as HTMLButtonElement | null;
-      const currentTimeEl = document.getElementById(`${scrubId}-current`);
-      const durationTimeEl = document.getElementById(`${scrubId}-duration`);
       const resumeKey = `dj-assist-resume-${track.id}`;
 
       const loadResumeState = () => {
@@ -1087,40 +1194,62 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         try { sessionStorage.setItem(resumeKey, JSON.stringify({ time: localAudio.currentTime, paused: localAudio.paused })); } catch { /* ignore */ }
       };
 
-      const formatTime = (s: number) => {
-        if (!Number.isFinite(s) || s < 0) return '0:00';
-        return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+      const setAudioStatus = (message: string, state: 'ready' | 'playing' | 'paused' | 'error' = 'ready') => {
+        if (!audioStatusEl) return;
+        audioStatusEl.textContent = message;
+        audioStatusEl.dataset.state = state;
       };
 
       if (playBtn && localAudio) {
         const resumeState = loadResumeState();
         let resumeApplied = false;
+        setAudioStatus('Loading track…');
+        localAudio.load();
         localAudio.addEventListener('loadedmetadata', () => {
           if (!resumeApplied && resumeState.time > 0) {
             localAudio.currentTime = Math.min(resumeState.time, (localAudio.duration || 0) - 0.25);
             resumeApplied = true;
             if (!resumeState.paused) localAudio.play().catch(() => {});
           }
-          if (scrubRange) scrubRange.max = String(localAudio.duration || 0);
-          if (durationTimeEl) durationTimeEl.textContent = formatTime(localAudio.duration || 0);
+          setAudioStatus('Ready', 'ready');
         });
         localAudio.addEventListener('timeupdate', () => {
-          if (scrubRange) scrubRange.value = String(localAudio.currentTime);
-          if (currentTimeEl) currentTimeEl.textContent = formatTime(localAudio.currentTime);
           saveResumeState();
         });
-        scrubRange?.addEventListener('input', () => { localAudio.currentTime = Number(scrubRange.value); saveResumeState(); });
+        localAudio.addEventListener('canplay', () => {
+          if (localAudio.paused) setAudioStatus('Ready', 'ready');
+        });
+        localAudio.addEventListener('error', () => {
+          const mediaError = localAudio.error;
+          const code = mediaError?.code;
+          const label =
+            code === MediaError.MEDIA_ERR_ABORTED ? 'Playback aborted' :
+            code === MediaError.MEDIA_ERR_NETWORK ? 'Audio network error' :
+            code === MediaError.MEDIA_ERR_DECODE ? 'Audio decode error' :
+            code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ? 'Audio format not supported' :
+            'Audio failed to load';
+          setAudioStatus(label, 'error');
+        });
         playBtn.addEventListener('click', async () => {
-          if (localAudio.paused) { await localAudio.play(); } else { localAudio.pause(); }
+          try {
+            if (localAudio.paused) {
+              await localAudio.play();
+            } else {
+              localAudio.pause();
+            }
+          } catch (error) {
+            setAudioStatus(error instanceof Error ? error.message : 'Playback failed', 'error');
+          }
         });
         const setPlaying = (playing: boolean) => {
           playBtn.classList.toggle('playing', playing);
           playBtn.innerHTML = playing ? '<span class="btn-icon">❚❚</span> Pause' : '<span class="btn-icon">▶</span> Play';
         };
-        localAudio.addEventListener('play', () => { setPlaying(true); saveResumeState(); });
-        localAudio.addEventListener('pause', () => { setPlaying(false); saveResumeState(); });
+        localAudio.addEventListener('play', () => { setPlaying(true); setAudioStatus('Playing', 'playing'); saveResumeState(); });
+        localAudio.addEventListener('pause', () => { setPlaying(false); setAudioStatus('Paused', 'paused'); saveResumeState(); });
         localAudio.addEventListener('ended', () => {
           setPlaying(false);
+          setAudioStatus('Ended', 'paused');
           try { sessionStorage.removeItem(resumeKey); } catch { /* ignore */ }
         });
         // Sync global button to current state (e.g. resumed track)
@@ -1142,6 +1271,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       clearCuesBtn?.addEventListener('click', async () => {
         await saveTrackMetadata(trackId, { manual_cues: [] });
+      });
+      document.getElementById('approve-cover-btn')?.addEventListener('click', async () => {
+        await saveTrackMetadata(trackId, {
+          album_art_review_status: 'approved',
+          album_art_review_notes: 'manual approval from track detail',
+        });
+      });
+      document.getElementById('mark-cover-review-btn')?.addEventListener('click', async () => {
+        await saveTrackMetadata(trackId, {
+          album_art_review_status: 'needs_review',
+          album_art_review_notes: 'marked for manual review from track detail',
+        });
       });
 
       document.getElementById('save-metadata-btn')?.addEventListener('click', async () => {
@@ -1338,6 +1479,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         renderList(tracks.filter((track) => !track.album_art_url));
         return;
       }
+      if (query === 'art:review') {
+        searchEl.value = '';
+        renderList(tracks.filter((track) => ['needs_review', 'missing', 'conflict'].includes(String(track.album_art_review_status ?? ''))));
+        return;
+      }
       if (query === 'spotify:missing') {
         renderList(tracks.filter((track) => !track.spotify_id));
         return;
@@ -1353,13 +1499,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function renderLibraryPanel() {
       if (!libraryOverview) {
-        libraryPanel.innerHTML = '<div class="empty">Loading library tools…</div>';
+        libraryPanel.innerHTML = '<div class="empty">Loading collection tools…</div>';
         return;
       }
 
       const health = (libraryOverview.health as Record<string, unknown>) ?? {};
       const smartCrates = (libraryOverview.smart_crates as Record<string, unknown>[]) ?? [];
       const duplicates = (libraryOverview.duplicates as Record<string, unknown>[]) ?? [];
+      const coverReviewQueue = (libraryOverview.cover_review_queue as Record<string, unknown>[]) ?? [];
       const artists = (libraryOverview.artists as Record<string, unknown>[]) ?? [];
       const albums = (libraryOverview.albums as Record<string, unknown>[]) ?? [];
       const tags = (libraryOverview.tags as Record<string, unknown>[]) ?? [];
@@ -1373,12 +1520,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
           <section class="library-card">
-            <div class="scan-log-head"><strong>Runtime Health</strong></div>
+            <div class="scan-log-head"><strong>App Health</strong></div>
             <div class="runtime-list">
               <div><strong>Node</strong><span>${esc(runtimeHealth?.node ?? 'unknown')}</span></div>
               <div><strong>Python</strong><span>${esc(runtimeHealth?.python ?? runtimeHealth?.python_error ?? 'unknown')}</span></div>
-              <div><strong>Database</strong><span>${runtimeHealth?.database_url_set ? 'configured' : 'missing DATABASE_URL'}</span></div>
-              <div><strong>Spotify</strong><span>${Array.isArray(runtimeHealth?.spotify_missing) && runtimeHealth?.spotify_missing.length ? esc((runtimeHealth?.spotify_missing as string[]).join(', ')) : 'configured'}</span></div>
+              <div><strong>Database</strong><span>${runtimeHealth?.database_url_set ? 'ready' : 'needs DATABASE_URL'}</span></div>
+              <div><strong>Spotify</strong><span>${Array.isArray(runtimeHealth?.spotify_missing) && runtimeHealth?.spotify_missing.length ? esc((runtimeHealth?.spotify_missing as string[]).join(', ')) : 'ready'}</span></div>
             </div>
           </section>
           <section class="library-card">
@@ -1404,6 +1551,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   <button type="button" class="icon-btn danger remove-watch-btn" data-directory="${esc(watch.directory ?? '')}">Remove</button>
                 </div>
               `).join('') || '<div class="scan-log-entry info">No folders watched yet.</div>'}
+            </div>
+          </section>
+          <section class="library-card library-span">
+            <div class="scan-log-head"><strong>Cover Review Queue</strong></div>
+            <div class="scan-history">
+              ${coverReviewQueue.map((track) => `
+                <div class="scan-history-item">
+                  <strong><button type="button" class="nav-link inline cover-review-open-btn" data-track-id="${track.id}">${esc(track.artist ?? 'Unknown Artist')} - ${esc(track.title ?? 'Untitled')}</button></strong>
+                  <span>${esc(track.album || 'No album')} · ${esc(track.album_art_source || 'no source')} · score ${esc(Number(track.album_art_confidence ?? 0).toFixed(1))}</span>
+                  <span>${esc(track.album_art_review_status || 'missing')} ${track.album_art_review_notes ? `· ${esc(track.album_art_review_notes)}` : ''}</span>
+                  <div class="chips">
+                    ${track.album_art_url ? `<button type="button" class="chip nav-chip cover-review-approve-btn" data-track-id="${track.id}">Approve</button>` : ''}
+                    <button type="button" class="chip nav-chip subtle cover-review-mark-btn" data-track-id="${track.id}" data-status="needs_review">Needs Review</button>
+                  </div>
+                </div>
+              `).join('') || '<div class="scan-log-entry info">No cover-art reviews waiting.</div>'}
             </div>
           </section>
           <section class="library-card library-span">
@@ -1481,6 +1644,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           void selectTrack((card as HTMLElement).dataset.trackId!, false);
         });
       });
+      libraryPanel.querySelectorAll('.cover-review-open-btn[data-track-id]').forEach((button) => {
+        button.addEventListener('click', () => {
+          document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+          void selectTrack((button as HTMLElement).dataset.trackId!, false);
+        });
+      });
+      libraryPanel.querySelectorAll('.cover-review-approve-btn[data-track-id], .cover-review-mark-btn[data-track-id]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const trackId = parseInt((button as HTMLElement).dataset.trackId ?? '0', 10);
+          const status = String((button as HTMLElement).dataset.status ?? 'approved');
+          if (!trackId) return;
+          await saveTrackMetadata(trackId, {
+            album_art_review_status: status,
+            album_art_review_notes: status === 'approved' ? 'manual approval from library review queue' : 'marked for manual cover review',
+          });
+        });
+      });
       document.getElementById('add-watch-btn')?.addEventListener('click', async () => {
         const input = document.getElementById('watch-directory-input') as HTMLInputElement;
         const res = await fetch('/api/watch', {
@@ -1533,6 +1713,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const type = String(event.event ?? '');
         if (type === 'job_state') {
           const summary = (event.summary as Record<string, unknown> | null) ?? null;
+          activeScanStatus = String(event.status ?? 'running');
+          ensureBackgroundRefreshLoop();
           setScanStatus(String(event.status ?? 'running'), ['failed', 'cancelled'].includes(String(event.status ?? '')) ? 'error' : String(event.status ?? '') === 'completed' ? 'success' : 'running');
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), String(event.current_file ?? event.directory ?? ''));
           setScanSummary(summary, { createdAt: scanHistory.find((job) => job.id === jobId)?.createdAt ?? null });
@@ -1564,10 +1746,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const label = String(event.file ?? event.path ?? 'Track');
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), `${label} · ${status}`);
           if (reason) appendScanLog(`${label}: ${status} (${reason})`, status === 'skipped' ? 'warning' : status === 'error' ? 'error' : 'success');
+          queueDbRefresh();
           return;
         }
 
         if (type === 'scan_failed') {
+          activeScanStatus = 'failed';
+          ensureBackgroundRefreshLoop();
           setScanStatus('failed', 'error');
           appendScanLog(String(event.error ?? 'Scan failed'), 'error');
           await loadScanHistory();
@@ -1600,6 +1785,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const payload = await res.json();
       const job = payload.job as Record<string, unknown>;
       activeScanJobId = String(job.id);
+      activeScanStatus = String(job.status ?? 'idle');
+      ensureBackgroundRefreshLoop();
       if (typeof job.directory === 'string' && job.directory) {
         scanDirectoryEl.value = job.directory;
         pushRecentDirectory(job.directory);
@@ -1621,13 +1808,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function preflightDirectory(directory: string) {
       if (!directory.trim()) {
-        scanPreflightEl.textContent = 'No directory validation yet.';
+        scanPreflightEl.textContent = 'Choose a music folder to check.';
         return;
       }
       const res = await fetch(`/api/scan/validate?directory=${encodeURIComponent(directory)}`);
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        scanPreflightEl.textContent = String(payload.error ?? 'Validation failed');
+        scanPreflightEl.textContent = String(payload.error ?? 'Folder check failed');
         return;
       }
       const validation = payload.validation ?? {};
@@ -1638,14 +1825,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function triggerScan() {
       const directory = scanDirectoryEl.value.trim();
       if (!directory) {
-        setScanStatus('Enter a music folder path', 'error');
-        setScanProgress(0, 0, 'Enter a music folder path');
+        setScanStatus('Choose a music folder', 'error');
+        setScanProgress(0, 0, 'Choose a music folder');
         scanDirectoryEl.focus();
         return;
       }
 
       scanBtn.disabled = true;
-      setScanStatus('Scanning library…', 'running');
+      activeScanStatus = 'queued';
+      ensureBackgroundRefreshLoop();
+      setScanStatus('Scanning collection…', 'running');
       setScanProgress(0, 0, directory);
       warningBanner.style.display = 'none';
       resetScanLog();
@@ -1682,10 +1871,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const payload = await res.json();
         const job = payload.job as Record<string, unknown>;
         activeScanJobId = String(job.id);
+        activeScanStatus = String(job.status ?? 'queued');
+        ensureBackgroundRefreshLoop();
         appendScanLog(`Scan job created: ${activeScanJobId}`, 'info');
         await loadScanHistory();
         await loadScanJob(activeScanJobId, true);
       } catch (error) {
+        activeScanStatus = 'failed';
+        ensureBackgroundRefreshLoop();
         setScanStatus('Scan failed', 'error');
         setScanProgress(0, 0, 'Scan failed');
         appendScanLog(error instanceof Error ? error.message : String(error), 'error');
@@ -1704,16 +1897,31 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (bpmMaxEl.value) params.set('bpm_max', bpmMaxEl.value);
       if (keyFilterEl.value) params.set('key', keyFilterEl.value);
       const res = await fetch(`/api/tracks?${params.toString()}`);
-      const response = await res.json();
-      tracks = response.tracks ?? [];
+      const rawBody = await res.text();
+      let response: Record<string, unknown> = {};
+      try {
+        response = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : {};
+      } catch {
+        response = {};
+      }
+      if (!res.ok) {
+        const message = String(response.error ?? rawBody ?? `Track refresh failed (${res.status})`);
+        warningBanner.style.display = 'block';
+        warningBanner.innerHTML = `<strong>Collection refresh failed:</strong> ${esc(message.slice(0, 400))}`;
+        appendScanLog(`Collection refresh failed: ${message.slice(0, 200)}`, 'error');
+        return;
+      }
+      tracks = Array.isArray(response.tracks) ? response.tracks as Record<string, unknown>[] : [];
       for (const id of [...selectedTrackIds]) {
         if (!tracks.some((track) => Number(track.id) === id)) selectedTrackIds.delete(id);
       }
-      const debug = response.debug ?? {};
-      const missingEnv: string[] = debug.spotify_missing ?? [];
+      const debug = (response.debug && typeof response.debug === 'object') ? response.debug as Record<string, unknown> : {};
+      const missingEnv = Array.isArray(debug.spotify_missing)
+        ? debug.spotify_missing.filter((value): value is string => typeof value === 'string')
+        : [];
       if (missingEnv.length) {
         warningBanner.style.display = 'block';
-        warningBanner.innerHTML = `<strong>Missing env:</strong> ${missingEnv.join(', ')}`;
+        warningBanner.innerHTML = `<strong>Missing setup:</strong> ${missingEnv.join(', ')}`;
       } else {
         warningBanner.style.display = 'none';
       }
@@ -1795,7 +2003,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     scanCancelBtn.addEventListener('click', async () => {
       if (!activeScanJobId) return;
       await fetch(`/api/scan/${activeScanJobId}`, { method: 'DELETE' });
+      activeScanStatus = 'cancelled';
+      ensureBackgroundRefreshLoop();
       appendScanLog('Cancellation requested', 'warning');
+      queueDbRefresh(500);
     });
     scanRecentDirectoriesEl.addEventListener('change', () => {
       if (!scanRecentDirectoriesEl.value) return;
@@ -1836,8 +2047,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     scanDirectoryEl.addEventListener('blur', () => { void preflightDirectory(scanDirectoryEl.value); });
     setScanStatus('Idle');
-    setScanProgress(0, 0, 'No scan running');
+    setScanProgress(0, 0, 'No scan in progress');
     resetScanLog();
+    updateDesktopStatusBadge();
+    ensureBackgroundRefreshLoop();
     renderRecentDirectories();
     renderBrowseScope();
     renderBulkToolbar();
@@ -1857,6 +2070,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         await loadScanJob(String(scanHistory[0].id), false);
       }
     });
+
+    return () => {
+      stopStreamingScanJob();
+      if (backgroundRefreshTimer) clearInterval(backgroundRefreshTimer);
+      if (queuedDbRefreshTimer) clearTimeout(queuedDbRefreshTimer);
+      if (searchTimer) clearTimeout(searchTimer);
+    };
   }, [adapter]);
 
   return null;

@@ -52,7 +52,7 @@ export async function PATCH(
     await updateTrackBpm(trackId, bpm);
   }
 
-  if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined) {
+  if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined || body.album_art_review_status !== undefined || body.album_art_review_notes !== undefined) {
     await updateTrackMetadata(trackId, {
       artist: body.artist,
       title: body.title,
@@ -64,6 +64,8 @@ export async function PATCH(
         time: Number(cue.time ?? 0),
         label: cue.label ? String(cue.label) : undefined,
       })) : undefined,
+      album_art_review_status: body.album_art_review_status !== undefined ? String(body.album_art_review_status ?? '') : undefined,
+      album_art_review_notes: body.album_art_review_notes !== undefined ? String(body.album_art_review_notes ?? '') : undefined,
     });
   }
 

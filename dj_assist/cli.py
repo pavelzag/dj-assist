@@ -278,6 +278,7 @@ def fetch_art(force: bool, limit: int | None, verbose: bool) -> None:
             previews = build_media_links(
                 track.artist,
                 track.title,
+                track.album,
                 track.duration,
                 fetch_album_art=True,
             )

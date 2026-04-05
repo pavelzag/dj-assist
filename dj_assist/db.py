@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 import os
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, create_engine, func, inspect, text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, create_engine, func, inspect, text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, selectinload
 
 Base = declarative_base()
@@ -25,6 +25,7 @@ class Track(Base):
     artist = Column(String)
     album = Column(String)
     duration = Column(Float)
+    bitrate = Column(Float)
     bpm = Column(Float)
     key = Column(String)
     key_numeric = Column(String)
@@ -36,6 +37,13 @@ class Track(Base):
     spotify_key = Column(String)
     spotify_mode = Column(String)
     album_art_url = Column(String)
+    album_art_source = Column(String)
+    album_art_confidence = Column(Float)
+    album_art_review_status = Column(String)
+    album_art_review_notes = Column(String)
+    album_group_key = Column(String)
+    embedded_album_art = Column(Boolean)
+    album_art_match_debug = Column(String)
     spotify_album_name = Column(String)
     spotify_match_score = Column(Float)
     spotify_high_confidence = Column(String)
@@ -123,6 +131,7 @@ class Database:
             track.artist,
             track.album,
             track.duration,
+            track.bitrate,
             track.bpm,
             track.key,
             track.key_numeric,
@@ -134,6 +143,13 @@ class Database:
             track.spotify_key,
             track.spotify_mode,
             track.album_art_url,
+            track.album_art_source,
+            track.album_art_confidence,
+            track.album_art_review_status,
+            track.album_art_review_notes,
+            track.album_group_key,
+            track.embedded_album_art,
+            track.album_art_match_debug,
             track.spotify_album_name,
             track.spotify_match_score,
             track.spotify_high_confidence,
@@ -174,10 +190,18 @@ class Database:
             "spotify_key": "VARCHAR",
             "spotify_mode": "VARCHAR",
             "album_art_url": "VARCHAR",
+            "album_art_source": "VARCHAR",
+            "album_art_confidence": "FLOAT",
+            "album_art_review_status": "VARCHAR",
+            "album_art_review_notes": "VARCHAR",
+            "album_group_key": "VARCHAR",
+            "embedded_album_art": "BOOLEAN",
+            "album_art_match_debug": "TEXT",
             "spotify_album_name": "VARCHAR",
             "spotify_match_score": "FLOAT",
             "spotify_high_confidence": "VARCHAR",
             "youtube_url": "VARCHAR",
+            "bitrate": "FLOAT",
             "bpm_source": "VARCHAR",
             "analysis_status": "VARCHAR",
             "analysis_error": "VARCHAR",

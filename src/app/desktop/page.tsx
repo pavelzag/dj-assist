@@ -1,6 +1,5 @@
-import AppShell from '../components/AppShell';
-import ElectronClientInit from '../components/ElectronClientInit';
+import { redirect } from 'next/navigation';
 
 export default function DesktopPage() {
-  return <AppShell platform="electron" clientInit={<ElectronClientInit />} />;
+  redirect('/');
 }

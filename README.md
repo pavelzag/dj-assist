@@ -4,7 +4,7 @@ DJ Assist is a desktop-oriented music-library tool for DJs. It scans local audio
 
 ## Current Architecture
 
-The current application is a hybrid stack:
+The current application is an Electron-first desktop stack:
 
 - Next.js 15 service UI
 - Python 3.11 scanner and analysis pipeline
@@ -138,7 +138,7 @@ Main work items:
    - For a desktop product, PostgreSQL is heavier than necessary.
    - SQLite is likely the better desktop database.
 
-3. Move from "web app assumptions" to "desktop app assumptions".
+3. Finish the move from browser-style assumptions to desktop-style assumptions.
    - folder pickers
    - native menus
    - app updates
@@ -148,6 +148,19 @@ Main work items:
 ### Practical migration difficulty
 
 - Electron shell only: low
+
+### macOS packaging
+
+1. Install desktop packaging dependencies:
+   - `npm install`
+2. Build the standalone Next backend:
+   - `npm run build`
+3. Create an unsigned macOS app bundle for local testing:
+   - `npm run pack:mac`
+4. Create macOS distributables:
+   - `npm run dist:mac`
+
+Artifacts are written to `dist-electron/`.
 - Electron app that actually ships cleanly to clients: medium-high
 - Electron app with bundled Python analysis and reliable installers: high
 
@@ -174,7 +187,7 @@ See:
 - PostgreSQL 16
 - macOS recommended for current local setup
 
-## Current Local Dev Run
+## Desktop Dev Run
 
 ```bash
 cd /Users/pavel/Projects/dj-assist
@@ -183,23 +196,21 @@ npm install
 npm run dev
 ```
 
-## Electron Dev Run
+This launches the Electron app and a reusable local backend.
 
-Electron now exists alongside the web app.
+Behavior in desktop mode:
 
-After dependencies are installed:
+- the backend stays running when the Electron window quits
+- scans can continue in the background while the desktop window is closed
+- reopening the Electron app reconnects to the same backend and the scan UI restores the running job from scan history
+
+## Backend-only Run
+
+If you need to run only the backend for debugging:
 
 ```bash
-cd /Users/pavel/Projects/dj-assist
-docker compose up -d
-npm install
-npm run electron:dev
+npm run backend:dev
 ```
-
-This launches:
-
-- the current Next.js app on localhost
-- an Electron shell pointed at that local app
 
 With `.env.local`:
 

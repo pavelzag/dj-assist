@@ -1,18 +1,10 @@
-export type AppPlatform = 'web' | 'electron';
+export type AppPlatform = 'electron';
 
 export type PlatformAdapter = {
   platform: AppPlatform;
   supportsNativeFolderPicker: boolean;
   pickDirectory: () => Promise<string | null>;
 };
-
-export function createWebPlatformAdapter(): PlatformAdapter {
-  return {
-    platform: 'web',
-    supportsNativeFolderPicker: false,
-    pickDirectory: async () => null,
-  };
-}
 
 export function createElectronPlatformAdapter(): PlatformAdapter {
   return {

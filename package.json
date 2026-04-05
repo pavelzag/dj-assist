@@ -2,17 +2,22 @@
   "name": "dj-assist",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.cjs",
   "engines": {
     "node": ">=20 <25"
   },
   "scripts": {
     "predev": "node scripts/check-node.cjs",
-    "dev": "rm -rf .next && next dev",
+    "dev": "node scripts/electron-dev.cjs",
+    "backend:dev": "rm -rf .next && next dev",
     "electron:dev": "node scripts/check-node.cjs && node scripts/electron-dev.cjs",
     "prebuild": "node scripts/check-node.cjs",
     "build": "next build",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "pack:mac": "npm run build && electron-builder --mac dir",
     "prestart": "node scripts/check-node.cjs",
-    "start": "next start",
+    "start": "node scripts/electron-start.cjs",
+    "backend:start": "next start",
     "electron:start": "node scripts/check-node.cjs && node scripts/electron-start.cjs"
   },
   "dependencies": {
@@ -26,6 +31,37 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "electron": "^41.1.1",
+    "electron-builder": "^26.0.12",
     "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.djassist.desktop",
+    "productName": "DJ Assist",
+    "asar": false,
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "electron/assets"
+    },
+    "files": [
+      "electron/**/*",
+      ".next/standalone/**/*",
+      ".next/static/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "electron/assets/app-icon.png"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
   }
 }

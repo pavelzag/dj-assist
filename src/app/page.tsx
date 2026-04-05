@@ -1,6 +1,6 @@
 import AppShell from './components/AppShell';
-import WebClientInit from './components/WebClientInit';
+import ElectronClientInit from './components/ElectronClientInit';
 
 export default function Page() {
-  return <AppShell platform="web" clientInit={<WebClientInit />} />;
+  return <AppShell clientInit={<ElectronClientInit />} />;
 }

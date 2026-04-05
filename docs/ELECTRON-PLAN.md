@@ -1,31 +1,28 @@
 # Electron Plan
 
-This repo now supports a first Electron shell without removing the existing web app.
+This repo now treats Electron as the primary product shell.
 
 ## Goal
 
-Keep both modes in the repo:
-
-- web mode for current development and browser use
-- Electron mode for desktop packaging work
+Make the app Electron-first while keeping the Next.js service UI architecture as the renderer/backend layer.
 
 ## Current Electron Scope
 
-The current Electron integration is intentionally light:
+The current Electron integration:
 
-- launches the existing Next app on localhost
-- opens the dedicated `/desktop` route in an Electron `BrowserWindow`
-- keeps the current web app intact
+- launches or reuses the local Next backend
+- opens the root route `/` in an Electron `BrowserWindow`
+- keeps scans alive when the Electron window closes
+- reconnects to running scans on relaunch
 - exposes a preload bridge for desktop-only APIs
 
-## Route Split
+## Routes
 
-The app now has separate top-level entrypoints:
+The primary app route is now:
 
-- web app: `/`
-- Electron app: `/desktop`
+- Electron app: `/`
 
-They share core scanning/library logic, but platform-specific behavior can now diverge cleanly.
+The old `/desktop` route remains only as a compatibility redirect.
 
 ## New Files
 
@@ -66,14 +63,14 @@ window.djAssistDesktop
 
 They are not yet fully wired into the UI.
 
-## Why This Is The Right First Step
+## Why This Is The Right Step
 
-This keeps risk low:
+This keeps the architecture pragmatic:
 
-- no disruption to the current web app
-- no DB migration yet
-- no scanner rewrite yet
-- allows iterative desktop work
+- Electron is the product shell
+- the existing Next/Python stack still does the heavy lifting
+- scans can persist across desktop window restarts
+- native desktop affordances can be added without maintaining a parallel desktop/web UI split
 
 ## Recommended Next Steps
 

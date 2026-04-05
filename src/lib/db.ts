@@ -67,11 +67,19 @@ async function ensureTrackManagementSchema(): Promise<void> {
   const sql = getDb();
   await sql`
     ALTER TABLE tracks
+    ADD COLUMN IF NOT EXISTS bitrate DOUBLE PRECISION,
     ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS custom_tags TEXT,
     ADD COLUMN IF NOT EXISTS artist_canonical TEXT,
     ADD COLUMN IF NOT EXISTS album_canonical TEXT,
-    ADD COLUMN IF NOT EXISTS manual_cues JSONB NOT NULL DEFAULT '[]'::jsonb
+    ADD COLUMN IF NOT EXISTS manual_cues JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS album_art_source TEXT,
+    ADD COLUMN IF NOT EXISTS album_art_confidence DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS album_art_review_status TEXT,
+    ADD COLUMN IF NOT EXISTS album_art_review_notes TEXT,
+    ADD COLUMN IF NOT EXISTS album_group_key TEXT,
+    ADD COLUMN IF NOT EXISTS embedded_album_art BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS album_art_match_debug TEXT
   `;
   trackManagementSchemaEnsured = true;
 }
@@ -111,6 +119,7 @@ export interface Track {
   artist: string | null;
   album: string | null;
   duration: number | null;
+  bitrate: number | null;
   bpm: number | null;
   key: string | null;
   key_numeric: string | null;
@@ -122,6 +131,13 @@ export interface Track {
   spotify_key: string | null;
   spotify_mode: string | null;
   album_art_url: string | null;
+  album_art_source: string | null;
+  album_art_confidence: number | null;
+  album_art_review_status: string | null;
+  album_art_review_notes: string | null;
+  album_group_key: string | null;
+  embedded_album_art: boolean | null;
+  album_art_match_debug: string | null;
   spotify_album_name: string | null;
   spotify_match_score: number | null;
   spotify_high_confidence: string | null;
@@ -296,6 +312,7 @@ export function serializeTrack(track: Track) {
     artist: track.artist,
     album: track.album,
     duration: track.duration,
+    bitrate: track.bitrate,
     bpm: track.bpm,
     key: track.key,
     key_numeric: track.key_numeric,
@@ -307,6 +324,13 @@ export function serializeTrack(track: Track) {
     spotify_key: track.spotify_key,
     spotify_mode: track.spotify_mode,
     album_art_url: track.album_art_url,
+    album_art_source: track.album_art_source,
+    album_art_confidence: track.album_art_confidence,
+    album_art_review_status: track.album_art_review_status,
+    album_art_review_notes: track.album_art_review_notes,
+    album_group_key: track.album_group_key,
+    embedded_album_art: Boolean(track.embedded_album_art),
+    album_art_match_debug: track.album_art_match_debug,
     spotify_album_name: track.spotify_album_name,
     spotify_match_score: track.spotify_match_score,
     spotify_high_confidence: (track.spotify_high_confidence ?? '').toLowerCase() === 'true',
@@ -316,6 +340,13 @@ export function serializeTrack(track: Track) {
       spotify_album_name: track.spotify_album_name ?? '',
       spotify_match_score: track.spotify_match_score ?? 0,
       spotify_high_confidence: (track.spotify_high_confidence ?? '').toLowerCase() === 'true',
+      album_art_source: track.album_art_source ?? '',
+      album_art_confidence: track.album_art_confidence ?? 0,
+      album_art_review_status: track.album_art_review_status ?? '',
+      album_art_review_notes: track.album_art_review_notes ?? '',
+      album_group_key: track.album_group_key ?? '',
+      embedded_album_art: Boolean(track.embedded_album_art),
+      album_art_match_debug: track.album_art_match_debug ?? '',
       has_album_art: Boolean(track.album_art_url),
     },
     youtube_url: track.youtube_url,
@@ -410,6 +441,8 @@ export async function updateTrackMetadata(
     ignored?: boolean;
     custom_tags?: string[];
     manual_cues?: Array<{ time: number; label?: string }>;
+    album_art_review_status?: string | null;
+    album_art_review_notes?: string | null;
   },
 ): Promise<void> {
   await ensureTrackManagementSchema();
@@ -427,6 +460,8 @@ export async function updateTrackMetadata(
       key = COALESCE(${patch.key ?? null}, key),
       ignored = COALESCE(${patch.ignored ?? null}, ignored),
       custom_tags = COALESCE(${customTags}, custom_tags),
+      album_art_review_status = COALESCE(${patch.album_art_review_status ?? null}, album_art_review_status),
+      album_art_review_notes = COALESCE(${patch.album_art_review_notes ?? null}, album_art_review_notes),
       artist_canonical = COALESCE(${artist != null ? canonicalizeArtistName(artist) : null}, artist_canonical, ${canonicalizeArtistName(artist)}),
       album_canonical = COALESCE(${album != null ? canonicalizeAlbumName(album) : null}, album_canonical, ${canonicalizeAlbumName(album)}),
       manual_cues = COALESCE(${patch.manual_cues ? sql.json(patch.manual_cues as never) : null}, manual_cues)
@@ -549,6 +584,17 @@ export interface LibraryOverview {
   health: Record<string, number>;
   smart_crates: Array<{ id: string; label: string; count: number; query: string }>;
   duplicates: Array<{ type: string; key: string; tracks: ReturnType<typeof serializeTrack>[] }>;
+  cover_review_queue: Array<{
+    id: number;
+    artist: string;
+    title: string;
+    album: string;
+    album_art_review_status: string;
+    album_art_review_notes: string;
+    album_art_confidence: number;
+    album_art_source: string;
+    album_art_url: string;
+  }>;
   artists: Array<{ name: string; canonical: string; track_count: number; album_count: number; albums: string[] }>;
   albums: Array<{ name: string; artist: string; canonical: string; track_count: number; with_art: number }>;
   tags: Array<{ tag: string; count: number }>;
@@ -563,8 +609,10 @@ export async function getLibraryOverview(): Promise<LibraryOverview> {
     missing_bpm: allTracks.filter((track) => !track.effective_bpm).length,
     missing_key: allTracks.filter((track) => !track.effective_key).length,
     missing_album_art: allTracks.filter((track) => !track.album_art_url).length,
+    embedded_album_art: allTracks.filter((track) => track.embedded_album_art).length,
     decode_failures: allTracks.filter((track) => String(track.decode_failed ?? '') === 'true').length,
     no_spotify_match: allTracks.filter((track) => !track.spotify_id).length,
+    cover_review_queue: allTracks.filter((track) => ['needs_review', 'missing', 'conflict'].includes(String(track.album_art_review_status ?? ''))).length,
     tagged: allTracks.filter((track) => Array.isArray(track.custom_tags) && track.custom_tags.length > 0).length,
   };
 
@@ -572,12 +620,14 @@ export async function getLibraryOverview(): Promise<LibraryOverview> {
     { id: 'missing-bpm', label: 'Missing BPM', count: health.missing_bpm, query: 'bpm:missing' },
     { id: 'missing-key', label: 'Missing Key', count: health.missing_key, query: 'key:missing' },
     { id: 'missing-art', label: 'Missing Album Art', count: health.missing_album_art, query: 'art:missing' },
+    { id: 'cover-review', label: 'Cover Review Queue', count: health.cover_review_queue, query: 'art:review' },
     { id: 'decode-failures', label: 'Decode Failures', count: health.decode_failures, query: 'decode:failed' },
     { id: 'no-spotify', label: 'No Spotify Match', count: health.no_spotify_match, query: 'spotify:missing' },
     { id: 'ignored', label: 'Ignored', count: health.ignored, query: 'ignored:true' },
   ];
 
   const duplicateGroups = new Map<string, { type: string; key: string; tracks: typeof allTracks }>();
+  const albumArtByGroup = new Map<string, Set<string>>();
   for (const track of allTracks) {
     const signature = `${track.artist_canonical}|${canonicalizeText(String(track.title ?? ''))}|${Math.round(Number(track.duration ?? 0))}`;
     const keys = [
@@ -591,12 +641,40 @@ export async function getLibraryOverview(): Promise<LibraryOverview> {
       group.tracks.push(track);
       duplicateGroups.set(groupKey, group);
     }
+    if (track.album_group_key) {
+      const artUrls = albumArtByGroup.get(String(track.album_group_key)) ?? new Set<string>();
+      if (track.album_art_url) artUrls.add(String(track.album_art_url));
+      albumArtByGroup.set(String(track.album_group_key), artUrls);
+    }
   }
 
   const duplicates = [...duplicateGroups.values()]
     .filter((group) => group.tracks.length > 1)
     .sort((a, b) => b.tracks.length - a.tracks.length)
     .slice(0, 20);
+
+  const coverReviewQueue = allTracks
+    .map((track) => {
+      const conflict = track.album_group_key ? (albumArtByGroup.get(String(track.album_group_key))?.size ?? 0) > 1 : false;
+      const status = conflict ? 'conflict' : String(track.album_art_review_status ?? (track.album_art_url ? 'approved' : 'missing'));
+      const notes = conflict
+        ? 'album cluster has conflicting cover artwork'
+        : String(track.album_art_review_notes ?? (track.album_art_url ? '' : 'no cover artwork attached'));
+      return {
+        id: Number(track.id),
+        artist: String(track.artist ?? 'Unknown Artist'),
+        title: String(track.title ?? 'Untitled'),
+        album: String(track.album ?? track.spotify_album_name ?? ''),
+        album_art_review_status: status,
+        album_art_review_notes: notes,
+        album_art_confidence: Number(track.album_art_confidence ?? 0),
+        album_art_source: String(track.album_art_source ?? ''),
+        album_art_url: String(track.album_art_url ?? ''),
+      };
+    })
+    .filter((track) => ['needs_review', 'missing', 'conflict'].includes(track.album_art_review_status))
+    .sort((a, b) => a.album_art_confidence - b.album_art_confidence || a.artist.localeCompare(b.artist))
+    .slice(0, 50);
 
   const artistMap = new Map<string, { name: string; canonical: string; track_count: number; albums: Set<string> }>();
   const albumMap = new Map<string, { name: string; artist: string; canonical: string; track_count: number; with_art: number }>();
@@ -634,6 +712,7 @@ export async function getLibraryOverview(): Promise<LibraryOverview> {
     health,
     smart_crates: smartCrates,
     duplicates,
+    cover_review_queue: coverReviewQueue,
     artists: [...artistMap.values()]
       .map((artist) => ({
         name: artist.name,
