@@ -1,3 +1,6 @@
+# Electron build output
+dist-electron/
+
 # Next.js
 .next/
 out/
