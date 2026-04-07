@@ -111,7 +111,15 @@ function emit(job: InMemoryJob, event: Record<string, unknown>) {
 }
 
 async function persistLog(jobId: string, level: string, message: string, eventType = 'log', payload: Record<string, unknown> = {}) {
-  await addScanLog({ scanRunId: jobId, level, message, eventType, payload });
+  try {
+    await addScanLog({ scanRunId: jobId, level, message, eventType, payload });
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    // The library reset flow can remove scan_runs while a late log event is still
+    // in flight. Ignore that foreign-key miss instead of crashing backend stderr.
+    if (/constraint failed|foreign key/i.test(messageText)) return;
+    throw error;
+  }
 }
 
 async function pushLog(job: InMemoryJob, level: 'info' | 'warning' | 'error' | 'success', message: string, eventType = 'log', payload: Record<string, unknown> = {}) {
@@ -407,6 +415,16 @@ export async function cancelScanJob(jobId: string): Promise<void> {
   job.state.status = 'cancelled';
   job.child.kill('SIGTERM');
   await pushLog(job, 'warning', 'Scan cancelled by user', 'cancel');
+}
+
+export async function cancelAllScanJobs(): Promise<void> {
+  const jobs = [...jobsStore().values()];
+  for (const job of jobs) {
+    if (!job.child) continue;
+    job.state.status = 'cancelled';
+    job.child.kill('SIGTERM');
+    await pushLog(job, 'warning', 'Scan cancelled due to library reset', 'cancel');
+  }
 }
 
 export async function getScanJobSnapshot(jobId: string) {

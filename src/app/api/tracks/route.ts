@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllTracks, searchTracks, serializeTrack } from '@/lib/db';
+import { getAllTracks, getDatabasePath, searchTracks, serializeTrack } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
       ? await searchTracks({ query, bpmMin, bpmMax, key })
       : await getAllTracks();
 
-    let payload = tracks.map(serializeTrack);
+    let payload = tracks.map((track) => serializeTrack(track));
     if (highConfidenceOnly) {
       payload = payload.filter((t) => t.spotify_high_confidence);
     }
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
       : { token_ok: false, error: 'missing_credentials' };
 
     const debug = {
-      database_url: process.env.DATABASE_URL?.replace(/:\/\/[^@]+@/, '://***@') ?? 'unknown',
+      database_path: getDatabasePath(),
       rows: payload.length,
       with_bpm: payload.filter((t) => t.effective_bpm).length,
       with_spotify: payload.filter((t) => t.spotify_id).length,
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
       {
         tracks: [],
         debug: {
-          database_url: process.env.DATABASE_URL?.replace(/:\/\/[^@]+@/, '://***@') ?? 'unknown',
+          database_path: getDatabasePath(),
           rows: 0,
           spotify_missing: [],
           route_error: error instanceof Error ? error.message : String(error),

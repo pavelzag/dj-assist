@@ -16,6 +16,30 @@ def normalize_database_url(url: str) -> str:
     return url
 
 
+def default_database_path() -> str:
+    return os.path.expanduser("~/.dj_assist/dj_assist.db")
+
+
+def resolve_database_url(explicit_path: Optional[str] = None) -> str:
+    db_path = explicit_path or os.getenv("DJ_ASSIST_DB_PATH")
+    if db_path:
+        db_path = os.path.expanduser(db_path)
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        return f"sqlite:///{db_path}"
+
+    preferred_url = os.getenv("DJ_ASSIST_DATABASE_URL")
+    if preferred_url:
+        return normalize_database_url(preferred_url)
+
+    legacy_url = os.getenv("DATABASE_URL")
+    if legacy_url and legacy_url.startswith("sqlite://"):
+        return normalize_database_url(legacy_url)
+
+    db_path = default_database_path()
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    return f"sqlite:///{db_path}"
+
+
 class Track(Base):
     __tablename__ = "tracks"
 
@@ -165,12 +189,7 @@ class Database:
         return sum(1 for value in fields if value not in (None, "", 0))
 
     def __init__(self, db_path: Optional[str] = None):
-        database_url = db_path or os.getenv("DATABASE_URL") or os.getenv("DJ_ASSIST_DATABASE_URL")
-        if not database_url:
-            db_path = os.path.expanduser("~/.dj_assist/dj_assist.db")
-            os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            database_url = f"sqlite:///{db_path}"
-        database_url = normalize_database_url(database_url)
+        database_url = resolve_database_url(db_path)
         self.engine = create_engine(database_url, pool_pre_ping=True)
         Base.metadata.create_all(self.engine)
         self._migrate_tracks_table()
@@ -276,6 +295,36 @@ class Database:
         session = self.get_session()
         try:
             return session.query(Track).filter_by(id=track_id).first()
+        finally:
+            session.close()
+
+    def update_track_analysis(
+        self,
+        track_id: int,
+        *,
+        bpm: Optional[float] = None,
+        bpm_source: Optional[str] = None,
+        analysis_status: Optional[str] = None,
+        analysis_error: Optional[str] = None,
+        analysis_stage: Optional[str] = None,
+        analysis_debug: Optional[str] = None,
+        decode_failed: Optional[str] = None,
+    ) -> Optional[Track]:
+        session = self.get_session()
+        try:
+            track = session.query(Track).filter_by(id=track_id).first()
+            if not track:
+                return None
+            track.bpm = bpm
+            track.bpm_source = bpm_source
+            track.analysis_status = analysis_status
+            track.analysis_error = analysis_error
+            track.analysis_stage = analysis_stage
+            track.analysis_debug = analysis_debug
+            track.decode_failed = decode_failed
+            session.commit()
+            session.refresh(track)
+            return track
         finally:
             session.close()
 

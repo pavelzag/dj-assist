@@ -105,8 +105,11 @@ async function runPythonCheck(python: string): Promise<{ ok: boolean; output: st
 }
 
 export async function resolveWorkingPython(): Promise<string> {
-  let lastError = 'No usable Python interpreter found for scanning';
+  let lastError =
+    process.env.DJ_ASSIST_BUNDLED_PYTHON_ERROR?.trim() ||
+    'No usable Python runtime found for scanning. Open Collection -> Startup Diagnostics and verify Python is ready.';
   let lastDetails: Record<string, unknown> = {};
+  const explicit = process.env.PYTHON_EXECUTABLE?.trim();
 
   for (const python of resolvePythonCandidates()) {
     const result = await runPythonCheck(python);
@@ -114,15 +117,23 @@ export async function resolveWorkingPython(): Promise<string> {
 
     const missingPackage = /ModuleNotFoundError:\s+No module named/i.test(result.output);
     const missingInterpreter = /not found|enoent/i.test(result.output);
-    lastError = result.output.trim() || lastError;
+    const trimmedOutput = result.output.trim();
+    lastError = trimmedOutput || lastError;
     lastDetails = { python, output: result.output.trim() };
+
+    if (explicit && python === explicit) {
+      throw new ScanSetupError(lastError, lastDetails);
+    }
 
     if (!missingPackage && !missingInterpreter) {
       throw new ScanSetupError(lastError, lastDetails);
     }
   }
 
-  throw new ScanSetupError(lastError, lastDetails);
+  throw new ScanSetupError(
+    `${lastError}${lastDetails.python ? ` Interpreter tried: ${String(lastDetails.python)}` : ''}`,
+    lastDetails,
+  );
 }
 
 export async function spawnScanProcess(request: ScanRequest): Promise<ScanProcess> {

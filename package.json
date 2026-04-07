@@ -11,10 +11,13 @@
     "dev": "node scripts/electron-dev.cjs",
     "backend:dev": "rm -rf .next && next dev",
     "electron:dev": "node scripts/check-node.cjs && node scripts/electron-dev.cjs",
+    "prepare:audio-tools": "node scripts/prepare-audio-tools.cjs",
+    "prepare:python-bundle": "node scripts/prepare-python-bundle.cjs",
+    "prepare:standalone-assets": "node scripts/prepare-standalone-assets.cjs",
     "prebuild": "node scripts/check-node.cjs",
     "build": "next build",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip",
-    "pack:mac": "npm run build && electron-builder --mac dir",
+    "dist:mac": "npm run build && npm run prepare:standalone-assets && npm run prepare:python-bundle && npm run prepare:audio-tools && electron-builder --mac dmg zip",
+    "pack:mac": "npm run build && npm run prepare:standalone-assets && npm run prepare:python-bundle && npm run prepare:audio-tools && electron-builder --mac dir",
     "prestart": "node scripts/check-node.cjs",
     "start": "node scripts/electron-start.cjs",
     "backend:start": "next start",
@@ -27,6 +30,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -42,18 +46,40 @@
       "output": "dist-electron",
       "buildResources": "electron/assets"
     },
+    "afterSign": "scripts/notarize-mac.cjs",
     "files": [
       "electron/**/*",
       ".next/standalone/**/*",
-      ".next/static/**/*",
-      "public/**/*",
+      "dj_assist/**/*",
+      "requirements.txt",
+      "pyproject.toml",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "audio-tools",
+        "to": "audio-tools",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "extraMetadata": {
       "main": "electron/main.cjs"
     },
     "mac": {
       "category": "public.app-category.music",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.inherit.plist",
       "target": [
         "dmg",
         "zip"

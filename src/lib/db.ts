@@ -1,33 +1,148 @@
-import postgres from 'postgres';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 
 declare global {
   // eslint-disable-next-line no-var
-  var _pgConn: postgres.Sql | undefined;
+  var _sqliteConn: DatabaseSync | undefined;
 }
 
-function getDb(): postgres.Sql {
-  if (!global._pgConn) {
-    const url = process.env.DATABASE_URL;
-    if (!url) throw new Error('DATABASE_URL environment variable is not set');
-    global._pgConn = postgres(url, { max: 10 });
+function defaultDatabasePath(): string {
+  return join(homedir(), '.dj_assist', 'dj_assist.db');
+}
+
+function resolveSqlitePath(): string {
+  const explicitPath = process.env.DJ_ASSIST_DB_PATH?.trim();
+  if (explicitPath) return explicitPath;
+
+  const url = process.env.DJ_ASSIST_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || '';
+  if (url.startsWith('sqlite:///')) return url.slice('sqlite:///'.length);
+  if (url.startsWith('sqlite://')) return url.slice('sqlite://'.length);
+
+  return defaultDatabasePath();
+}
+
+export function getDatabasePath(): string {
+  return resolveSqlitePath();
+}
+
+function parseJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
   }
-  return global._pgConn;
 }
 
-let scanSchemaEnsured = false;
-let trackManagementSchemaEnsured = false;
+function parseDate(value: unknown): Date | null {
+  if (value == null || value === '') return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
-export async function ensureScanSchema(): Promise<void> {
-  if (scanSchemaEnsured) return;
-  const sql = getDb();
-  await sql`
+function boolInt(value: boolean | null | undefined): number | null {
+  if (value == null) return null;
+  return value ? 1 : 0;
+}
+
+function toBoolean(value: unknown): boolean | null {
+  if (value == null) return null;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+  return null;
+}
+
+type SqlitePrimitive = string | number | bigint | null | Uint8Array;
+
+function getDb(): DatabaseSync {
+  if (!global._sqliteConn) {
+    const dbPath = resolveSqlitePath();
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec('PRAGMA journal_mode = WAL');
+    db.exec('PRAGMA synchronous = NORMAL');
+    global._sqliteConn = db;
+  }
+  return global._sqliteConn;
+}
+
+let schemaEnsured = false;
+
+function ensureSchema(): void {
+  if (schemaEnsured) return;
+  const db = getDb();
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tracks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT UNIQUE NOT NULL,
+      title TEXT,
+      artist TEXT,
+      album TEXT,
+      duration REAL,
+      bitrate REAL,
+      bpm REAL,
+      key TEXT,
+      key_numeric TEXT,
+      spotify_id TEXT,
+      spotify_uri TEXT,
+      spotify_url TEXT,
+      spotify_preview_url TEXT,
+      spotify_tempo REAL,
+      spotify_key TEXT,
+      spotify_mode TEXT,
+      album_art_url TEXT,
+      album_art_source TEXT,
+      album_art_confidence REAL,
+      album_art_review_status TEXT,
+      album_art_review_notes TEXT,
+      album_group_key TEXT,
+      embedded_album_art INTEGER NOT NULL DEFAULT 0,
+      album_art_match_debug TEXT,
+      spotify_album_name TEXT,
+      spotify_match_score REAL,
+      spotify_high_confidence TEXT,
+      youtube_url TEXT,
+      bpm_source TEXT,
+      analysis_status TEXT,
+      analysis_error TEXT,
+      decode_failed TEXT,
+      analysis_stage TEXT,
+      analysis_debug TEXT,
+      file_hash TEXT,
+      ignored INTEGER NOT NULL DEFAULT 0,
+      custom_tags TEXT,
+      artist_canonical TEXT,
+      album_canonical TEXT,
+      manual_cues TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS set_tracks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
+      track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      UNIQUE(set_id, position)
+    );
+
     CREATE TABLE IF NOT EXISTS scan_runs (
       id TEXT PRIMARY KEY,
       directory TEXT NOT NULL,
       status TEXT NOT NULL,
       rescan_mode TEXT NOT NULL,
-      fetch_album_art BOOLEAN NOT NULL DEFAULT TRUE,
-      verbose_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      fetch_album_art INTEGER NOT NULL DEFAULT 1,
+      verbose_enabled INTEGER NOT NULL DEFAULT 0,
       total_files INTEGER NOT NULL DEFAULT 0,
       processed_files INTEGER NOT NULL DEFAULT 0,
       scanned INTEGER NOT NULL DEFAULT 0,
@@ -41,47 +156,77 @@ export async function ensureScanSchema(): Promise<void> {
       decode_failures INTEGER NOT NULL DEFAULT 0,
       fatal_error TEXT,
       current_file TEXT,
-      validation JSONB NOT NULL DEFAULT '{}'::jsonb,
-      summary JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      finished_at TIMESTAMPTZ
-    )
-  `;
-  await sql`
+      validation TEXT NOT NULL DEFAULT '{}',
+      summary TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      finished_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS scan_logs (
-      id BIGSERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       scan_run_id TEXT NOT NULL REFERENCES scan_runs(id) ON DELETE CASCADE,
       level TEXT NOT NULL,
       message TEXT NOT NULL,
       event_type TEXT NOT NULL DEFAULT 'log',
-      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `;
-  scanSchemaEnsured = true;
+      payload TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  const trackColumns = [
+    ['bitrate', 'REAL'],
+    ['ignored', 'INTEGER NOT NULL DEFAULT 0'],
+    ['custom_tags', 'TEXT'],
+    ['artist_canonical', 'TEXT'],
+    ['album_canonical', 'TEXT'],
+    ['manual_cues', "TEXT NOT NULL DEFAULT '[]'"],
+    ['album_art_source', 'TEXT'],
+    ['album_art_confidence', 'REAL'],
+    ['album_art_review_status', 'TEXT'],
+    ['album_art_review_notes', 'TEXT'],
+    ['album_group_key', 'TEXT'],
+    ['embedded_album_art', 'INTEGER NOT NULL DEFAULT 0'],
+    ['album_art_match_debug', 'TEXT'],
+    ['spotify_url', 'TEXT'],
+  ] as const;
+  const trackExisting = new Set(
+    db.prepare("SELECT name FROM pragma_table_info('tracks')").all().map((row) => String((row as Record<string, unknown>).name)),
+  );
+  for (const [name, definition] of trackColumns) {
+    if (!trackExisting.has(name)) db.exec(`ALTER TABLE tracks ADD COLUMN ${name} ${definition}`);
+  }
+
+  schemaEnsured = true;
 }
 
-async function ensureTrackManagementSchema(): Promise<void> {
-  if (trackManagementSchemaEnsured) return;
-  const sql = getDb();
-  await sql`
-    ALTER TABLE tracks
-    ADD COLUMN IF NOT EXISTS bitrate DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS custom_tags TEXT,
-    ADD COLUMN IF NOT EXISTS artist_canonical TEXT,
-    ADD COLUMN IF NOT EXISTS album_canonical TEXT,
-    ADD COLUMN IF NOT EXISTS manual_cues JSONB NOT NULL DEFAULT '[]'::jsonb,
-    ADD COLUMN IF NOT EXISTS album_art_source TEXT,
-    ADD COLUMN IF NOT EXISTS album_art_confidence DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS album_art_review_status TEXT,
-    ADD COLUMN IF NOT EXISTS album_art_review_notes TEXT,
-    ADD COLUMN IF NOT EXISTS album_group_key TEXT,
-    ADD COLUMN IF NOT EXISTS embedded_album_art BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS album_art_match_debug TEXT
-  `;
-  trackManagementSchemaEnsured = true;
+function queryAll<T extends Record<string, unknown>>(sql: string, ...params: SqlitePrimitive[]): T[] {
+  ensureSchema();
+  return getDb().prepare(sql).all(...params) as T[];
+}
+
+function queryOne<T extends Record<string, unknown>>(sql: string, ...params: SqlitePrimitive[]): T | null {
+  ensureSchema();
+  return (getDb().prepare(sql).get(...params) as T | undefined) ?? null;
+}
+
+function execute(sql: string, ...params: SqlitePrimitive[]): void {
+  ensureSchema();
+  getDb().prepare(sql).run(...params);
+}
+
+function transaction<T>(fn: () => T): T {
+  ensureSchema();
+  const db = getDb();
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function canonicalizeText(value: string): string {
@@ -91,6 +236,38 @@ function canonicalizeText(value: string): string {
     .replace(/\b(feat|ft|featuring|with|vs|x)\b.*$/i, '')
     .replace(/[^a-z0-9]+/gi, ' ')
     .trim();
+}
+
+const DISPLAY_UPPERCASE_TOKENS = new Set(['DJ', 'MC', 'UK', 'USA', 'EDM', 'RNB', 'EP', 'LP', 'VIP', 'ID']);
+
+function smartCapitalize(value: string | null): string | null {
+  const cleaned = String(value ?? '').trim();
+  if (!cleaned) return value == null ? null : '';
+
+  const letters = [...cleaned].filter((char) => /[A-Za-z]/.test(char));
+  if (letters.length) {
+    const hasLower = letters.some((char) => char === char.toLowerCase());
+    const hasUpper = letters.some((char) => char === char.toUpperCase());
+    if (hasLower && hasUpper) return cleaned;
+  }
+
+  const convertToken = (token: string) => {
+    if (!token) return token;
+    const upper = token.toUpperCase();
+    if (DISPLAY_UPPERCASE_TOKENS.has(upper)) return upper;
+    if (token.includes("'")) {
+      return token
+        .split("'")
+        .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}` : part))
+        .join("'");
+    }
+    return `${token[0].toUpperCase()}${token.slice(1).toLowerCase()}`;
+  };
+
+  return cleaned
+    .split(/(\s+|[-/&()+[\]{}])/)
+    .map((part) => (/^(\s+|[-/&()+[\]{}])$/.test(part) ? part : convertToken(part)))
+    .join('');
 }
 
 export function canonicalizeArtistName(value: string | null): string {
@@ -194,6 +371,56 @@ export interface ScanLog {
   created_at: Date | null;
 }
 
+function mapTrack(row: Record<string, unknown>): Track {
+  return {
+    ...(row as unknown as Omit<Track, 'embedded_album_art' | 'ignored' | 'manual_cues' | 'created_at'>),
+    id: Number(row.id),
+    duration: row.duration == null ? null : Number(row.duration),
+    bitrate: row.bitrate == null ? null : Number(row.bitrate),
+    bpm: row.bpm == null ? null : Number(row.bpm),
+    spotify_tempo: row.spotify_tempo == null ? null : Number(row.spotify_tempo),
+    album_art_confidence: row.album_art_confidence == null ? null : Number(row.album_art_confidence),
+    spotify_match_score: row.spotify_match_score == null ? null : Number(row.spotify_match_score),
+    embedded_album_art: toBoolean(row.embedded_album_art),
+    ignored: toBoolean(row.ignored),
+    manual_cues: parseJson<Array<{ time: number; label?: string }>>(row.manual_cues, []),
+    created_at: parseDate(row.created_at),
+  };
+}
+
+function mapScanRun(row: Record<string, unknown>): ScanRun {
+  return {
+    ...(row as unknown as Omit<ScanRun, 'fetch_album_art' | 'verbose_enabled' | 'validation' | 'summary' | 'created_at' | 'updated_at' | 'finished_at'>),
+    fetch_album_art: Boolean(row.fetch_album_art),
+    verbose_enabled: Boolean(row.verbose_enabled),
+    total_files: Number(row.total_files ?? 0),
+    processed_files: Number(row.processed_files ?? 0),
+    scanned: Number(row.scanned ?? 0),
+    analyzed: Number(row.analyzed ?? 0),
+    skipped: Number(row.skipped ?? 0),
+    errors: Number(row.errors ?? 0),
+    with_bpm: Number(row.with_bpm ?? 0),
+    with_key: Number(row.with_key ?? 0),
+    with_spotify: Number(row.with_spotify ?? 0),
+    with_album_art: Number(row.with_album_art ?? 0),
+    decode_failures: Number(row.decode_failures ?? 0),
+    validation: parseJson<Record<string, unknown>>(row.validation, {}),
+    summary: parseJson<Record<string, unknown>>(row.summary, {}),
+    created_at: parseDate(row.created_at),
+    updated_at: parseDate(row.updated_at),
+    finished_at: parseDate(row.finished_at),
+  };
+}
+
+function mapScanLog(row: Record<string, unknown>): ScanLog {
+  return {
+    ...(row as unknown as Omit<ScanLog, 'payload' | 'created_at'>),
+    id: Number(row.id),
+    payload: parseJson<Record<string, unknown>>(row.payload, {}),
+    created_at: parseDate(row.created_at),
+  };
+}
+
 export async function createScanRun(input: {
   id: string;
   directory: string;
@@ -202,55 +429,41 @@ export async function createScanRun(input: {
   verbose: boolean;
   validation: Record<string, unknown>;
 }): Promise<void> {
-  await ensureScanSchema();
-  const sql = getDb();
-  await sql`
-    INSERT INTO scan_runs (
+  execute(
+    `INSERT INTO scan_runs (
       id, directory, status, rescan_mode, fetch_album_art, verbose_enabled, validation
-    ) VALUES (
-      ${input.id},
-      ${input.directory},
-      'queued',
-      ${input.rescanMode},
-      ${input.fetchAlbumArt},
-      ${input.verbose},
-      ${sql.json(input.validation as never)}
-    )
-  `;
-}
-
-export async function updateScanRun(
-  id: string,
-  patch: Record<string, unknown>,
-): Promise<void> {
-  await ensureScanSchema();
-  const sql = getDb();
-  const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
-  if (!entries.length) return;
-  const values: unknown[] = [];
-  const assignments = entries.map(([key, value], index) => {
-    const escapedKey = key.replace(/[^a-z0-9_]/gi, '');
-    values.push(key === 'validation' || key === 'summary' ? JSON.stringify(value) : value);
-    return `${escapedKey} = $${index + 1}${key === 'validation' || key === 'summary' ? '::jsonb' : ''}`;
-  });
-  values.push(id);
-  await sql.unsafe(
-    `UPDATE scan_runs SET ${assignments.join(', ')}, updated_at = NOW() WHERE id = $${values.length}`,
-    values as never[],
+    ) VALUES (?, ?, 'queued', ?, ?, ?, ?)`,
+    input.id,
+    input.directory,
+    input.rescanMode,
+    input.fetchAlbumArt ? 1 : 0,
+    input.verbose ? 1 : 0,
+    JSON.stringify(input.validation ?? {}),
   );
 }
 
-export async function finalizeScanRun(
-  id: string,
-  patch: Record<string, unknown>,
-): Promise<void> {
+export async function updateScanRun(id: string, patch: Record<string, unknown>): Promise<void> {
+  const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+  if (!entries.length) return;
+  const assignments: string[] = [];
+  const values: SqlitePrimitive[] = [];
+  for (const [key, value] of entries) {
+    const escapedKey = key.replace(/[^a-z0-9_]/gi, '');
+    assignments.push(`${escapedKey} = ?`);
+    if (key === 'validation' || key === 'summary') values.push(JSON.stringify(value ?? {}));
+    else if (typeof value === 'boolean') values.push(value ? 1 : 0);
+    else values.push((value as SqlitePrimitive) ?? null);
+  }
+  values.push(id);
+  execute(`UPDATE scan_runs SET ${assignments.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ...values);
+}
+
+export async function finalizeScanRun(id: string, patch: Record<string, unknown>): Promise<void> {
   await updateScanRun(id, patch);
-  const sql = getDb();
-  await sql`
-    UPDATE scan_runs
-    SET finished_at = COALESCE(finished_at, NOW()), updated_at = NOW()
-    WHERE id = ${id}
-  `;
+  execute(
+    'UPDATE scan_runs SET finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    id,
+  );
 }
 
 export async function addScanLog(input: {
@@ -260,57 +473,64 @@ export async function addScanLog(input: {
   eventType?: string;
   payload?: Record<string, unknown>;
 }): Promise<void> {
-  await ensureScanSchema();
-  const sql = getDb();
-  await sql`
-    INSERT INTO scan_logs (scan_run_id, level, message, event_type, payload)
-    VALUES (
-      ${input.scanRunId},
-      ${input.level},
-      ${input.message},
-      ${input.eventType ?? 'log'},
-      ${sql.json((input.payload ?? {}) as never)}
-    )
-  `;
+  execute(
+    'INSERT INTO scan_logs (scan_run_id, level, message, event_type, payload) VALUES (?, ?, ?, ?, ?)',
+    input.scanRunId,
+    input.level,
+    input.message,
+    input.eventType ?? 'log',
+    JSON.stringify(input.payload ?? {}),
+  );
 }
 
 export async function listScanRuns(limit = 20): Promise<ScanRun[]> {
-  await ensureScanSchema();
-  const sql = getDb();
-  return sql<ScanRun[]>`
-    SELECT * FROM scan_runs
-    ORDER BY created_at DESC
-    LIMIT ${limit}
-  `;
+  return queryAll<Record<string, unknown>>(
+    'SELECT * FROM scan_runs ORDER BY datetime(created_at) DESC LIMIT ?',
+    limit,
+  ).map(mapScanRun);
 }
 
 export async function getScanRunById(id: string): Promise<ScanRun | null> {
-  await ensureScanSchema();
-  const sql = getDb();
-  const rows = await sql<ScanRun[]>`SELECT * FROM scan_runs WHERE id = ${id}`;
-  return rows[0] ?? null;
+  const row = queryOne<Record<string, unknown>>('SELECT * FROM scan_runs WHERE id = ?', id);
+  return row ? mapScanRun(row) : null;
 }
 
 export async function getScanLogs(scanRunId: string, limit = 200): Promise<ScanLog[]> {
-  await ensureScanSchema();
-  const sql = getDb();
-  return sql<ScanLog[]>`
-    SELECT * FROM scan_logs
-    WHERE scan_run_id = ${scanRunId}
-    ORDER BY id DESC
-    LIMIT ${limit}
-  `;
+  return queryAll<Record<string, unknown>>(
+    'SELECT * FROM scan_logs WHERE scan_run_id = ? ORDER BY id DESC LIMIT ?',
+    scanRunId,
+    limit,
+  ).map(mapScanLog);
 }
 
-export function serializeTrack(track: Track) {
+function sanitizeAlbumArtUrl(
+  value: string | null,
+  options?: { includeEmbeddedArtwork?: boolean },
+): string | null {
+  if (!value) return value;
+  if (options?.includeEmbeddedArtwork === false && value.startsWith('data:')) {
+    return null;
+  }
+  return value;
+}
+
+export function serializeTrack(
+  track: Track,
+  options?: { includeEmbeddedArtwork?: boolean },
+) {
   const effectiveBpm = track.bpm ?? track.spotify_tempo ?? null;
   const effectiveKey = track.key || track.spotify_key || track.key_numeric || '';
+  const albumArtUrl = sanitizeAlbumArtUrl(track.album_art_url, options);
+  const displayArtist = smartCapitalize(track.artist);
+  const displayTitle = smartCapitalize(track.title);
+  const displayAlbum = smartCapitalize(track.album);
+  const displaySpotifyAlbumName = smartCapitalize(track.spotify_album_name);
   return {
     id: track.id,
     path: track.path,
-    title: track.title,
-    artist: track.artist,
-    album: track.album,
+    title: displayTitle,
+    artist: displayArtist,
+    album: displayAlbum,
     duration: track.duration,
     bitrate: track.bitrate,
     bpm: track.bpm,
@@ -323,7 +543,7 @@ export function serializeTrack(track: Track) {
     spotify_tempo: track.spotify_tempo,
     spotify_key: track.spotify_key,
     spotify_mode: track.spotify_mode,
-    album_art_url: track.album_art_url,
+    album_art_url: albumArtUrl,
     album_art_source: track.album_art_source,
     album_art_confidence: track.album_art_confidence,
     album_art_review_status: track.album_art_review_status,
@@ -331,13 +551,13 @@ export function serializeTrack(track: Track) {
     album_group_key: track.album_group_key,
     embedded_album_art: Boolean(track.embedded_album_art),
     album_art_match_debug: track.album_art_match_debug,
-    spotify_album_name: track.spotify_album_name,
+    spotify_album_name: displaySpotifyAlbumName,
     spotify_match_score: track.spotify_match_score,
     spotify_high_confidence: (track.spotify_high_confidence ?? '').toLowerCase() === 'true',
     album_art_debug: {
       album_art_url: track.album_art_url ?? '',
       spotify_id: track.spotify_id ?? '',
-      spotify_album_name: track.spotify_album_name ?? '',
+      spotify_album_name: displaySpotifyAlbumName ?? '',
       spotify_match_score: track.spotify_match_score ?? 0,
       spotify_high_confidence: (track.spotify_high_confidence ?? '').toLowerCase() === 'true',
       album_art_source: track.album_art_source ?? '',
@@ -368,17 +588,13 @@ export function serializeTrack(track: Track) {
 }
 
 function trackIdentity(track: Track): string {
-  return (
-    track.spotify_id ||
-    track.file_hash ||
-    `${track.artist ?? ''}|${track.title ?? ''}|${Math.round(track.duration ?? 0)}`
-  );
+  return track.spotify_id || track.file_hash || `${track.artist ?? ''}|${track.title ?? ''}|${Math.round(track.duration ?? 0)}`;
 }
 
 function uniqueTracks(tracks: Track[]): Track[] {
   const seen = new Set<string>();
-  return tracks.filter((t) => {
-    const key = trackIdentity(t);
+  return tracks.filter((track) => {
+    const key = trackIdentity(track);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -386,17 +602,12 @@ function uniqueTracks(tracks: Track[]): Track[] {
 }
 
 export async function getAllTracks(): Promise<Track[]> {
-  await ensureTrackManagementSchema();
-  const sql = getDb();
-  const rows = await sql<Track[]>`SELECT * FROM tracks ORDER BY artist, title, id`;
-  return uniqueTracks(rows);
+  return uniqueTracks(queryAll<Record<string, unknown>>('SELECT * FROM tracks ORDER BY artist, title, id').map(mapTrack));
 }
 
 export async function getTrackById(id: number): Promise<Track | null> {
-  await ensureTrackManagementSchema();
-  const sql = getDb();
-  const rows = await sql<Track[]>`SELECT * FROM tracks WHERE id = ${id}`;
-  return rows[0] ?? null;
+  const row = queryOne<Record<string, unknown>>('SELECT * FROM tracks WHERE id = ?', id);
+  return row ? mapTrack(row) : null;
 }
 
 export interface SearchParams {
@@ -407,28 +618,36 @@ export interface SearchParams {
 }
 
 export async function searchTracks(params: SearchParams): Promise<Track[]> {
-  await ensureTrackManagementSchema();
-  const sql = getDb();
-  const { query, bpmMin, bpmMax, key } = params;
-  const likeQuery = query ? `%${query}%` : null;
-  const normKey = key ? key.trim().toUpperCase() : null;
-
-  const rows = await sql<Track[]>`
-    SELECT * FROM tracks
-    WHERE 1=1
-    ${likeQuery != null ? sql`AND (title ILIKE ${likeQuery} OR artist ILIKE ${likeQuery} OR album ILIKE ${likeQuery} OR spotify_album_name ILIKE ${likeQuery} OR COALESCE(custom_tags, '') ILIKE ${likeQuery})` : sql``}
-    ${bpmMin != null ? sql`AND COALESCE(bpm, spotify_tempo) >= ${bpmMin}` : sql``}
-    ${bpmMax != null ? sql`AND COALESCE(bpm, spotify_tempo) <= ${bpmMax}` : sql``}
-    ${normKey != null ? sql`AND (UPPER(key) = ${normKey} OR UPPER(spotify_key) = ${normKey} OR UPPER(key_numeric) = ${normKey})` : sql``}
-    ORDER BY artist, title, id
-  `;
+  const clauses = ['1=1'];
+  const values: SqlitePrimitive[] = [];
+  const query = params.query?.trim();
+  if (query) {
+    clauses.push("(LOWER(title) LIKE LOWER(?) OR LOWER(artist) LIKE LOWER(?) OR LOWER(album) LIKE LOWER(?) OR LOWER(spotify_album_name) LIKE LOWER(?) OR LOWER(COALESCE(custom_tags, '')) LIKE LOWER(?))");
+    const like = `%${query}%`;
+    values.push(like, like, like, like, like);
+  }
+  if (params.bpmMin != null) {
+    clauses.push('COALESCE(bpm, spotify_tempo) >= ?');
+    values.push(params.bpmMin);
+  }
+  if (params.bpmMax != null) {
+    clauses.push('COALESCE(bpm, spotify_tempo) <= ?');
+    values.push(params.bpmMax);
+  }
+  if (params.key?.trim()) {
+    clauses.push('(UPPER(key) = ? OR UPPER(spotify_key) = ? OR UPPER(key_numeric) = ?)');
+    const normKey = params.key.trim().toUpperCase();
+    values.push(normKey, normKey, normKey);
+  }
+  const rows = queryAll<Record<string, unknown>>(
+    `SELECT * FROM tracks WHERE ${clauses.join(' AND ')} ORDER BY artist, title, id`,
+    ...values,
+  ).map(mapTrack);
   return uniqueTracks(rows);
 }
 
 export async function updateTrackBpm(id: number, bpm: number): Promise<void> {
-  await ensureTrackManagementSchema();
-  const sql = getDb();
-  await sql`UPDATE tracks SET bpm = ${bpm}, bpm_source = 'manual' WHERE id = ${id}`;
+  execute("UPDATE tracks SET bpm = ?, bpm_source = 'manual' WHERE id = ?", bpm, id);
 }
 
 export async function updateTrackMetadata(
@@ -445,70 +664,103 @@ export async function updateTrackMetadata(
     album_art_review_notes?: string | null;
   },
 ): Promise<void> {
-  await ensureTrackManagementSchema();
-  const sql = getDb();
-  const title = patch.title ?? null;
-  const artist = patch.artist ?? null;
-  const album = patch.album ?? null;
-  const customTags = patch.custom_tags ? serializeTags(patch.custom_tags) : null;
-  await sql`
-    UPDATE tracks
-    SET
-      title = COALESCE(${title}, title),
-      artist = COALESCE(${artist}, artist),
-      album = COALESCE(${album}, album),
-      key = COALESCE(${patch.key ?? null}, key),
-      ignored = COALESCE(${patch.ignored ?? null}, ignored),
-      custom_tags = COALESCE(${customTags}, custom_tags),
-      album_art_review_status = COALESCE(${patch.album_art_review_status ?? null}, album_art_review_status),
-      album_art_review_notes = COALESCE(${patch.album_art_review_notes ?? null}, album_art_review_notes),
-      artist_canonical = COALESCE(${artist != null ? canonicalizeArtistName(artist) : null}, artist_canonical, ${canonicalizeArtistName(artist)}),
-      album_canonical = COALESCE(${album != null ? canonicalizeAlbumName(album) : null}, album_canonical, ${canonicalizeAlbumName(album)}),
-      manual_cues = COALESCE(${patch.manual_cues ? sql.json(patch.manual_cues as never) : null}, manual_cues)
-    WHERE id = ${id}
-  `;
+  const current = await getTrackById(id);
+  if (!current) return;
+
+  const title = patch.title !== undefined ? patch.title : current.title;
+  const artist = patch.artist !== undefined ? patch.artist : current.artist;
+  const album = patch.album !== undefined ? patch.album : current.album;
+  const values = {
+    title,
+    artist,
+    album,
+    key: patch.key !== undefined ? patch.key : current.key,
+    ignored: patch.ignored !== undefined ? patch.ignored : current.ignored,
+    custom_tags: patch.custom_tags !== undefined ? serializeTags(patch.custom_tags) : current.custom_tags,
+    album_art_review_status: patch.album_art_review_status !== undefined ? patch.album_art_review_status : current.album_art_review_status,
+    album_art_review_notes: patch.album_art_review_notes !== undefined ? patch.album_art_review_notes : current.album_art_review_notes,
+    artist_canonical: canonicalizeArtistName(artist),
+    album_canonical: canonicalizeAlbumName(album),
+    manual_cues: patch.manual_cues !== undefined ? JSON.stringify(patch.manual_cues) : JSON.stringify(current.manual_cues ?? []),
+  };
+
+  execute(
+    `UPDATE tracks
+     SET title = ?, artist = ?, album = ?, key = ?, ignored = ?, custom_tags = ?,
+         album_art_review_status = ?, album_art_review_notes = ?, artist_canonical = ?,
+         album_canonical = ?, manual_cues = ?
+     WHERE id = ?`,
+    values.title,
+    values.artist,
+    values.album,
+    values.key,
+    boolInt(Boolean(values.ignored)),
+    values.custom_tags,
+    values.album_art_review_status,
+    values.album_art_review_notes,
+    values.artist_canonical,
+    values.album_canonical,
+    values.manual_cues,
+    id,
+  );
+}
+
+export async function getTracksByIds(ids: number[]): Promise<Track[]> {
+  const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
+  if (!uniqueIds.length) return [];
+  const placeholders = uniqueIds.map(() => '?').join(', ');
+  return queryAll<Record<string, unknown>>(`SELECT * FROM tracks WHERE id IN (${placeholders})`, ...uniqueIds).map(mapTrack);
 }
 
 export async function bulkTrackAction(input: {
   ids: number[];
-  action: 'ignore' | 'unignore' | 'add_tags' | 'remove_tags' | 'clear_tags' | 'add_to_set';
+  action: 'ignore' | 'unignore' | 'add_tags' | 'remove_tags' | 'clear_tags' | 'add_to_set' | 'delete';
   tags?: string[];
   setId?: number;
 }): Promise<{ updated: number }> {
-  await ensureTrackManagementSchema();
-  const sql = getDb();
   const ids = [...new Set(input.ids.filter((id) => Number.isFinite(id)))];
   if (!ids.length) return { updated: 0 };
 
   if (input.action === 'add_to_set') {
     if (!input.setId) return { updated: 0 };
-    for (const id of ids) {
-      await addTrackToSet(input.setId, id);
-    }
+    for (const id of ids) await addTrackToSet(input.setId, id);
     return { updated: ids.length };
   }
 
-  const rows = await sql<Track[]>`SELECT * FROM tracks WHERE id = ANY(${sql.array(ids)})`;
-  for (const row of rows) {
-    const currentTags = parseTags(row.custom_tags);
-    let nextTags = currentTags;
-    let nextIgnored = Boolean(row.ignored);
-    if (input.action === 'ignore') nextIgnored = true;
-    if (input.action === 'unignore') nextIgnored = false;
-    if (input.action === 'add_tags') nextTags = [...new Set([...currentTags, ...(input.tags ?? [])])];
-    if (input.action === 'remove_tags') nextTags = currentTags.filter((tag) => !(input.tags ?? []).includes(tag));
-    if (input.action === 'clear_tags') nextTags = [];
-    await sql`
-      UPDATE tracks
-      SET ignored = ${nextIgnored}, custom_tags = ${serializeTags(nextTags)}
-      WHERE id = ${row.id}
-    `;
+  const placeholders = ids.map(() => '?').join(', ');
+  if (input.action === 'delete') {
+    execute(`DELETE FROM tracks WHERE id IN (${placeholders})`, ...ids);
+    return { updated: ids.length };
   }
+
+  const rows = queryAll<Record<string, unknown>>(`SELECT * FROM tracks WHERE id IN (${placeholders})`, ...ids).map(mapTrack);
+
+  transaction(() => {
+    for (const row of rows) {
+      const currentTags = parseTags(row.custom_tags);
+      let nextTags = currentTags;
+      let nextIgnored = Boolean(row.ignored);
+      if (input.action === 'ignore') nextIgnored = true;
+      if (input.action === 'unignore') nextIgnored = false;
+      if (input.action === 'add_tags') nextTags = [...new Set([...currentTags, ...(input.tags ?? [])])];
+      if (input.action === 'remove_tags') nextTags = currentTags.filter((tag) => !(input.tags ?? []).includes(tag));
+      if (input.action === 'clear_tags') nextTags = [];
+      execute('UPDATE tracks SET ignored = ?, custom_tags = ? WHERE id = ?', nextIgnored ? 1 : 0, serializeTags(nextTags), row.id);
+    }
+  });
 
   return { updated: rows.length };
 }
 
-// ── Sets ─────────────────────────────────────────────────────────────────────
+export async function resetLibraryData(): Promise<void> {
+  transaction(() => {
+    execute('DELETE FROM set_tracks');
+    execute('DELETE FROM sets');
+    execute('DELETE FROM scan_logs');
+    execute('DELETE FROM scan_runs');
+    execute('DELETE FROM tracks');
+  });
+}
 
 export interface TrackSet {
   id: number;
@@ -525,59 +777,71 @@ export interface SetDetail extends TrackSet {
   tracks: (Track & { position: number })[];
 }
 
+function mapSet(row: Record<string, unknown>): TrackSet {
+  return {
+    id: Number(row.id),
+    name: String(row.name ?? ''),
+    created_at: parseDate(row.created_at),
+  };
+}
+
 export async function getAllSets(): Promise<SetSummary[]> {
-  const sql = getDb();
-  return sql<SetSummary[]>`
-    SELECT s.id, s.name, s.created_at,
-      COUNT(st.id)::int AS track_count,
-      COALESCE(SUM(t.duration), 0)::float AS total_duration
-    FROM sets s
-    LEFT JOIN set_tracks st ON st.set_id = s.id
-    LEFT JOIN tracks t ON t.id = st.track_id
-    GROUP BY s.id
-    ORDER BY s.created_at DESC
-  `;
+  return queryAll<Record<string, unknown>>(
+    `SELECT s.id, s.name, s.created_at,
+            COUNT(st.id) AS track_count,
+            COALESCE(SUM(t.duration), 0) AS total_duration
+     FROM sets s
+     LEFT JOIN set_tracks st ON st.set_id = s.id
+     LEFT JOIN tracks t ON t.id = st.track_id
+     GROUP BY s.id
+     ORDER BY datetime(s.created_at) DESC`,
+  ).map((row) => ({
+    id: Number(row.id),
+    name: String(row.name ?? ''),
+    created_at: parseDate(row.created_at),
+    track_count: Number(row.track_count ?? 0),
+    total_duration: Number(row.total_duration ?? 0),
+  }));
 }
 
 export async function createSet(name: string): Promise<TrackSet> {
-  const sql = getDb();
-  const rows = await sql<TrackSet[]>`INSERT INTO sets (name) VALUES (${name}) RETURNING *`;
-  return rows[0];
+  execute('INSERT INTO sets (name) VALUES (?)', name);
+  const row = queryOne<Record<string, unknown>>('SELECT * FROM sets WHERE id = last_insert_rowid()');
+  return mapSet(row ?? {});
 }
 
 export async function deleteSet(id: number): Promise<void> {
-  const sql = getDb();
-  await sql`DELETE FROM set_tracks WHERE set_id = ${id}`;
-  await sql`DELETE FROM sets WHERE id = ${id}`;
+  transaction(() => {
+    execute('DELETE FROM set_tracks WHERE set_id = ?', id);
+    execute('DELETE FROM sets WHERE id = ?', id);
+  });
 }
 
 export async function getSetById(id: number): Promise<SetDetail | null> {
-  const sql = getDb();
-  const sets = await sql<TrackSet[]>`SELECT * FROM sets WHERE id = ${id}`;
-  if (!sets[0]) return null;
-  const tracks = await sql<(Track & { position: number })[]>`
-    SELECT t.*, st.position
-    FROM tracks t
-    JOIN set_tracks st ON st.track_id = t.id
-    WHERE st.set_id = ${id}
-    ORDER BY st.position
-  `;
-  return { ...sets[0], tracks };
+  const set = queryOne<Record<string, unknown>>('SELECT * FROM sets WHERE id = ?', id);
+  if (!set) return null;
+  const tracks = queryAll<Record<string, unknown>>(
+    `SELECT t.*, st.position
+     FROM tracks t
+     JOIN set_tracks st ON st.track_id = t.id
+     WHERE st.set_id = ?
+     ORDER BY st.position`,
+    id,
+  ).map((row) => ({ ...mapTrack(row), position: Number(row.position ?? 0) }));
+  return { ...mapSet(set), tracks };
 }
 
 export async function addTrackToSet(setId: number, trackId: number): Promise<void> {
-  const sql = getDb();
-  const [row] = await sql<[{ count: string }]>`
-    SELECT COUNT(*)::text AS count FROM set_tracks WHERE set_id = ${setId}
-  `;
-  const position = parseInt(row.count, 10) + 1;
-  await sql`INSERT INTO set_tracks (set_id, track_id, position) VALUES (${setId}, ${trackId}, ${position})`;
+  const countRow = queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', setId);
+  const position = Number(countRow?.count ?? 0) + 1;
+  execute('INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)', setId, trackId, position);
 }
 
 export async function removeTrackFromSet(setId: number, position: number): Promise<void> {
-  const sql = getDb();
-  await sql`DELETE FROM set_tracks WHERE set_id = ${setId} AND position = ${position}`;
-  await sql`UPDATE set_tracks SET position = position - 1 WHERE set_id = ${setId} AND position > ${position}`;
+  transaction(() => {
+    execute('DELETE FROM set_tracks WHERE set_id = ? AND position = ?', setId, position);
+    execute('UPDATE set_tracks SET position = position - 1 WHERE set_id = ? AND position > ?', setId, position);
+  });
 }
 
 export interface LibraryOverview {
@@ -601,7 +865,7 @@ export interface LibraryOverview {
 }
 
 export async function getLibraryOverview(): Promise<LibraryOverview> {
-  const allTracks = (await getAllTracks()).map((track) => serializeTrack(track));
+  const allTracks = (await getAllTracks()).map((track) => serializeTrack(track, { includeEmbeddedArtwork: false }));
 
   const health = {
     total: allTracks.length,

@@ -114,3 +114,11 @@ export async function removeWatchFolder(directory: string) {
   store().delete(normalized);
   return true;
 }
+
+export async function clearWatchFolders() {
+  for (const entry of store().values()) {
+    if (entry.pendingTimer) clearTimeout(entry.pendingTimer);
+    entry.watcher.close();
+  }
+  store().clear();
+}

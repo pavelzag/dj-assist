@@ -70,7 +70,7 @@ Good for technical deployment, not ideal as the final product.
 - packaging complexity
 - code signing and installers
 - Python and audio dependencies must be bundled correctly
-- PostgreSQL is too heavy for the ideal desktop install
+- the Python runtime must be a relocatable bundled runtime, not a copied Homebrew virtualenv
 
 ### Verdict
 
@@ -80,17 +80,17 @@ Best product direction.
 
 ### Current architecture
 
-- Electron shell: not present yet
+- Electron shell
 - UI: Next.js
 - scanner: Python
-- database: PostgreSQL
+- database: SQLite
 
-### Recommended product architecture
+### Current desktop packaging architecture
 
 - Electron shell
 - local UI rendered inside Electron
-- Python scanner kept as a bundled child process
-- SQLite instead of PostgreSQL
+- Python scanner staged as a bundled child process
+- SQLite local database
 
 ## Why SQLite Is Better For Desktop
 
@@ -122,7 +122,6 @@ PostgreSQL makes sense for server deployments, but it is unnecessary friction fo
 
 - bundling Python cleanly
 - bundling audio-analysis dependencies
-- replacing PostgreSQL with SQLite
 - shipping signed installers
 
 ## Practical estimate
@@ -131,11 +130,10 @@ For a solid first Electron product, expect a moderate project rather than a quic
 
 Typical phases:
 
-1. Replace PostgreSQL with SQLite
+1. Stage a relocatable Python runtime and build an in-bundle scanner environment from it
 2. Isolate scanner process management
-3. Add Electron shell
-4. Add packaging/signing
-5. QA on clean client machines
+3. Add packaging/signing
+4. QA on clean client machines
 
 ## Shipping Paths I Recommend
 
@@ -148,7 +146,7 @@ Typical phases:
 ## Path B: real product
 
 1. Keep the Python scanner
-2. Replace PostgreSQL with SQLite
+2. Keep SQLite as the local database
 3. Build Electron app
 4. Add native folder picker
 5. Produce signed macOS installer

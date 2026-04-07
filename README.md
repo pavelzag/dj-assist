@@ -8,7 +8,7 @@ The current application is an Electron-first desktop stack:
 
 - Next.js 15 service UI
 - Python 3.11 scanner and analysis pipeline
-- PostgreSQL 16
+- SQLite (managed automatically in desktop mode)
 - Local audio playback from the user machine
 
 This is important for packaging decisions: the app works best when it can access the user's local music folders directly.
@@ -130,15 +130,11 @@ If you want a good Electron version, the hardest parts are not the UI shell. The
 
 Main work items:
 
-1. Decide what happens to the Python scanner.
-   - Keep Python bundled with the app, or
+1. Bundle the Python scanner runtime cleanly.
+   - Stage a working Python environment into the app bundle, or
    - replace the analysis stack with native Node tooling
 
-2. Decide what happens to PostgreSQL.
-   - For a desktop product, PostgreSQL is heavier than necessary.
-   - SQLite is likely the better desktop database.
-
-3. Finish the move from browser-style assumptions to desktop-style assumptions.
+2. Finish the move from browser-style assumptions to desktop-style assumptions.
    - folder pickers
    - native menus
    - app updates
@@ -153,21 +149,26 @@ Main work items:
 
 1. Install desktop packaging dependencies:
    - `npm install`
-2. Build the standalone Next backend:
-   - `npm run build`
-3. Create an unsigned macOS app bundle for local testing:
+2. Point packaging at a self-contained Python runtime:
+   - `export DJ_ASSIST_PYTHON_STANDALONE=/absolute/path/to/your/relocatable-python-root`
+3. Optional for signed/notarized macOS builds:
+   - `export APPLE_ID=...`
+   - `export APPLE_APP_SPECIFIC_PASSWORD=...`
+   - `export APPLE_TEAM_ID=...`
+4. Create an unsigned macOS app bundle for local testing:
    - `npm run pack:mac`
-4. Create macOS distributables:
+5. Create macOS distributables:
    - `npm run dist:mac`
 
 Artifacts are written to `dist-electron/`.
+The packaging flow now copies that relocatable runtime into `python/runtime`, creates a fresh in-bundle virtualenv at `python/env`, and installs the scanner dependencies there before `electron-builder` runs.
 - Electron app that actually ships cleanly to clients: medium-high
 - Electron app with bundled Python analysis and reliable installers: high
 
 ### Recommended migration path
 
 1. Keep the current Next.js + Python app working locally.
-2. Replace PostgreSQL with SQLite for desktop packaging.
+2. Keep SQLite as the local desktop database.
 3. Wrap the UI in Electron.
 4. Bundle the Python scanner as a managed local process.
 5. Add native folder picker and installer packaging.
@@ -184,14 +185,14 @@ See:
 
 - Node 22.x
 - Python 3.11+
-- PostgreSQL 16
+- SQLite (default desktop database)
 - macOS recommended for current local setup
 
 ## Desktop Dev Run
 
 ```bash
 cd /Users/pavel/Projects/dj-assist
-docker compose up -d
+mkdir -p ~/.dj_assist
 npm install
 npm run dev
 ```
@@ -215,6 +216,6 @@ npm run backend:dev
 With `.env.local`:
 
 ```bash
-DATABASE_URL=postgres://dj_assist:dj_assist@127.0.0.1:5432/dj_assist
+DJ_ASSIST_DB_PATH=/absolute/path/to/dj-assist.db
 PYTHON_EXECUTABLE=/Users/pavel/Projects/dj-assist-venv/bin/python3
 ```

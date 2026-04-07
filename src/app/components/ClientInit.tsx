@@ -19,55 +19,109 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const bpmMinEl = document.getElementById('bpm-min') as HTMLInputElement;
     const bpmMaxEl = document.getElementById('bpm-max') as HTMLInputElement;
     const keyFilterEl = document.getElementById('key-filter') as HTMLInputElement;
-    const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement;
+    const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement | null;
+    const hideUnknownArtistsEl = document.getElementById('hide-unknown-artists') as HTMLInputElement;
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement;
     const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
     const browseScopeEl = document.getElementById('browse-scope') as HTMLElement;
     const bulkToolbarEl = document.getElementById('bulk-toolbar') as HTMLElement;
     const sortsEl = document.getElementById('sorts') as HTMLElement;
+    const listDensityEl = document.getElementById('list-density') as HTMLSelectElement | null;
+    const quickFilterBarEl = document.getElementById('quick-filter-bar') as HTMLElement | null;
+    const quickFilterNewBtn = document.getElementById('quick-filter-new') as HTMLButtonElement | null;
     const scanDirectoryEl = document.getElementById('scan-directory') as HTMLInputElement;
-    const scanRecentDirectoriesEl = document.getElementById('scan-recent-directories') as HTMLSelectElement;
-    const scanUseLastBtn = document.getElementById('scan-use-last-btn') as HTMLButtonElement;
-    const scanPickDirectoryBtn = document.getElementById('scan-pick-directory-btn') as HTMLButtonElement | null;
-    const scanBtn = document.getElementById('scan-btn') as HTMLButtonElement;
-    const scanCancelBtn = document.getElementById('scan-cancel-btn') as HTMLButtonElement;
-    const scanRescanModeEl = document.getElementById('scan-rescan-mode') as HTMLSelectElement;
-    const scanFetchArtEl = document.getElementById('scan-fetch-art') as HTMLInputElement;
-    const scanVerboseEl = document.getElementById('scan-verbose') as HTMLInputElement;
     const scanStatusEl = document.getElementById('scan-status') as HTMLElement;
     const scanProgressMetaEl = document.getElementById('scan-progress-meta') as HTMLElement;
     const scanProgressBarEl = document.getElementById('scan-progress-bar') as HTMLElement;
     const scanProgressFileEl = document.getElementById('scan-progress-file') as HTMLElement;
-    const scanLogEl = document.getElementById('scan-log') as HTMLElement;
-    const scanLogClearBtn = document.getElementById('scan-log-clear-btn') as HTMLButtonElement;
-    const scanLogToggleBtn = document.getElementById('scan-log-toggle-btn') as HTMLButtonElement;
-    const scanLogBodyEl = document.getElementById('scan-log-body') as HTMLElement;
-    const scanSummaryEl = document.getElementById('scan-summary') as HTMLElement;
-    const scanSummaryToggleBtn = document.getElementById('scan-summary-toggle-btn') as HTMLButtonElement;
-    const scanSummaryBodyEl = document.getElementById('scan-summary-body') as HTMLElement;
     const scanPreflightEl = document.getElementById('scan-preflight') as HTMLElement;
-    const scanHistoryEl = document.getElementById('scan-history') as HTMLElement;
-    const scanHistoryToggleBtn = document.getElementById('scan-history-toggle-btn') as HTMLButtonElement;
-    const scanHistoryBodyEl = document.getElementById('scan-history-body') as HTMLElement;
+    const scanLogEl = document.getElementById('scan-log') as HTMLElement;
+    const scanLogClearBtn = document.getElementById('scan-log-clear-btn') as HTMLButtonElement | null;
+    const scanLogFullscreenBtn = document.getElementById('scan-log-fullscreen-btn') as HTMLButtonElement | null;
+    const scanLogToggleBtn = document.getElementById('scan-log-toggle-btn') as HTMLButtonElement | null;
+    const scanLogBodyEl = document.getElementById('scan-log-body') as HTMLElement | null;
+    const bottomScanLogEl = document.getElementById('bottom-scan-log') as HTMLElement | null;
+    const bottomScanLogHeadEl = document.getElementById('bottom-scan-log-head') as HTMLElement | null;
     const coverModal = document.getElementById('cover-modal') as HTMLElement;
     const coverImage = document.getElementById('cover-image') as HTMLImageElement;
     const coverTitle = document.getElementById('cover-title') as HTMLElement;
     const closeCover = document.getElementById('close-cover') as HTMLButtonElement;
     const warningBanner = document.getElementById('warning-banner') as HTMLElement;
     const statusbar = document.getElementById('statusbar') as HTMLElement;
+    const nowPlayingBarEl = document.getElementById('now-playing-bar') as HTMLElement | null;
+    const nowPlayingTitleEl = document.getElementById('now-playing-title') as HTMLElement | null;
+    const nowPlayingMetaEl = document.getElementById('now-playing-meta') as HTMLElement | null;
+    const commandPaletteModal = document.getElementById('command-palette-modal') as HTMLElement | null;
+    const commandPaletteInput = document.getElementById('command-palette-input') as HTMLInputElement | null;
+    const commandPaletteList = document.getElementById('command-palette-list') as HTMLElement | null;
+    const openCommandPaletteBtn = document.getElementById('open-command-palette-btn') as HTMLButtonElement | null;
+    const closeCommandPaletteBtn = document.getElementById('close-command-palette') as HTMLButtonElement | null;
+    const shortcutsModal = document.getElementById('shortcuts-modal') as HTMLElement | null;
+    const closeShortcutsBtn = document.getElementById('close-shortcuts') as HTMLButtonElement | null;
+    const editMetadataModal = document.getElementById('edit-metadata-modal') as HTMLElement | null;
+    const closeEditMetadataBtn = document.getElementById('close-edit-metadata') as HTMLButtonElement | null;
+    const editMetadataStatusEl = document.getElementById('edit-metadata-status') as HTMLElement | null;
+    const saveEditMetadataBtn = document.getElementById('save-edit-metadata-btn') as HTMLButtonElement | null;
+    const deleteTrackModal = document.getElementById('delete-track-modal') as HTMLElement | null;
+    const deleteTrackTitleEl = document.getElementById('delete-track-title') as HTMLElement | null;
+    const deleteTrackMessageEl = document.getElementById('delete-track-message') as HTMLElement | null;
+    const deleteTrackRemoveFileEl = document.getElementById('delete-track-remove-file') as HTMLInputElement | null;
+    const closeDeleteTrackBtn = document.getElementById('close-delete-track') as HTMLButtonElement | null;
+    const confirmDeleteTrackBtn = document.getElementById('confirm-delete-track-btn') as HTMLButtonElement | null;
+    const tapBpmModal = document.getElementById('tap-bpm-modal') as HTMLElement | null;
+    const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
+    const tapBpmTrackLabelEl = document.getElementById('tap-bpm-track-label') as HTMLElement | null;
+    const tapBpmValueEl = document.getElementById('tap-bpm-value') as HTMLElement | null;
+    const tapBpmCountEl = document.getElementById('tap-bpm-count') as HTMLElement | null;
+    const tapBpmConfidenceEl = document.getElementById('tap-bpm-confidence') as HTMLElement | null;
+    const tapBpmManualInputEl = document.getElementById('tap-bpm-manual-input') as HTMLInputElement | null;
+    const tapBpmStatusEl = document.getElementById('tap-bpm-status') as HTMLElement | null;
+    const tapBpmResetBtn = document.getElementById('tap-bpm-reset-btn') as HTMLButtonElement | null;
+    const tapBpmSaveBtn = document.getElementById('tap-bpm-save-btn') as HTMLButtonElement | null;
     const panelTrack = document.getElementById('panel-track') as HTMLElement;
     const panelSets = document.getElementById('panel-sets') as HTMLElement;
     const panelLibrary = document.getElementById('panel-library') as HTMLElement;
+    const panelActivity = document.getElementById('panel-activity') as HTMLElement;
     const setsPanel = document.getElementById('sets-panel') as HTMLElement;
     const libraryPanel = document.getElementById('library-panel') as HTMLElement;
+    const activityPanel = document.getElementById('activity-panel') as HTMLElement;
+    const toastStack = document.getElementById('toast-stack') as HTMLElement;
+    const quickChooseFolderBtn = document.getElementById('quick-choose-folder-btn') as HTMLButtonElement | null;
+    const quickStartScanBtn = document.getElementById('quick-start-scan-btn') as HTMLButtonElement | null;
+    const quickFullRescanEl = document.getElementById('quick-full-rescan') as HTMLInputElement | null;
 
     // ── State ─────────────────────────────────────────────────────────────────
     const activeTrackKey = 'dj-assist-active-track-id';
     const scanDirectoryKey = 'dj-assist-scan-directory';
-    const scanRecentDirectoriesKey = 'dj-assist-scan-recent-directories';
-    const scanVerboseKey = 'dj-assist-scan-verbose';
-    const scanRescanModeKey = 'dj-assist-scan-rescan-mode';
-    const scanPanelStateKey = 'dj-assist-scan-panel-state';
+    const listDensityKey = 'dj-assist-list-density';
+    const preferencesKey = 'dj-assist-preferences';
+    const recentNewTrackIdsKey = 'dj-assist-recent-new-track-ids';
+    type Preferences = {
+      defaultFullRescan: boolean;
+      autoplayOnSelect: boolean;
+      defaultListDensity: 'comfortable' | 'compact';
+      collapseScanLog: boolean;
+      listShowAlbum: boolean;
+      listShowBitrate: boolean;
+      listShowTags: boolean;
+      listShowBpmSource: boolean;
+      listShowKey: boolean;
+      listShowLength: boolean;
+      listShowRecent: boolean;
+    };
+    const defaultPreferences: Preferences = {
+      defaultFullRescan: false,
+      autoplayOnSelect: true,
+      defaultListDensity: 'comfortable',
+      collapseScanLog: true,
+      listShowAlbum: true,
+      listShowBitrate: true,
+      listShowTags: true,
+      listShowBpmSource: false,
+      listShowKey: true,
+      listShowLength: true,
+      listShowRecent: true,
+    };
     let activeTrackId: number | null = null;
     let activeScanJobId: string | null = null;
     let activeScanStatus = 'idle';
@@ -85,11 +139,43 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let libraryOverview: Record<string, unknown> | null = null;
     let watchFolders: Record<string, unknown>[] = [];
     let runtimeHealth: Record<string, unknown> | null = null;
+    let spotifySettingsBusy = false;
     let activeSetId: number | null = null;
+    let scanLogFullscreen = false;
+    let activeQuickFilter = '';
+    let preScanTrackIds = new Set<number>();
+    let hasScanBaseline = false;
+    let recentNewTrackIds = new Set<number>();
+    let nowPlayingTrackId: number | null = null;
+    let currentPanel: 'track' | 'sets' | 'library' | 'activity' = 'track';
+    let tapBpmTrackId: number | null = null;
+    let tapBpmTapTimes: number[] = [];
+    let tapBpmValue = 0;
+    let playbackQueue: number[] = [];
+    let scanLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingScanLogEntries: Array<{ message: string; level: 'info' | 'warning' | 'error' | 'success' }> = [];
+    let queuedRefreshMode: 'light' | 'full' | null = null;
+    let commandPaletteResults: Array<{ label: string; meta: string; kind: 'command' | 'track' | 'artist'; run: () => void }> = [];
+    let commandPaletteActiveIndex = 0;
+    let currentRenderedList: Record<string, unknown>[] = [];
+    let frozenTrackIdsDuringScan: number[] | null = null;
+    let listIsVirtualized = false;
+    let listScrollRaf = 0;
+    let activeKeyboardPane: 'list' | 'detail' = 'list';
+    let selectedDetailTrackId: number | null = null;
+    let pendingTrackDetailTimer: ReturnType<typeof setTimeout> | null = null;
+    let trackDetailRequestToken = 0;
+    let saveEditMetadataInFlight = false;
+    let pendingDeleteTrackIds: number[] = [];
+    let pendingDeleteSource: 'single' | 'bulk' = 'single';
+    let includeUnknownArtistsInNextTracks = false;
+    let nextTracksIntent: 'safe' | 'up' | 'down' | 'same' = 'safe';
     const trackMultipliers: Record<number, number> = {};
     const nextTracksPageByTrackId: Record<number, number> = {};
     const detailSectionCollapsed: Record<string, boolean> = {};
+    const detailModeByTrackId: Record<number, 'overview' | 'match' | 'related'> = {};
     const selectedTrackIds = new Set<number>();
+    let preferences: Preferences = { ...defaultPreferences };
 
     // ── Utilities ─────────────────────────────────────────────────────────────
     function esc(value: unknown): string {
@@ -121,6 +207,44 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return String(track.album ?? track.spotify_album_name ?? '').trim();
     }
 
+    function parsePreferences(value: string | null): Preferences {
+      if (!value) return { ...defaultPreferences };
+      try {
+        const parsed = JSON.parse(value) as Partial<Preferences>;
+        return {
+          defaultFullRescan: Boolean(parsed.defaultFullRescan),
+          autoplayOnSelect: parsed.autoplayOnSelect !== false,
+          defaultListDensity: parsed.defaultListDensity === 'compact' ? 'compact' : 'comfortable',
+          collapseScanLog: parsed.collapseScanLog !== false,
+          listShowAlbum: parsed.listShowAlbum !== false,
+          listShowBitrate: parsed.listShowBitrate !== false,
+          listShowTags: parsed.listShowTags !== false,
+          listShowBpmSource: parsed.listShowBpmSource === true,
+          listShowKey: parsed.listShowKey !== false,
+          listShowLength: parsed.listShowLength !== false,
+          listShowRecent: parsed.listShowRecent !== false,
+        };
+      } catch {
+        return { ...defaultPreferences };
+      }
+    }
+
+    function savePreferences() {
+      try {
+        localStorage.setItem(preferencesKey, JSON.stringify(preferences));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    function persistRecentNewTrackIds() {
+      try {
+        localStorage.setItem(recentNewTrackIdsKey, JSON.stringify([...recentNewTrackIds]));
+      } catch {
+        /* ignore */
+      }
+    }
+
     function matchesBrowseScope(track: Record<string, unknown>): boolean {
       const artistMatches = !activeArtistScope || normalizeText(track.artist) === normalizeText(activeArtistScope);
       const albumMatches = !activeAlbumScope || normalizeText(albumNameFor(track)) === normalizeText(activeAlbumScope);
@@ -139,6 +263,48 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return [...albums].sort((a, b) => a.localeCompare(b));
     }
 
+    function uniqueSortedTrackValues(key: 'artist' | 'album'): string[] {
+      const values = new Set<string>();
+      for (const track of tracks) {
+        const raw = key === 'artist'
+          ? String(track.artist ?? '').trim()
+          : String(track.album ?? track.spotify_album_name ?? '').trim();
+        if (raw) values.add(raw);
+      }
+      return [...values].sort((a, b) => a.localeCompare(b));
+    }
+
+    function refreshMetadataSuggestionLists() {
+      const artistList = document.getElementById('artist-suggestions') as HTMLDataListElement | null;
+      const albumList = document.getElementById('album-suggestions') as HTMLDataListElement | null;
+      if (artistList) {
+        artistList.innerHTML = uniqueSortedTrackValues('artist')
+          .slice(0, 800)
+          .map((value) => `<option value="${esc(value)}"></option>`)
+          .join('');
+      }
+      if (albumList) {
+        albumList.innerHTML = uniqueSortedTrackValues('album')
+          .slice(0, 800)
+          .map((value) => `<option value="${esc(value)}"></option>`)
+          .join('');
+      }
+    }
+
+    function showInputSuggestions(input: HTMLInputElement | null) {
+      if (!input) return;
+      const pickerCapable = input as HTMLInputElement & { showPicker?: () => void };
+      if (typeof pickerCapable.showPicker === 'function') {
+        try {
+          pickerCapable.showPicker();
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
     function relatedArtistTracks(track: Record<string, unknown>): Record<string, unknown>[] {
       const artist = normalizeText(track.artist);
       if (!artist) return [];
@@ -146,6 +312,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         .filter((item) => item.id !== track.id && normalizeText(item.artist) === artist)
         .sort(compareTracks)
         .slice(0, 12);
+    }
+
+    function isUnknownArtistName(value: unknown): boolean {
+      const normalized = normalizeText(value);
+      return !normalized || normalized === 'unknown artist';
     }
 
     function renderBrowseScope() {
@@ -185,6 +356,35 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderList(tracks);
     }
 
+    function hasActiveCollectionFilters() {
+      return Boolean(
+        searchEl.value.trim() ||
+        bpmMinEl.value ||
+        bpmMaxEl.value ||
+        keyFilterEl.value ||
+        showOnlyNoBpmEl?.checked ||
+        hideUnknownArtistsEl.checked ||
+        activeQuickFilter ||
+        activeArtistScope ||
+        activeAlbumScope,
+      );
+    }
+
+    function clearCollectionFiltersAndScope() {
+      searchEl.value = '';
+      bpmMinEl.value = '';
+      bpmMaxEl.value = '';
+      keyFilterEl.value = '';
+      if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
+      hideUnknownArtistsEl.checked = false;
+      activeQuickFilter = '';
+      activeArtistScope = '';
+      activeAlbumScope = '';
+      renderQuickFilters();
+      renderBrowseScope();
+      void loadTracks();
+    }
+
     function bindLibraryNavLinks(root: ParentNode) {
       root.querySelectorAll('[data-nav-kind][data-nav-value]').forEach((node) => {
         node.addEventListener('click', (event) => {
@@ -199,11 +399,587 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
     }
 
+    function showToast(
+      message: string,
+      tone: 'info' | 'success' | 'warning' | 'error' = 'info',
+      action?: { label: string; onClick: () => void },
+    ) {
+      if (!toastStack) return;
+      const toast = document.createElement('div');
+      toast.className = `toast ${tone}`;
+      if (action) {
+        toast.innerHTML = `<span>${esc(message)}</span><button type="button" class="toast-action">${esc(action.label)}</button>`;
+        toast.querySelector('.toast-action')?.addEventListener('click', (event) => {
+          event.stopPropagation();
+          action.onClick();
+          toast.remove();
+        });
+      } else {
+        toast.textContent = message;
+      }
+      toastStack.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('visible'));
+      const remove = () => {
+        toast.classList.remove('visible');
+        setTimeout(() => toast.remove(), 180);
+      };
+      toast.addEventListener('click', remove);
+      setTimeout(remove, 3400);
+    }
+
+    function updateTapBpmUi() {
+      if (tapBpmValueEl) tapBpmValueEl.textContent = tapBpmValue > 0 ? String(Math.round(tapBpmValue)) : '--';
+      if (tapBpmCountEl) tapBpmCountEl.textContent = String(tapBpmTapTimes.length);
+      if (tapBpmConfidenceEl) tapBpmConfidenceEl.textContent = tapBpmConfidence();
+      if (tapBpmManualInputEl && document.activeElement !== tapBpmManualInputEl) {
+        tapBpmManualInputEl.value = tapBpmValue > 0 ? String(Math.round(tapBpmValue)) : '';
+      }
+      if (tapBpmSaveBtn) tapBpmSaveBtn.disabled = !(tapBpmTrackId != null && tapBpmValue > 0);
+    }
+
+    function resetTapBpmState() {
+      tapBpmTapTimes = [];
+      tapBpmValue = 0;
+      if (tapBpmStatusEl) tapBpmStatusEl.textContent = 'Press Space repeatedly to tap the beat.';
+      updateTapBpmUi();
+    }
+
+    function normalizeTapBpm(value: number) {
+      let bpm = value;
+      while (bpm < 70) bpm *= 2;
+      while (bpm > 175) bpm /= 2;
+      return bpm;
+    }
+
+    function computeTapBpmFromTimes(times: number[]) {
+      if (times.length < 4) return 0;
+      const intervals = times
+        .slice(1)
+        .map((time, index) => time - times[index])
+        .filter((delta) => delta >= 240 && delta <= 2000);
+      if (intervals.length < 3) return 0;
+      const sorted = [...intervals].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      const stable = intervals.filter((delta) => Math.abs(delta - median) <= 180);
+      const usable = stable.length >= 3 ? stable : intervals;
+      const average = usable.reduce((sum, value) => sum + value, 0) / usable.length;
+      if (!Number.isFinite(average) || average <= 0) return 0;
+      return Math.round(normalizeTapBpm(60000 / average) * 10) / 10;
+    }
+
+    function tapBpmConfidence() {
+      if (tapBpmTapTimes.length < 4 || tapBpmValue <= 0) return 'Low';
+      const intervals = tapBpmTapTimes
+        .slice(1)
+        .map((time, index) => time - tapBpmTapTimes[index])
+        .filter((delta) => delta >= 240 && delta <= 2000);
+      if (intervals.length < 3) return 'Low';
+      const mean = intervals.reduce((sum, value) => sum + value, 0) / intervals.length;
+      const variance = intervals.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / intervals.length;
+      const spread = Math.sqrt(variance);
+      if (intervals.length >= 5 && spread <= 45) return 'Stable';
+      if (intervals.length >= 4 && spread <= 90) return 'Settling';
+      return 'Low';
+    }
+
+    function registerTapBpmTap() {
+      const now = performance.now();
+      const lastTap = tapBpmTapTimes[tapBpmTapTimes.length - 1] ?? 0;
+      if (lastTap && now - lastTap > 2500) tapBpmTapTimes = [];
+      tapBpmTapTimes = [...tapBpmTapTimes, now].slice(-8);
+      tapBpmValue = computeTapBpmFromTimes(tapBpmTapTimes);
+      if (tapBpmStatusEl) {
+        const confidence = tapBpmConfidence();
+        tapBpmStatusEl.textContent = tapBpmValue > 0
+          ? (confidence === 'Stable'
+              ? 'BPM looks stable and ready to save.'
+              : confidence === 'Settling'
+                ? 'Close. Tap a few more times to stabilize it.'
+                : 'Keep tapping until the BPM stabilizes.')
+          : 'Keep tapping until the BPM stabilizes.';
+      }
+      updateTapBpmUi();
+    }
+
+    function openTapBpmModal() {
+      const track = activeTrack();
+      if (!track) return;
+      tapBpmTrackId = Number(track.id);
+      if (tapBpmTrackLabelEl) {
+        tapBpmTrackLabelEl.textContent = `${String(track.artist ?? 'Unknown Artist')} - ${String(track.title ?? 'Untitled')}`;
+      }
+      resetTapBpmState();
+      const existingBpm = Number(track.effective_bpm ?? track.bpm ?? 0);
+      if (existingBpm > 0) {
+        tapBpmValue = existingBpm;
+        if (tapBpmStatusEl) tapBpmStatusEl.textContent = 'You can tap a new BPM or type one manually.';
+        updateTapBpmUi();
+      }
+      openModal(tapBpmModal);
+      tapBpmManualInputEl?.focus();
+      tapBpmManualInputEl?.select();
+    }
+
+    async function saveTapBpmValue() {
+      if (tapBpmTrackId == null || tapBpmValue <= 0) return;
+      tapBpmValue = Math.round(tapBpmValue);
+      if (tapBpmStatusEl) tapBpmStatusEl.textContent = 'Saving tapped BPM…';
+      if (tapBpmSaveBtn) {
+        tapBpmSaveBtn.disabled = true;
+        tapBpmSaveBtn.textContent = 'Saving…';
+      }
+      try {
+        await saveBpm(tapBpmTrackId, tapBpmValue);
+        const res = await fetch(`/api/tracks/${tapBpmTrackId}`);
+        if (res.ok) renderDetail(await res.json());
+        closeModal(tapBpmModal);
+        returnToSongsPane();
+        showToast(`Saved BPM ${Math.round(tapBpmValue)}.`, 'success');
+      } catch {
+        if (tapBpmStatusEl) tapBpmStatusEl.textContent = 'Could not save tapped BPM.';
+      } finally {
+        if (tapBpmSaveBtn) tapBpmSaveBtn.textContent = 'Save BPM';
+        updateTapBpmUi();
+      }
+    }
+
+    function spotifyRuntimeSummary() {
+      const spotify = runtimeHealth?.spotify;
+      return spotify && typeof spotify === 'object' ? spotify as Record<string, unknown> : null;
+    }
+
+    function spotifyRuntimeLabel() {
+      const spotify = spotifyRuntimeSummary();
+      if (!spotify) return 'Not configured';
+      if (spotify.configured) {
+        const source = String(spotify.source ?? 'saved');
+        const clientId = String(spotify.client_id_masked ?? '').trim();
+        return clientId ? `Configured from ${source} (${clientId})` : `Configured from ${source}`;
+      }
+      const missing = Array.isArray(spotify.missing)
+        ? spotify.missing.filter((value): value is string => typeof value === 'string')
+        : [];
+      return missing.length ? `Missing ${missing.join(', ')}` : 'Not configured';
+    }
+
+    function setSpotifyUiStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const statusEl = document.getElementById('spotify-credentials-status') as HTMLElement | null;
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.state = state;
+    }
+
+    async function submitSpotifyCredentials(mode: 'save' | 'test-current') {
+      if (spotifySettingsBusy) return;
+      spotifySettingsBusy = true;
+      const saveBtn = document.getElementById('spotify-save-test-btn') as HTMLButtonElement | null;
+      const testBtn = document.getElementById('spotify-test-saved-btn') as HTMLButtonElement | null;
+      const clientIdInput = document.getElementById('spotify-client-id') as HTMLInputElement | null;
+      const clientSecretInput = document.getElementById('spotify-client-secret') as HTMLInputElement | null;
+      const previousSaveLabel = saveBtn?.textContent ?? 'Save & Test';
+      const previousTestLabel = testBtn?.textContent ?? 'Test Saved';
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = mode === 'save' ? 'Saving…' : previousSaveLabel;
+      }
+      if (testBtn) {
+        testBtn.disabled = true;
+        testBtn.textContent = mode === 'test-current' ? 'Testing…' : previousTestLabel;
+      }
+      setSpotifyUiStatus(mode === 'save' ? 'Saving Spotify credentials and testing them…' : 'Testing saved Spotify credentials…', 'saving');
+      try {
+        const body = mode === 'save'
+          ? {
+              clientId: clientIdInput?.value.trim() ?? '',
+              clientSecret: clientSecretInput?.value.trim() ?? '',
+              save: true,
+              test: true,
+            }
+          : { test: true };
+        const response = await fetch('/api/settings/spotify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const spotify = payload.spotify && typeof payload.spotify === 'object' ? payload.spotify as Record<string, unknown> : null;
+        if (!response.ok) {
+          const testResult = spotify?.test && typeof spotify.test === 'object' ? spotify.test as Record<string, unknown> : null;
+          setSpotifyUiStatus(String(testResult?.message ?? payload.error ?? 'Spotify credential test failed.'), 'error');
+          return;
+        }
+        const testResult = spotify?.test && typeof spotify.test === 'object' ? spotify.test as Record<string, unknown> : null;
+        if (mode === 'save' && clientSecretInput) clientSecretInput.value = '';
+        setSpotifyUiStatus(String(testResult?.message ?? 'Spotify credentials look good.'), 'success');
+        showToast('Spotify credentials updated.', 'success');
+        await loadRuntimeHealth();
+      } catch (error) {
+        setSpotifyUiStatus(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        spotifySettingsBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save & Test';
+        }
+        if (testBtn) {
+          testBtn.disabled = false;
+          testBtn.textContent = 'Test Saved';
+        }
+      }
+    }
+
+    function updateScanDirectoryDisplay() {
+      return;
+    }
+
+    function setListDensity(density: string) {
+      const normalized = density === 'compact' ? 'compact' : 'comfortable';
+      document.body.dataset.listDensity = normalized;
+      if (listDensityEl) listDensityEl.value = normalized;
+      try {
+        localStorage.setItem(listDensityKey, normalized);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    async function pickDirectoryAndPrefill() {
+      if (!adapter.supportsNativeFolderPicker) return;
+      const directory = await adapter.pickDirectory();
+      if (!directory) return;
+      scanDirectoryEl.value = directory;
+      updateScanDirectoryDisplay();
+      pushRecentDirectory(directory);
+      await preflightDirectory(directory);
+      showToast('Music folder selected.', 'success');
+    }
+
+    function openPanel(panel: 'track' | 'sets' | 'library' | 'activity') {
+      document.querySelector<HTMLElement>(`.panel-tab[data-panel="${panel}"]`)?.click();
+    }
+
+    function openModal(modal: HTMLElement | null) {
+      if (!modal) return;
+      modal.classList.add('open');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function hasOpenModal() {
+      return Boolean(document.querySelector('.modal.open'));
+    }
+
+    function closeModal(modal: HTMLElement | null) {
+      if (!modal) return;
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+      if (!hasOpenModal()) ensureActiveTrackSelection();
+    }
+
+    function syncCommandPaletteSelection() {
+      if (!commandPaletteList) return;
+      commandPaletteList.querySelectorAll<HTMLElement>('.command-palette-item[data-command-index]').forEach((button) => {
+        const active = Number(button.dataset.commandIndex ?? -1) === commandPaletteActiveIndex;
+        button.classList.toggle('active', active);
+        if (active) button.scrollIntoView({ block: 'nearest' });
+      });
+    }
+
+    function renderCommandPalette(query = '') {
+      if (!commandPaletteList) return;
+      const normalized = normalizeText(query);
+      const commands: Array<{ label: string; meta: string; run: () => void }> = [
+        { label: 'Choose Folder', meta: 'Scan', run: () => void pickDirectoryAndPrefill() },
+        { label: 'Start Scan', meta: 'Scan', run: () => void triggerScan() },
+        { label: 'Toggle Full Rescan', meta: 'Scan', run: () => { if (quickFullRescanEl) quickFullRescanEl.checked = !quickFullRescanEl.checked; } },
+        { label: 'View New Tracks', meta: 'Filter', run: () => setActiveQuickFilter('new') },
+        { label: 'Needs Attention', meta: 'Review', run: () => startReviewMode('attention') },
+        { label: 'Review Missing Art', meta: 'Review', run: () => startReviewMode('art') },
+        { label: 'Review Missing Key', meta: 'Review', run: () => startReviewMode('key') },
+        { label: 'Review Unreadable Files', meta: 'Review', run: () => startReviewMode('decode') },
+        { label: 'Open Collection', meta: 'Panel', run: () => openPanel('library') },
+        { label: 'Open Activity', meta: 'Panel', run: () => openPanel('activity') },
+        { label: 'Open Playlists', meta: 'Panel', run: () => openPanel('sets') },
+        { label: 'Focus Search', meta: 'Navigation', run: () => searchEl.focus() },
+        { label: 'Show Keyboard Shortcuts', meta: 'Help', run: () => openModal(shortcutsModal) },
+        { label: 'Clear Filters', meta: 'Filter', run: () => {
+          searchEl.value = '';
+          bpmMinEl.value = '';
+          bpmMaxEl.value = '';
+          keyFilterEl.value = '';
+          if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
+          activeQuickFilter = '';
+          renderQuickFilters();
+          void loadTracks();
+        } },
+      ];
+      const trackResults = tracks
+        .filter((track) => !normalized || normalizeText(`${track.artist ?? ''} ${track.title ?? ''} ${albumNameFor(track)}`).includes(normalized))
+        .slice(0, 8)
+        .map((track) => ({
+          label: `${String(track.artist ?? 'Unknown Artist')} - ${String(track.title ?? 'Untitled')}`,
+          meta: albumNameFor(track) || 'Track',
+          kind: 'track' as const,
+          run: () => {
+            openPanel('track');
+            setKeyboardPane('list', { focus: true });
+            void selectTrack(String(track.id), true, true);
+          },
+        }));
+      const artistResults = [...new Set(
+        tracks
+          .map((track) => String(track.artist ?? '').trim())
+          .filter(Boolean)
+          .filter((artist) => !normalized || normalizeText(artist).includes(normalized)),
+      )]
+        .slice(0, 6)
+        .map((artist) => ({
+          label: artist,
+          meta: `${artistAlbums(artist).length} albums · Artist`,
+          kind: 'artist' as const,
+          run: () => {
+            openPanel('track');
+            navigateLibrary('artist', artist);
+          },
+        }));
+      const results = [...commands.map((item) => ({ ...item, kind: 'command' as const })), ...artistResults, ...trackResults]
+        .filter((item) => !normalized || normalizeText(`${item.label} ${item.meta}`).includes(normalized))
+        .slice(0, 12);
+      commandPaletteResults = results;
+      commandPaletteActiveIndex = Math.min(commandPaletteActiveIndex, Math.max(0, results.length - 1));
+      commandPaletteList.innerHTML = results.map((item, index) => `
+        <button type="button" class="command-palette-item ${index === commandPaletteActiveIndex ? 'active' : ''}" data-command-index="${index}">
+          <strong>${esc(item.label)}</strong>
+          <span>${esc(item.meta)}</span>
+        </button>
+      `).join('') || '<div class="scan-log-entry info">No matches.</div>';
+      commandPaletteList.querySelectorAll<HTMLElement>('.command-palette-item[data-command-index]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const item = commandPaletteResults[Number(button.dataset.commandIndex ?? -1)];
+          if (!item) return;
+          closeModal(commandPaletteModal);
+          item.run();
+        });
+        button.addEventListener('mouseenter', () => {
+          commandPaletteActiveIndex = Number(button.dataset.commandIndex ?? 0);
+          syncCommandPaletteSelection();
+        });
+      });
+      syncCommandPaletteSelection();
+    }
+
+    function trackNeedsAttention(track: Record<string, unknown>): boolean {
+      return !track.album_art_url || !track.effective_key || !track.spotify_id || isLowBitrate(track) || String(track.decode_failed ?? '') === 'true';
+    }
+
+    function detailMode(trackId: number): 'overview' | 'match' | 'related' {
+      return detailModeByTrackId[trackId] ?? 'overview';
+    }
+
+    function setDetailMode(trackId: number, mode: 'overview' | 'match' | 'related') {
+      detailModeByTrackId[trackId] = mode;
+    }
+
+    function trackSubtitleParts(track: Record<string, unknown>): string[] {
+      const parts: string[] = [];
+      if (preferences.listShowAlbum && albumNameFor(track)) {
+        parts.push(`<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>`);
+      }
+      if (preferences.listShowBitrate) parts.push(formatBitrate(track.bitrate));
+      if (preferences.listShowTags && Array.isArray(track.custom_tags) && track.custom_tags.length) parts.push(esc((track.custom_tags as string[]).join(', ')));
+      if (preferences.listShowBpmSource && track.bpm_source) parts.push(`BPM ${esc(track.bpm_source)}`);
+      parts.push(esc(track.path));
+      return parts;
+    }
+
+    function rowMetricTemplate(track: Record<string, unknown>): string {
+      const metrics: string[] = [];
+      metrics.push(`
+        <div class="bpm-cell row-metric" data-track-id="${track.id}" title="Click to cycle BPM multiplier">
+          <strong>${displayBpm(track.effective_bpm, track.id as number)}</strong>
+          <span>BPM${getMult(track.id as number) !== 1 ? `<em class="mult-badge">${getMult(track.id as number) === 2 ? '×2' : '½×'}</em>` : ''}</span>
+        </div>
+      `);
+      if (preferences.listShowKey) metrics.push(`<div class="row-metric"><strong>${esc(track.effective_key ?? '--')}</strong><span>Key</span></div>`);
+      metrics.push(`<div class="row-metric"><strong>${formatDuration(track.duration)}</strong><span>Length</span></div>`);
+      if (preferences.listShowRecent && recentNewTrackIds.has(Number(track.id))) metrics.push(`<div class="row-metric row-metric-accent"><strong>New</strong><span>Added now</span></div>`);
+      while (metrics.length < 3) metrics.push('<div class="row-metric row-metric-empty"></div>');
+      return metrics.slice(0, 3).join('');
+    }
+
+    function isLowBitrate(track: Record<string, unknown>): boolean {
+      const bitrate = Number(track.bitrate ?? 0);
+      return Number.isFinite(bitrate) && bitrate > 0 && bitrate < 192;
+    }
+
+    function isHighBitrate(track: Record<string, unknown>): boolean {
+      const bitrate = Number(track.bitrate ?? 0);
+      return Number.isFinite(bitrate) && bitrate > 192;
+    }
+
+    function matchesQuickFilter(track: Record<string, unknown>): boolean {
+      switch (activeQuickFilter) {
+        case 'new':
+          return recentNewTrackIds.has(Number(track.id));
+        case 'missing-art':
+          return !track.album_art_url;
+        case 'missing-key':
+          return !track.effective_key;
+        case 'high-bitrate':
+          return isHighBitrate(track);
+        case 'decode-failed':
+          return String(track.decode_failed ?? '') === 'true';
+        case 'spotify-missing':
+          return !track.spotify_id;
+        case 'ignored':
+          return Boolean(track.ignored);
+        case 'needs-attention':
+          return trackNeedsAttention(track);
+        default:
+          return true;
+      }
+    }
+
+    function activeQuickFilterLabel(): string {
+      switch (activeQuickFilter) {
+        case 'new': return 'New tracks';
+        case 'missing-art': return 'Missing art';
+        case 'missing-key': return 'Missing key';
+        case 'high-bitrate': return 'High bitrate';
+        case 'decode-failed': return 'Unreadable';
+        case 'spotify-missing': return 'No Spotify';
+        case 'ignored': return 'Ignored';
+        case 'needs-attention': return 'Needs attention';
+        default: return '';
+      }
+    }
+
+    function renderQuickFilters() {
+      quickFilterBarEl?.querySelectorAll<HTMLElement>('.quick-filter-btn[data-filter]').forEach((button) => {
+        const filter = button.dataset.filter ?? '';
+        button.classList.toggle('active', activeQuickFilter === filter);
+      });
+      if (quickFilterNewBtn) {
+        quickFilterNewBtn.textContent = recentNewTrackIds.size ? `New (${recentNewTrackIds.size})` : 'New';
+        quickFilterNewBtn.disabled = recentNewTrackIds.size === 0;
+      }
+    }
+
+    function setActiveQuickFilter(filter: string) {
+      activeQuickFilter = activeQuickFilter === filter ? '' : filter;
+      renderQuickFilters();
+      renderList(tracks);
+    }
+
+    function matchesSearchQuery(track: Record<string, unknown>, query: string): boolean {
+      const normalizedQuery = normalizeText(query);
+      if (!normalizedQuery) return true;
+      const haystacks = [
+        String(track.title ?? ''),
+        String(track.artist ?? ''),
+        String(track.album ?? ''),
+        String(track.spotify_album_name ?? ''),
+        String(track.path ?? ''),
+        Array.isArray(track.custom_tags) ? track.custom_tags.join(' ') : String(track.custom_tags ?? ''),
+      ];
+      return haystacks.some((value) => normalizeText(value).includes(normalizedQuery));
+    }
+
+    function matchesMainPaneFilters(track: Record<string, unknown>): boolean {
+      if (!matchesSearchQuery(track, searchEl.value.trim())) return false;
+
+      const effectiveBpm = Number(track.effective_bpm ?? 0);
+      const bpmMin = bpmMinEl.value ? Number(bpmMinEl.value) : null;
+      const bpmMax = bpmMaxEl.value ? Number(bpmMaxEl.value) : null;
+      if (bpmMin != null && Number.isFinite(bpmMin) && effectiveBpm < bpmMin) return false;
+      if (bpmMax != null && Number.isFinite(bpmMax) && effectiveBpm > bpmMax) return false;
+
+      const normalizedKeyFilter = normalizeText(keyFilterEl.value);
+      if (normalizedKeyFilter) {
+        const normalizedTrackKey = normalizeText(track.effective_key ?? '');
+        if (!normalizedTrackKey.includes(normalizedKeyFilter)) return false;
+      }
+
+      if (showOnlyNoBpmEl?.checked && hasBpm(track)) return false;
+      if (hideUnknownArtistsEl.checked && isUnknownArtistName(track.artist)) return false;
+      return true;
+    }
+
     function visibleTracks(items: Record<string, unknown>[]) {
-      return [...items]
+      const filtered = [...items]
+        .filter((track) => matchesMainPaneFilters(track))
         .filter((track) => matchesBrowseScope(track))
-        .filter((track) => showOnlyNoBpmEl.checked ? !hasBpm(track) : hasBpm(track))
-        .sort(compareTracks);
+        .filter((track) => matchesQuickFilter(track))
+        .filter((track) => showOnlyNoBpmEl?.checked ? !hasBpm(track) : hasBpm(track));
+
+      if (!frozenTrackIdsDuringScan?.length || !['queued', 'running'].includes(activeScanStatus)) {
+        return filtered.sort(compareTracks);
+      }
+
+      const frozenOrder = new Map(frozenTrackIdsDuringScan.map((id, index) => [id, index]));
+      return filtered
+        .filter((track) => frozenOrder.has(Number(track.id)))
+        .sort((a, b) => {
+          const aOrder = frozenOrder.get(Number(a.id)) ?? Number.MAX_SAFE_INTEGER;
+          const bOrder = frozenOrder.get(Number(b.id)) ?? Number.MAX_SAFE_INTEGER;
+          return aOrder - bOrder || compareTracks(a, b);
+        });
+    }
+
+    function visibleTracksOrdered(): Record<string, unknown>[] {
+      return visibleTracks(tracks);
+    }
+
+    function setKeyboardPane(pane: 'list' | 'detail', options?: { focus?: boolean }) {
+      activeKeyboardPane = pane;
+      listEl.classList.toggle('keyboard-active', pane === 'list');
+      detailEl.classList.toggle('keyboard-active', pane === 'detail');
+      if (pane === 'list') syncActiveTrackRowHighlight();
+      if (options?.focus) {
+        const target = pane === 'list' ? listEl : detailEl;
+        target.focus({ preventScroll: pane === 'list' });
+      }
+    }
+
+    function syncActiveTrackRowHighlight() {
+      listEl.querySelectorAll<HTMLElement>('.row[data-id]').forEach((row) => {
+        row.classList.toggle('active', Number(row.dataset.id ?? 0) === activeTrackId);
+      });
+    }
+
+    function ensureActiveTrackSelection() {
+      if (hasOpenModal() || !tracks.length) return;
+      const currentTrackStillExists = activeTrackId != null && tracks.some((track) => Number(track.id) === activeTrackId);
+      if (currentTrackStillExists) {
+        setKeyboardPane('list');
+        syncActiveTrackRowHighlight();
+        return;
+      }
+      const firstVisibleTrack = visibleTracksOrdered()[0] ?? tracks[0];
+      if (!firstVisibleTrack) return;
+      setKeyboardPane('list');
+      void selectTrack(String(firstVisibleTrack.id), false, true);
+    }
+
+    function returnToSongsPane() {
+      requestAnimationFrame(() => {
+        ensureActiveTrackSelection();
+        setKeyboardPane('list', { focus: true });
+      });
+    }
+
+    function activeTrack(): Record<string, unknown> | null {
+      return activeTrackId == null ? null : tracks.find((track) => Number(track.id) === activeTrackId) ?? null;
+    }
+
+    function updateRecentNewTrackIdsFromTracks(items: Record<string, unknown>[]) {
+      if (!hasScanBaseline) return;
+      recentNewTrackIds = new Set(
+        items
+          .map((track) => Number(track.id))
+          .filter((id) => Number.isFinite(id) && !preScanTrackIds.has(id)),
+      );
+      persistRecentNewTrackIds();
+      renderQuickFilters();
     }
 
     function selectedTracks(): Record<string, unknown>[] {
@@ -246,27 +1022,207 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const safeCurrent = Math.max(0, current);
       const safeTotal = Math.max(0, total);
       const percent = safeTotal > 0 ? Math.min(100, (safeCurrent / safeTotal) * 100) : 0;
-      scanProgressMetaEl.textContent = `${safeCurrent} / ${safeTotal}`;
-      scanProgressBarEl.style.width = `${percent}%`;
-      scanProgressFileEl.textContent = file;
+      if (scanProgressMetaEl) scanProgressMetaEl.textContent = `${safeCurrent} / ${safeTotal}`;
+      if (scanProgressBarEl) scanProgressBarEl.style.width = `${percent}%`;
+      if (scanProgressFileEl) scanProgressFileEl.textContent = file;
     }
 
-    function appendScanLog(message: string, level: 'info' | 'warning' | 'error' | 'success' = 'info') {
-      const entry = document.createElement('div');
-      entry.className = `scan-log-entry ${level}`;
-      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      entry.textContent = `${timestamp}  ${message}`;
+    function updateNowPlayingBar(audio?: HTMLAudioElement | null) {
+      const track = nowPlayingTrackId == null
+        ? activeTrack()
+        : tracks.find((item) => Number(item.id) === nowPlayingTrackId) ?? activeTrack();
+      if (!nowPlayingBarEl || !nowPlayingTitleEl || !nowPlayingMetaEl) return;
+      if (!track) {
+        nowPlayingBarEl.hidden = true;
+        nowPlayingBarEl.dataset.state = 'idle';
+        return;
+      }
+      const currentAudio = audio ?? document.getElementById('local-audio') as HTMLAudioElement | null;
+      const isPlaying = Boolean(currentAudio && !currentAudio.paused);
+      const stateLabel = currentAudio
+        ? (currentAudio.ended ? 'Ended' : isPlaying ? 'Playing' : 'Paused')
+        : 'Ready';
+      nowPlayingBarEl.hidden = false;
+      nowPlayingBarEl.dataset.state = isPlaying ? 'playing' : 'paused';
+      nowPlayingTitleEl.textContent = `${String(track.artist ?? 'Unknown Artist')} - ${String(track.title ?? 'Untitled')}`;
+      nowPlayingMetaEl.textContent = [
+        albumNameFor(track) || 'Single',
+        formatDuration(track.duration),
+        formatBitrate(track.bitrate),
+        playbackQueue.length ? `${playbackQueue.length} queued` : '',
+        stateLabel,
+      ].filter(Boolean).join(' · ');
+    }
+
+    function updateRenderedTrackDetail(track: Record<string, unknown>) {
+      if (selectedDetailTrackId == null || Number(track.id) !== selectedDetailTrackId) return;
+      const heading = document.getElementById('detail-track-heading');
+      if (heading) {
+        heading.innerHTML = `<button type="button" class="nav-link hero-link" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}`;
+        bindLibraryNavLinks(heading);
+      }
+      const pathEl = document.getElementById('detail-track-path');
+      if (pathEl) {
+        pathEl.textContent = String(track.path ?? '');
+        pathEl.setAttribute('title', String(track.path ?? ''));
+      }
+      const metaArtist = document.getElementById('meta-artist') as HTMLInputElement | null;
+      if (metaArtist && document.activeElement !== metaArtist) metaArtist.value = String(track.artist ?? '');
+      const metaTitle = document.getElementById('meta-title') as HTMLInputElement | null;
+      if (metaTitle && document.activeElement !== metaTitle) metaTitle.value = String(track.title ?? '');
+      const metaAlbum = document.getElementById('meta-album') as HTMLInputElement | null;
+      if (metaAlbum && document.activeElement !== metaAlbum) metaAlbum.value = String(track.album ?? '');
+      const metaKey = document.getElementById('meta-key') as HTMLInputElement | null;
+      if (metaKey && document.activeElement !== metaKey) metaKey.value = String(track.key ?? track.effective_key ?? '');
+    }
+
+    function seekCurrentAudio(deltaSeconds: number) {
+      const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
+      if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) return false;
+      audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + deltaSeconds));
+      updateNowPlayingBar(audio);
+      return true;
+    }
+
+    function shellEscapePath(rawPath: string): string {
+      return `'${rawPath.replace(/'/g, `'\\''`)}'`;
+    }
+
+    async function copyActiveTrackPath() {
+      const track = activeTrack();
+      const rawPath = String(track?.path ?? '').trim();
+      if (!rawPath) return false;
+      try {
+        await navigator.clipboard.writeText(shellEscapePath(rawPath));
+        showToast('Song path copied.', 'success');
+        return true;
+      } catch {
+        showToast('Could not copy song path.', 'error');
+        return false;
+      }
+    }
+
+    function selectRelativeTrack(offset: -1 | 1) {
+      if (offset === 1 && playbackQueue.length) {
+        const nextQueued = playbackQueue.shift();
+        if (nextQueued != null) {
+          updateNowPlayingBar();
+          void selectTrack(String(nextQueued), true);
+          return;
+        }
+      }
+      const ordered = visibleTracksOrdered();
+      if (!ordered.length || activeTrackId == null) return;
+      const currentIndex = ordered.findIndex((track) => Number(track.id) === activeTrackId);
+      if (currentIndex === -1) return;
+      const next = ordered[currentIndex + offset];
+      if (!next) return;
+      void selectTrack(String(next.id), preferences.autoplayOnSelect);
+    }
+
+    function stepSelectionInList(offset: -1 | 1) {
+      const ordered = visibleTracksOrdered();
+      if (!ordered.length) return;
+      if (activeTrackId == null) {
+        void selectTrack(String(ordered[0].id), true, true);
+        return;
+      }
+      const currentIndex = ordered.findIndex((track) => Number(track.id) === activeTrackId);
+      const nextIndex = currentIndex === -1 ? 0 : Math.max(0, Math.min(ordered.length - 1, currentIndex + offset));
+      const next = ordered[nextIndex];
+      if (!next) return;
+      void selectTrack(String(next.id), true, true);
+    }
+
+    function stepSelectionInListPage(direction: -1 | 1) {
+      const ordered = visibleTracksOrdered();
+      if (!ordered.length) return;
+      const pageSize = Math.max(4, Math.floor(listEl.clientHeight / Math.max(1, listRowHeight())) - 1);
+      if (activeTrackId == null) {
+        setKeyboardPane('list', { focus: true });
+        void selectTrack(String(ordered[0].id), true, true);
+        return;
+      }
+      const currentIndex = ordered.findIndex((track) => Number(track.id) === activeTrackId);
+      const nextIndex = currentIndex === -1 ? 0 : Math.max(0, Math.min(ordered.length - 1, currentIndex + pageSize * direction));
+      const next = ordered[nextIndex];
+      if (!next) return;
+      setKeyboardPane('list', { focus: true });
+      void selectTrack(String(next.id), true, true);
+      requestAnimationFrame(() => {
+        if (listIsVirtualized) {
+          const rowHeight = listRowHeight();
+          const centeredTop = Math.max(0, Math.round((nextIndex * rowHeight) - ((listEl.clientHeight - rowHeight) / 2)));
+          renderVisibleTrackWindow(ordered, centeredTop);
+          listEl.scrollTop = centeredTop;
+          requestAnimationFrame(() => {
+            listEl.querySelector<HTMLElement>(`.row[data-id="${next.id}"]`)?.classList.add('active');
+          });
+          return;
+        }
+        listEl.querySelector<HTMLElement>(`.row[data-id="${next.id}"]`)?.scrollIntoView({ block: 'center' });
+      });
+    }
+
+    function flushPendingScanLogs() {
+      if (!scanLogEl || !pendingScanLogEntries.length) return;
+      const fragment = document.createDocumentFragment();
       if (scanLogEl.children.length === 1 && scanLogEl.textContent?.includes('No scan activity.')) {
         scanLogEl.innerHTML = '';
       }
-      scanLogEl.prepend(entry);
+      const entries = pendingScanLogEntries.splice(0);
+      for (const item of entries.reverse()) {
+        const entry = document.createElement('div');
+        entry.className = `scan-log-entry ${item.level}`;
+        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        entry.textContent = `${timestamp}  ${item.message}`;
+        fragment.appendChild(entry);
+      }
+      scanLogEl.prepend(fragment);
       while (scanLogEl.children.length > 80) {
         scanLogEl.removeChild(scanLogEl.lastElementChild!);
       }
+      scanLogFlushTimer = null;
+    }
+
+    function persistClientDiagnosticLog(
+      message: string,
+      level: 'info' | 'warning' | 'error' | 'success',
+      category = 'scan-log',
+      context?: Record<string, unknown>,
+    ) {
+      void fetch('/api/logs/client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          level,
+          category,
+          context,
+        }),
+      }).catch(() => {});
+    }
+
+    function appendScanLog(
+      message: string,
+      level: 'info' | 'warning' | 'error' | 'success' = 'info',
+      context?: Record<string, unknown>,
+    ) {
+      pendingScanLogEntries.push({ message, level });
+      persistClientDiagnosticLog(message, level, 'scan-log', context);
+      if (scanLogFlushTimer) return;
+      scanLogFlushTimer = setTimeout(() => {
+        flushPendingScanLogs();
+      }, 220);
     }
 
     function resetScanLog() {
-      scanLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity.</div>';
+      pendingScanLogEntries = [];
+      if (scanLogFlushTimer) {
+        clearTimeout(scanLogFlushTimer);
+        scanLogFlushTimer = null;
+      }
+      if (scanLogEl) scanLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity.</div>';
     }
 
     function isScanRunning(): boolean {
@@ -274,24 +1230,30 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function currentRefreshIntervalMs(): number {
-      return isScanRunning() ? 4000 : 20000;
+      return isScanRunning() ? 9000 : 20000;
     }
 
-    async function refreshFromDb(options?: { includeLibrary?: boolean; includeHistory?: boolean }) {
+    async function refreshFromDb(options?: { includeLibrary?: boolean; includeHistory?: boolean; mode?: 'light' | 'full' }) {
       if (refreshInFlight) {
         refreshQueued = true;
+        if ((options?.mode ?? 'full') === 'full') queuedRefreshMode = 'full';
+        else if (!queuedRefreshMode) queuedRefreshMode = 'light';
         return;
       }
       refreshInFlight = true;
       try {
         await loadTracks(searchEl.value.trim());
-        if (options?.includeLibrary) await loadLibraryOverview();
-        if (options?.includeHistory) await loadScanHistory();
+        if ((options?.mode ?? 'full') === 'full') {
+          if (options?.includeLibrary) await loadLibraryOverview();
+          if (options?.includeHistory) await loadScanHistory();
+        }
       } finally {
         refreshInFlight = false;
         if (refreshQueued) {
           refreshQueued = false;
-          void refreshFromDb(options);
+          const nextMode = queuedRefreshMode ?? options?.mode ?? 'full';
+          queuedRefreshMode = null;
+          void refreshFromDb({ ...options, mode: nextMode });
         }
       }
     }
@@ -304,150 +1266,272 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       backgroundRefreshTimer = setInterval(() => {
         if (document.hidden) return;
         void refreshFromDb({
-          includeLibrary: isScanRunning(),
-          includeHistory: isScanRunning(),
+          includeLibrary: false,
+          includeHistory: false,
+          mode: 'light',
         });
       }, currentRefreshIntervalMs());
     }
 
-    function queueDbRefresh(delayMs = 1200) {
+    function queueDbRefresh(delayMs = 4500, mode: 'light' | 'full' = 'light') {
       if (queuedDbRefreshTimer) clearTimeout(queuedDbRefreshTimer);
+      queuedRefreshMode = mode === 'full' ? 'full' : queuedRefreshMode ?? 'light';
       queuedDbRefreshTimer = setTimeout(() => {
         queuedDbRefreshTimer = null;
         void refreshFromDb({
-          includeLibrary: true,
-          includeHistory: true,
+          includeLibrary: mode === 'full',
+          includeHistory: mode === 'full',
+          mode,
         });
       }, delayMs);
     }
 
-    function getScanPanelState(): Record<string, boolean> {
-      try {
-        const parsed = JSON.parse(localStorage.getItem(scanPanelStateKey) || '{}');
-        return parsed && typeof parsed === 'object' ? parsed as Record<string, boolean> : {};
-      } catch {
-        return {};
-      }
-    }
-
-    function saveScanPanelState(next: Record<string, boolean>) {
-      try {
-        localStorage.setItem(scanPanelStateKey, JSON.stringify(next));
-      } catch {
-        /* ignore */
-      }
-    }
-
-    function applyPanelCollapsedState(
-      panelId: string,
-      button: HTMLButtonElement,
-      body: HTMLElement,
-      collapsed: boolean,
-    ) {
-      body.hidden = collapsed;
-      button.textContent = collapsed ? 'Expand' : 'Collapse';
-      button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      button.dataset.collapsed = collapsed ? 'true' : 'false';
-      button.closest('.scan-log-panel, .scan-summary-panel, .scan-history-panel')?.classList.toggle('collapsed', collapsed);
-    }
-
-    function initCollapsiblePanel(
-      panelId: string,
-      button: HTMLButtonElement,
-      body: HTMLElement,
-      defaultCollapsed = false,
-    ) {
-      const state = getScanPanelState();
-      let collapsed = state[panelId] ?? defaultCollapsed;
-      applyPanelCollapsedState(panelId, button, body, collapsed);
-      button.addEventListener('click', () => {
-        collapsed = !collapsed;
-        applyPanelCollapsedState(panelId, button, body, collapsed);
-        saveScanPanelState({ ...getScanPanelState(), [panelId]: collapsed });
-      });
-      button.closest('.scan-log-head')?.addEventListener('click', (event) => {
-        if ((event.target as HTMLElement).closest('button')) return;
-        collapsed = !collapsed;
-        applyPanelCollapsedState(panelId, button, body, collapsed);
-        saveScanPanelState({ ...getScanPanelState(), [panelId]: collapsed });
-      });
-    }
-
-    function getRecentDirectories(): string[] {
-      try {
-        const parsed = JSON.parse(localStorage.getItem(scanRecentDirectoriesKey) || '[]');
-        return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : [];
-      } catch {
-        return [];
-      }
-    }
-
-    function saveRecentDirectories(directories: string[]) {
-      try {
-        localStorage.setItem(scanRecentDirectoriesKey, JSON.stringify(directories.slice(0, 8)));
-      } catch {
-        /* ignore */
-      }
-    }
-
     function pushRecentDirectory(directory: string) {
-      const normalized = directory.trim();
-      if (!normalized) return;
-      const next = [normalized, ...getRecentDirectories().filter((item) => item !== normalized)];
-      saveRecentDirectories(next);
-      renderRecentDirectories(next);
-    }
-
-    function renderRecentDirectories(directories = getRecentDirectories()) {
-      scanRecentDirectoriesEl.innerHTML = '<option value="">Recent folders…</option>' +
-        directories.map((directory) => `<option value="${esc(directory)}">${esc(directory)}</option>`).join('');
-      scanUseLastBtn.disabled = directories.length === 0;
+      void directory;
     }
 
     function setScanSummary(summary?: Record<string, unknown> | null, job?: Record<string, unknown> | null) {
-      const safe = summary ?? {};
-      const created = String((job?.createdAt ?? job?.created_at ?? 'None') || 'None');
-      scanSummaryEl.innerHTML = [
-        ['Last run', created === 'None' ? 'None' : new Date(created).toLocaleString()],
-        ['BPM', String(safe.with_bpm ?? 0)],
-        ['Key', String(safe.with_key ?? 0)],
-        ['Spotify', String(safe.with_spotify ?? 0)],
-        ['Album art', String(safe.with_album_art ?? 0)],
-        ['Decode failures', String(safe.decode_failures ?? 0)],
-      ].map(([label, value]) => `<div class="scan-summary-item"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
+      void summary;
+      void job;
     }
 
     function renderScanHistory() {
-      if (!scanHistory.length) {
-        scanHistoryEl.innerHTML = '<div class="scan-log-entry info">No scan runs yet.</div>';
+      return;
+    }
+
+    function clearActiveTrackDetail() {
+      activeTrackId = null;
+      nowPlayingTrackId = null;
+      selectedDetailTrackId = null;
+      detailEl.innerHTML = '<div class="empty">Select a track from the library to view details.</div>';
+      updateNowPlayingBar();
+    }
+
+    function openEditMetadataModal() {
+      if (!editMetadataModal) return;
+      const track = activeTrack();
+      if (!track) return;
+      saveEditMetadataInFlight = false;
+      if (saveEditMetadataBtn) {
+        saveEditMetadataBtn.disabled = false;
+        saveEditMetadataBtn.textContent = 'Save Metadata';
+      }
+      if (editMetadataStatusEl) {
+        editMetadataStatusEl.textContent = 'Press Enter or Save Metadata to apply changes.';
+        editMetadataStatusEl.dataset.state = 'idle';
+      }
+      (document.getElementById('edit-meta-artist') as HTMLInputElement | null)!.value = String(track.artist ?? '');
+      (document.getElementById('edit-meta-title') as HTMLInputElement | null)!.value = String(track.title ?? '');
+      (document.getElementById('edit-meta-album') as HTMLInputElement | null)!.value = String(track.album ?? '');
+      (document.getElementById('edit-meta-key') as HTMLInputElement | null)!.value = String(track.key ?? track.effective_key ?? '');
+      (document.getElementById('edit-meta-tags') as HTMLInputElement | null)!.value = Array.isArray(track.custom_tags) ? (track.custom_tags as string[]).join(', ') : '';
+      openModal(editMetadataModal);
+      requestAnimationFrame(() => {
+        const input = document.getElementById('edit-meta-artist') as HTMLInputElement | null;
+        input?.focus();
+        input?.select();
+        showInputSuggestions(input);
+      });
+    }
+
+    async function saveEditMetadataModal() {
+      if (activeTrackId == null || saveEditMetadataInFlight) return;
+      const savedTrackId = activeTrackId;
+      saveEditMetadataInFlight = true;
+      const activeElement = document.activeElement as HTMLElement | null;
+      activeElement?.blur();
+      if (saveEditMetadataBtn) {
+        saveEditMetadataBtn.disabled = true;
+        saveEditMetadataBtn.textContent = 'Saving…';
+      }
+      if (editMetadataStatusEl) {
+        editMetadataStatusEl.textContent = 'Saving metadata into the file and library…';
+        editMetadataStatusEl.dataset.state = 'saving';
+      }
+      const artistInput = document.getElementById('edit-meta-artist') as HTMLInputElement | null;
+      const titleInput = document.getElementById('edit-meta-title') as HTMLInputElement | null;
+      const albumInput = document.getElementById('edit-meta-album') as HTMLInputElement | null;
+      const keyInput = document.getElementById('edit-meta-key') as HTMLInputElement | null;
+      const tagsInput = document.getElementById('edit-meta-tags') as HTMLInputElement | null;
+      try {
+        const saved = await saveTrackMetadata(activeTrackId, {
+          artist: artistInput?.value.trim() ?? '',
+          title: titleInput?.value.trim() ?? '',
+          album: albumInput?.value.trim() ?? '',
+          key: keyInput?.value.trim() ?? '',
+          custom_tags: (tagsInput?.value ?? '').split(',').map((tag) => tag.trim()).filter(Boolean),
+        }, { reloadDetail: false });
+        if (!saved) {
+          if (editMetadataStatusEl) {
+            editMetadataStatusEl.textContent = 'Save failed. Check the file and try again.';
+            editMetadataStatusEl.dataset.state = 'error';
+          }
+          if (saveEditMetadataBtn) {
+            saveEditMetadataBtn.disabled = false;
+            saveEditMetadataBtn.textContent = 'Save Metadata';
+          }
+          return;
+        }
+        if (editMetadataStatusEl) {
+          editMetadataStatusEl.textContent = 'Saved.';
+          editMetadataStatusEl.dataset.state = 'success';
+        }
+        editMetadataModal?.querySelectorAll<HTMLInputElement>('input').forEach((input) => input.blur());
+        closeModal(editMetadataModal);
+        openPanel('track');
+        requestAnimationFrame(() => {
+          applyTrackSelection(String(savedTrackId), true);
+          syncActiveTrackRowHighlight();
+          setKeyboardPane('list', { focus: true });
+        });
+      } finally {
+        saveEditMetadataInFlight = false;
+      }
+    }
+
+    function openDeleteTracksModal(ids: number[], source: 'single' | 'bulk') {
+      const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
+      if (!uniqueIds.length || !deleteTrackModal) return;
+      pendingDeleteTrackIds = uniqueIds;
+      pendingDeleteSource = source;
+      if (deleteTrackRemoveFileEl) deleteTrackRemoveFileEl.checked = false;
+      if (deleteTrackTitleEl) {
+        deleteTrackTitleEl.textContent = uniqueIds.length === 1 ? 'Delete Track' : `Delete ${uniqueIds.length} Tracks`;
+      }
+      if (deleteTrackMessageEl) {
+        deleteTrackMessageEl.textContent = uniqueIds.length === 1
+          ? 'Remove this track from DJ Assist. You can also delete the audio file from the computer.'
+          : `Remove ${uniqueIds.length} tracks from DJ Assist. You can also delete their audio files from the computer.`;
+      }
+      openModal(deleteTrackModal);
+      requestAnimationFrame(() => {
+        confirmDeleteTrackBtn?.focus();
+      });
+    }
+
+    function closeDeleteTracksModal() {
+      pendingDeleteTrackIds = [];
+      pendingDeleteSource = 'single';
+      if (deleteTrackRemoveFileEl) deleteTrackRemoveFileEl.checked = false;
+      closeModal(deleteTrackModal);
+    }
+
+    async function pruneMissingTracks(ids: number[]) {
+      const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
+      if (!uniqueIds.length) return;
+
+      const orderedBeforeDelete = visibleTracksOrdered();
+      const activeDeleted = activeTrackId != null && uniqueIds.includes(activeTrackId);
+      let nextTrackId: number | null = null;
+      if (activeDeleted) {
+        const activeIndex = orderedBeforeDelete.findIndex((track) => Number(track.id) === activeTrackId);
+        if (activeIndex >= 0) {
+          const nextCandidate = orderedBeforeDelete
+            .slice(activeIndex + 1)
+            .find((track) => !uniqueIds.includes(Number(track.id)));
+          const prevCandidate = orderedBeforeDelete
+            .slice(0, activeIndex)
+            .reverse()
+            .find((track) => !uniqueIds.includes(Number(track.id)));
+          nextTrackId = Number(nextCandidate?.id ?? prevCandidate?.id ?? 0) || null;
+        }
+      }
+
+      await fetch('/api/tracks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: uniqueIds, action: 'delete' }),
+      });
+
+      for (const id of uniqueIds) selectedTrackIds.delete(id);
+      await loadTracks(searchEl.value.trim());
+      await loadLibraryOverview();
+      await loadSets();
+      if (currentPanel === 'sets') await renderSetsPanel();
+      if (nextTrackId != null && tracks.some((track) => Number(track.id) === nextTrackId)) {
+        await selectTrack(String(nextTrackId), false);
+      } else if (activeTrackId != null && uniqueIds.includes(activeTrackId)) {
+        clearActiveTrackDetail();
+      }
+      renderBulkToolbar();
+      showToast(uniqueIds.length === 1 ? 'Missing file removed from the library.' : `${uniqueIds.length} missing files removed from the library.`, 'warning');
+    }
+
+    async function deleteTracksFromLibrary(ids: number[], source: 'single' | 'bulk', deleteFiles = false) {
+      const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
+      if (!uniqueIds.length) return;
+
+      const orderedBeforeDelete = visibleTracksOrdered();
+      const activeDeleted = activeTrackId != null && uniqueIds.includes(activeTrackId);
+      let nextTrackId: number | null = null;
+      if (activeDeleted) {
+        const activeIndex = orderedBeforeDelete.findIndex((track) => Number(track.id) === activeTrackId);
+        if (activeIndex >= 0) {
+          const nextCandidate = orderedBeforeDelete
+            .slice(activeIndex + 1)
+            .find((track) => !uniqueIds.includes(Number(track.id)));
+          const prevCandidate = orderedBeforeDelete
+            .slice(0, activeIndex)
+            .reverse()
+            .find((track) => !uniqueIds.includes(Number(track.id)));
+          nextTrackId = Number(nextCandidate?.id ?? prevCandidate?.id ?? 0) || null;
+        }
+      }
+
+      const res = await fetch('/api/tracks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: uniqueIds, action: 'delete', deleteFiles }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        showToast('Delete failed.', 'error');
+        warningBanner.style.display = 'block';
+        warningBanner.innerHTML = `<strong>Delete failed:</strong> ${esc(body || 'Unable to remove tracks from the library.')}`;
         return;
       }
-      scanHistoryEl.innerHTML = scanHistory.map((job) => `
-        <div class="scan-history-item ${job.id === activeScanJobId ? 'active' : ''}" data-scan-id="${job.id}">
-          <strong>${esc(job.directory ?? 'Unknown directory')}</strong>
-          <span>${esc(job.status ?? 'unknown')} · ${esc(((job.options as Record<string, unknown> | undefined)?.rescanMode ?? 'smart'))}</span>
-          <span>${esc(job.createdAt ? new Date(String(job.createdAt)).toLocaleString() : 'Unknown time')}</span>
-        </div>
-      `).join('');
-      scanHistoryEl.querySelectorAll('.scan-history-item[data-scan-id]').forEach((item) => {
-        item.addEventListener('click', async () => {
-          const id = (item as HTMLElement).dataset.scanId!;
-          await loadScanJob(id, true);
-        });
-      });
+
+      for (const id of uniqueIds) selectedTrackIds.delete(id);
+      await loadTracks(searchEl.value.trim());
+      await loadLibraryOverview();
+      await loadSets();
+      if (currentPanel === 'sets') await renderSetsPanel();
+      if (nextTrackId != null && tracks.some((track) => Number(track.id) === nextTrackId)) {
+        await selectTrack(String(nextTrackId), false);
+      } else if (activeTrackId != null && uniqueIds.includes(activeTrackId)) {
+        clearActiveTrackDetail();
+      }
+      renderBulkToolbar();
+      if (deleteFiles) {
+        showToast(source === 'single' ? 'Track and file deleted.' : `${uniqueIds.length} tracks and files deleted.`, 'success');
+      } else {
+        showToast(source === 'single' ? 'Track removed from the library.' : `${uniqueIds.length} tracks removed from the library.`, 'success');
+      }
+    }
+
+    async function confirmDeleteTracks() {
+      const ids = [...pendingDeleteTrackIds];
+      const source = pendingDeleteSource;
+      const deleteFiles = Boolean(deleteTrackRemoveFileEl?.checked);
+      closeDeleteTracksModal();
+      await deleteTracksFromLibrary(ids, source, deleteFiles);
     }
 
     function renderBulkToolbar() {
       const selected = selectedTracks();
       if (!selected.length) {
-        bulkToolbarEl.innerHTML = '<div class="bulk-toolbar-empty">No tracks selected.</div>';
+        bulkToolbarEl.innerHTML = '';
+        bulkToolbarEl.classList.add('hidden');
         return;
       }
+      bulkToolbarEl.classList.remove('hidden');
 
       const setOptions = sets.map((set) => `<option value="${set.id}">${esc(set.name)}</option>`).join('');
       bulkToolbarEl.innerHTML = `
         <div class="bulk-toolbar-main">
           <strong>${selected.length} selected</strong>
+          <button type="button" class="btn danger" id="bulk-delete-btn">Delete</button>
           <button type="button" class="btn" id="bulk-ignore-btn">Ignore</button>
           <button type="button" class="btn" id="bulk-unignore-btn">Unignore</button>
           <button type="button" class="btn" id="bulk-tags-btn">Add Tags</button>
@@ -475,6 +1559,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       document.getElementById('bulk-ignore-btn')?.addEventListener('click', () => { void runBulkAction('ignore'); });
       document.getElementById('bulk-unignore-btn')?.addEventListener('click', () => { void runBulkAction('unignore'); });
+      document.getElementById('bulk-delete-btn')?.addEventListener('click', () => { openDeleteTracksModal([...selectedTrackIds], 'bulk'); });
       document.getElementById('bulk-tags-btn')?.addEventListener('click', () => {
         const input = prompt('Add comma-separated tags to selected tracks');
         if (!input) return;
@@ -501,8 +1586,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function displayBpm(raw: unknown, trackId: number): string {
       if (!raw) return '--';
       const mult = getMult(trackId);
-      const val = Number(raw) * mult;
-      return mult === 1 ? val.toFixed(1) : String(Math.round(val));
+      return String(Math.round(Number(raw) * mult));
     }
 
     function cycleMult(trackId: number) {
@@ -524,17 +1608,37 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
     }
 
-    async function saveTrackMetadata(trackId: number, patch: Record<string, unknown>) {
+    async function saveTrackMetadata(
+      trackId: number,
+      patch: Record<string, unknown>,
+      options: { reloadDetail?: boolean } = {},
+    ) {
+      const { reloadDetail = true } = options;
       const res = await fetch(`/api/tracks/${trackId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
       if (!res.ok) return null;
-      await loadTracks(searchEl.value.trim());
-      await loadLibraryOverview();
       const payload = await res.json();
-      renderDetail(payload);
+      const updatedTrack = payload.track as Record<string, unknown> | undefined;
+      if (updatedTrack) {
+        const trackIndex = tracks.findIndex((item) => Number(item.id) === trackId);
+        if (trackIndex !== -1) tracks[trackIndex] = updatedTrack;
+        else tracks = [updatedTrack, ...tracks];
+        refreshMetadataSuggestionLists();
+        renderList(tracks);
+        if (selectedDetailTrackId === trackId || activeTrackId === trackId) {
+          updateRenderedTrackDetail(updatedTrack);
+          updateNowPlayingBar(document.getElementById('local-audio') as HTMLAudioElement | null);
+        }
+        // Avoid rebuilding the active player after modal metadata edits. Replacing
+        // the detail pane tears down the audio element and can cause audible pops.
+        if (reloadDetail && (selectedDetailTrackId === trackId || activeTrackId === trackId)) {
+          await loadTrackDetail(String(trackId), false);
+        }
+      }
+      void loadLibraryOverview();
       return payload;
     }
 
@@ -559,32 +1663,102 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       context.strokeStyle = 'rgba(255,108,0,0.9)';
       context.lineWidth = 1;
 
-      try {
-        const res = await fetch(src);
-        const arrayBuffer = await res.arrayBuffer();
-        const audioContext = new AudioContext();
-        const buffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-        const channel = buffer.getChannelData(0);
-        const step = Math.ceil(channel.length / width);
-        const amp = height / 2;
-        const peaks: Array<{ min: number; max: number }> = [];
-        for (let i = 0; i < width; i += 1) {
-          let min = 1;
-          let max = -1;
-          for (let j = 0; j < step; j += 1) {
-            const datum = channel[(i * step) + j] ?? 0;
-            if (datum < min) min = datum;
-            if (datum > max) max = datum;
-          }
-          peaks.push({ min, max });
+      const renderFallbackWaveform = (currentTime = audio?.currentTime ?? 0) => {
+        context.clearRect(0, 0, width, height);
+        context.fillStyle = 'rgba(255,255,255,0.04)';
+        context.fillRect(0, 0, width, height);
+        const seed = (trackId % 17) + 7;
+        const barCount = Math.max(48, Math.floor(width / 6));
+        const progressRatio = audio && Number.isFinite(audio.duration) && audio.duration > 0
+          ? Math.max(0, Math.min(1, currentTime / audio.duration))
+          : 0;
+        const progressX = progressRatio * width;
+        for (let i = 0; i < barCount; i += 1) {
+          const ratio = i / Math.max(1, barCount - 1);
+          const x = ratio * width;
+          const amplitude = 0.18 + (((Math.sin((i + seed) * 0.63) + 1) / 2) * 0.52);
+          const barHeight = Math.max(10, amplitude * height * 0.9);
+          const y = (height - barHeight) / 2;
+          context.fillStyle = x <= progressX ? 'rgba(255,108,0,0.85)' : 'rgba(255,255,255,0.16)';
+          context.fillRect(x, y, Math.max(2, width / barCount - 1), barHeight);
         }
+        context.strokeStyle = 'rgba(255,255,255,0.92)';
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(progressX, 0);
+        context.lineTo(progressX, height);
+        context.stroke();
+      };
+
+      const bindFallbackScrubbing = () => {
+        if (!audio) return;
+        const seekFromPointer = (clientX: number) => {
+          if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+          const rect = canvas.getBoundingClientRect();
+          const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+          audio.currentTime = ratio * audio.duration;
+          renderFallbackWaveform(audio.currentTime);
+        };
+        let scrubbing = false;
+        const stopScrub = () => { scrubbing = false; };
+        canvas.addEventListener('pointerdown', (event) => {
+          scrubbing = true;
+          canvas.setPointerCapture(event.pointerId);
+          seekFromPointer(event.clientX);
+        });
+        canvas.addEventListener('pointermove', (event) => {
+          if (!scrubbing) return;
+          seekFromPointer(event.clientX);
+        });
+        canvas.addEventListener('pointerup', stopScrub);
+        canvas.addEventListener('pointercancel', stopScrub);
+        canvas.addEventListener('click', (event) => {
+          if (scrubbing) return;
+          seekFromPointer(event.clientX);
+        });
+        const syncFallback = () => renderFallbackWaveform(audio.currentTime);
+        audio.addEventListener('timeupdate', syncFallback);
+        audio.addEventListener('seeked', syncFallback);
+        audio.addEventListener('loadedmetadata', syncFallback);
+        audio.addEventListener('canplay', syncFallback);
+        audio.addEventListener('play', syncFallback);
+        audio.addEventListener('pause', syncFallback);
+      };
+
+      try {
+        const waveformRes = await fetch(`/api/tracks/${trackId}/waveform?width=${width}`);
+        if (!waveformRes.ok) {
+          let message = `waveform peaks failed (${waveformRes.status})`;
+          try {
+            const payload = await waveformRes.json();
+            if (payload && typeof payload.error === 'string' && payload.error.trim()) {
+              message = payload.error;
+            }
+          } catch {
+            // Ignore malformed error payloads and use the generic message.
+          }
+          throw new Error(message);
+        }
+        const waveformPayload = await waveformRes.json() as {
+          waveform?: {
+            duration?: number;
+            peaks?: Array<{ min: number; max: number }>;
+          };
+        };
+        const peaks = Array.isArray(waveformPayload.waveform?.peaks) ? waveformPayload.waveform!.peaks : [];
+        const waveformDuration = Number(waveformPayload.waveform?.duration ?? audio?.duration ?? 0);
+        if (!peaks.length) throw new Error('waveform peaks missing');
+        if (!Number.isFinite(waveformDuration) || waveformDuration <= 0) {
+          throw new Error('waveform duration missing');
+        }
+        const amp = height / 2;
 
         let rafId = 0;
         const renderFrame = (currentTime = audio?.currentTime ?? 0) => {
           context.clearRect(0, 0, width, height);
           context.fillStyle = 'rgba(255,255,255,0.04)';
           context.fillRect(0, 0, width, height);
-          const progressRatio = buffer.duration > 0 ? Math.max(0, Math.min(1, currentTime / buffer.duration)) : 0;
+          const progressRatio = waveformDuration > 0 ? Math.max(0, Math.min(1, currentTime / waveformDuration)) : 0;
           const progressX = progressRatio * width;
 
           context.strokeStyle = 'rgba(255,255,255,0.18)';
@@ -613,7 +1787,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           context.strokeStyle = 'rgba(255,212,138,0.95)';
           context.lineWidth = 1;
           for (const cue of cues) {
-            const x = buffer.duration > 0 ? (cue.time / buffer.duration) * width : 0;
+            const x = waveformDuration > 0 ? (cue.time / waveformDuration) * width : 0;
             context.beginPath();
             context.moveTo(x, 0);
             context.lineTo(x, height);
@@ -629,10 +1803,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         };
 
         const seekFromPointer = (clientX: number) => {
-          if (!audio || !Number.isFinite(buffer.duration) || buffer.duration <= 0) return;
+          if (!audio || !Number.isFinite(waveformDuration) || waveformDuration <= 0) return;
           const rect = canvas.getBoundingClientRect();
           const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-          audio.currentTime = ratio * buffer.duration;
+          audio.currentTime = ratio * waveformDuration;
           renderFrame(audio.currentTime);
         };
 
@@ -641,10 +1815,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (audio) {
           let scrubbing = false;
           const stopScrub = () => { scrubbing = false; };
-          const syncWaveform = () => { renderFrame(audio.currentTime); };
+          const syncWaveform = () => {
+            if (document.visibilityState !== 'visible') return;
+            renderFrame(audio.currentTime);
+          };
           const tick = () => {
+            if (document.visibilityState !== 'visible') {
+              rafId = 0;
+              return;
+            }
             renderFrame(audio.currentTime);
             if (!audio.paused && !audio.ended) rafId = requestAnimationFrame(tick);
+          };
+          const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+              renderFrame(audio.currentTime);
+              if (!audio.paused && !audio.ended && !rafId) {
+                rafId = requestAnimationFrame(tick);
+              }
+              return;
+            }
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = 0;
           };
 
           canvas.addEventListener('pointerdown', (event) => {
@@ -675,27 +1867,44 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             if (rafId) cancelAnimationFrame(rafId);
             rafId = requestAnimationFrame(tick);
           });
+          document.addEventListener('visibilitychange', handleVisibilityChange);
         }
-
-        await audioContext.close();
-      } catch {
-        context.fillStyle = 'rgba(255,209,209,0.9)';
-        context.font = '12px sans-serif';
-        context.fillText('Waveform preview unavailable', 12, 20);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendScanLog(`Waveform preview fallback for track ${trackId}: ${message}`, 'warning', {
+          category: 'waveform',
+          trackId,
+          source: src,
+          audioCurrentTime: audio ? Number(audio.currentTime ?? 0) : null,
+          audioDuration: audio ? Number(audio.duration ?? 0) : null,
+          audioPaused: audio ? Boolean(audio.paused) : null,
+          readyState: audio ? Number(audio.readyState ?? 0) : null,
+          networkState: audio ? Number(audio.networkState ?? 0) : null,
+          errorName: error instanceof Error ? error.name : typeof error,
+          stack: error instanceof Error ? error.stack ?? null : null,
+          userAgent: navigator.userAgent,
+          visibilityState: document.visibilityState,
+        });
+        showToast('Waveform preview fell back to simplified mode.', 'warning');
+        renderFallbackWaveform();
+        bindFallbackScrubbing();
       }
     }
 
     // ── Panel switching ───────────────────────────────────────────────────────
     document.querySelectorAll('.panel-tab').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const panel = (btn as HTMLElement).dataset.panel;
+        const panel = ((btn as HTMLElement).dataset.panel ?? 'track') as 'track' | 'sets' | 'library' | 'activity';
+        currentPanel = panel;
         document.querySelectorAll('.panel-tab').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         panelTrack.style.display = panel === 'track' ? '' : 'none';
         panelSets.style.display = panel === 'sets' ? '' : 'none';
         panelLibrary.style.display = panel === 'library' ? '' : 'none';
+        panelActivity.style.display = panel === 'activity' ? '' : 'none';
         if (panel === 'sets') renderSetsPanel();
         if (panel === 'library') renderLibraryPanel();
+        if (panel === 'activity') renderActivityPanel();
       });
     });
 
@@ -757,74 +1966,235 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return Number(track.effective_bpm ?? 0) > 0;
     }
 
+    function buildTrackRowSignature(track: Record<string, unknown>): string {
+      return JSON.stringify({
+        id: track.id,
+        artist: track.artist ?? '',
+        title: track.title ?? '',
+        album: albumNameFor(track),
+        path: track.path ?? '',
+        bitrate: track.bitrate ?? '',
+        bpm: track.effective_bpm ?? '',
+        key: track.effective_key ?? '',
+        duration: track.duration ?? '',
+        tags: Array.isArray(track.custom_tags) ? (track.custom_tags as string[]).join('|') : '',
+        art: track.album_art_url ?? '',
+        active: Number(track.id) === activeTrackId,
+        selected: selectedTrackIds.has(Number(track.id)),
+        recent: recentNewTrackIds.has(Number(track.id)),
+        mult: getMult(track.id as number),
+        prefs: [
+          preferences.listShowAlbum,
+          preferences.listShowBitrate,
+          preferences.listShowTags,
+          preferences.listShowBpmSource,
+          preferences.listShowKey,
+          preferences.listShowLength,
+          preferences.listShowRecent,
+        ].join('|'),
+      });
+    }
+
+    function trackRowMarkup(track: Record<string, unknown>): string {
+      return `
+        <label class="row-check">
+          <input type="checkbox" class="track-select" data-track-id="${track.id}" ${selectedTrackIds.has(Number(track.id)) ? 'checked' : ''} />
+        </label>
+        ${track.album_art_url ? `<img class="thumb" src="${esc(track.album_art_url)}" alt="" />` : '<div class="thumb placeholder">♪</div>'}
+        <div>
+          <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</strong>
+          <span>${trackSubtitleParts(track).join(' · ')}</span>
+        </div>
+        ${rowMetricTemplate(track)}
+      `;
+    }
+
+    function bindTrackRowEvents(row: HTMLElement) {
+      if (row.dataset.bound !== 'true') {
+        row.addEventListener('click', () => selectTrack(row.dataset.id!, preferences.autoplayOnSelect));
+        row.dataset.bound = 'true';
+      }
+      const checkbox = row.querySelector('.track-select[data-track-id]') as HTMLInputElement | null;
+      checkbox?.addEventListener('click', (event) => {
+        event.stopPropagation();
+      });
+      checkbox?.addEventListener('change', () => {
+        const trackId = parseInt(checkbox.dataset.trackId!, 10);
+        if (checkbox.checked) selectedTrackIds.add(trackId);
+        else selectedTrackIds.delete(trackId);
+        renderBulkToolbar();
+      });
+      const bpmCell = row.querySelector('.bpm-cell[data-track-id]') as HTMLElement | null;
+      bpmCell?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const tid = parseInt(bpmCell.dataset.trackId!, 10);
+        cycleMult(tid);
+        renderList(tracks);
+        if (activeTrackId === tid) {
+          applyMultToDetail(tid);
+        } else {
+          detailEl.querySelectorAll(`[data-raw-bpm][data-track-id="${tid}"]`).forEach((el) => {
+            (el as HTMLElement).textContent = displayBpm((el as HTMLElement).dataset.rawBpm, tid) + ' BPM';
+          });
+        }
+      });
+      bindLibraryNavLinks(row);
+    }
+
+    function updateTrackRowElement(row: HTMLElement, track: Record<string, unknown>) {
+      const signature = buildTrackRowSignature(track);
+      row.dataset.id = String(track.id);
+      row.classList.toggle('active', Number(track.id) === activeTrackId);
+      if (row.dataset.signature === signature) return;
+      row.dataset.signature = signature;
+      row.innerHTML = trackRowMarkup(track);
+      bindTrackRowEvents(row);
+    }
+
+    function createTrackRowElement(track: Record<string, unknown>): HTMLElement {
+      const row = document.createElement('div');
+      row.className = `row ${Number(track.id) === activeTrackId ? 'active' : ''}`;
+      updateTrackRowElement(row, track);
+      return row;
+    }
+
+    function listRowHeight(): number {
+      return document.body.dataset.listDensity === 'compact' ? 50 : 62;
+    }
+
+    function shouldVirtualizeList(count: number): boolean {
+      return count > 250;
+    }
+
+    function renderTrackRows(rowsSource: Record<string, unknown>[], topOffset = 0, bottomOffset = 0) {
+      const existingRows = new Map(
+        Array.from(listEl.querySelectorAll<HTMLElement>('.row[data-id]')).map((row) => [row.dataset.id ?? '', row]),
+      );
+      const children: HTMLElement[] = [];
+      if (topOffset > 0) {
+        const spacer = document.createElement('div');
+        spacer.className = 'list-spacer';
+        spacer.style.height = `${topOffset}px`;
+        children.push(spacer);
+      }
+      for (const track of rowsSource) {
+        const key = String(track.id);
+        const row = existingRows.get(key) ?? createTrackRowElement(track);
+        updateTrackRowElement(row, track);
+        existingRows.delete(key);
+        children.push(row);
+      }
+      if (bottomOffset > 0) {
+        const spacer = document.createElement('div');
+        spacer.className = 'list-spacer';
+        spacer.style.height = `${bottomOffset}px`;
+        children.push(spacer);
+      }
+      listEl.replaceChildren(...children);
+    }
+
+    function renderVisibleTrackWindow(sorted: Record<string, unknown>[], scrollTop: number) {
+      const rowHeight = listRowHeight();
+      const viewportHeight = Math.max(listEl.clientHeight, rowHeight * 8);
+      const overscan = 10;
+      const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+      const end = Math.min(
+        sorted.length,
+        Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan,
+      );
+      renderTrackRows(
+        sorted.slice(start, end),
+        start * rowHeight,
+        Math.max(0, (sorted.length - end) * rowHeight),
+      );
+    }
+
     function renderList(items: Record<string, unknown>[]) {
       const sorted = visibleTracks(items);
-      hiddenCountBadge.textContent = `Hidden: ${Math.max(0, items.length - sorted.length)}`;
-      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''}`;
-      listEl.innerHTML = sorted.map((track) => `
-        <div class="row ${track.id === activeTrackId ? 'active' : ''}" data-id="${track.id}">
-          <label class="row-check">
-            <input type="checkbox" class="track-select" data-track-id="${track.id}" ${selectedTrackIds.has(Number(track.id)) ? 'checked' : ''} />
-          </label>
-          ${track.album_art_url ? `<img class="thumb" src="${esc(track.album_art_url)}" alt="" />` : '<div class="thumb placeholder">♪</div>'}
-          <div>
-            <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</strong>
-            <span>${albumNameFor(track) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button> · ` : ''}${formatBitrate(track.bitrate)} · ${Array.isArray(track.custom_tags) && track.custom_tags.length ? `${esc((track.custom_tags as string[]).join(', '))} · ` : ''}${esc(track.path)}</span>
+      currentRenderedList = sorted;
+      const previousScrollTop = listEl.scrollTop;
+      hiddenCountBadge.textContent = `Shown: ${sorted.length}`;
+      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''}`;
+      if (!items.length) {
+        listIsVirtualized = false;
+        listEl.innerHTML = `
+          <div class="empty empty-state">
+            <strong>Your collection is empty.</strong>
+            <span>Choose a music folder and run your first scan to bring tracks into the desktop app.</span>
+            <div class="empty-actions">
+              <button type="button" class="btn" id="list-empty-choose-folder-btn">Choose Folder</button>
+              <button type="button" class="btn" id="list-empty-start-scan-btn">Start First Scan</button>
+            </div>
           </div>
-          <div class="bpm-cell" data-track-id="${track.id}" title="Click to cycle BPM multiplier">
-            <strong>${displayBpm(track.effective_bpm, track.id as number)}</strong>
-            <span>BPM${getMult(track.id as number) !== 1 ? `<em class="mult-badge">${getMult(track.id as number) === 2 ? '×2' : '½×'}</em>` : ''}</span>
+        `;
+        document.getElementById('list-empty-choose-folder-btn')?.addEventListener('click', () => {
+          void pickDirectoryAndPrefill();
+        });
+        document.getElementById('list-empty-start-scan-btn')?.addEventListener('click', () => {
+          void triggerScan();
+        });
+        renderBulkToolbar();
+        listEl.scrollTop = previousScrollTop;
+        return;
+      }
+      if (!sorted.length) {
+        listIsVirtualized = false;
+        listEl.innerHTML = `
+          <div class="empty empty-state">
+            <strong>No tracks match this view.</strong>
+            <span>Clear the current scope or filters to get back to the full collection.</span>
+            <div class="empty-actions">
+              <button type="button" class="btn" id="list-empty-clear-scope-btn">Clear Scope</button>
+              <button type="button" class="btn" id="list-empty-clear-filters-btn">Clear Filters</button>
+            </div>
           </div>
-          <div><strong>${esc(track.effective_key ?? '--')}</strong><span>Key</span></div>
-        </div>
-      `).join('');
-      listEl.querySelectorAll('.row').forEach((row) => {
-        row.addEventListener('click', () => selectTrack((row as HTMLElement).dataset.id!, true));
-      });
-      listEl.querySelectorAll('.track-select[data-track-id]').forEach((checkbox) => {
-        checkbox.addEventListener('click', (event) => {
-          event.stopPropagation();
-        });
-        checkbox.addEventListener('change', () => {
-          const trackId = parseInt((checkbox as HTMLInputElement).dataset.trackId!, 10);
-          if ((checkbox as HTMLInputElement).checked) selectedTrackIds.add(trackId);
-          else selectedTrackIds.delete(trackId);
-          renderBulkToolbar();
-        });
-      });
-      bindLibraryNavLinks(listEl);
-      listEl.querySelectorAll('.bpm-cell[data-track-id]').forEach((cell) => {
-        cell.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const tid = parseInt((cell as HTMLElement).dataset.trackId!, 10);
-          cycleMult(tid);
+        `;
+        document.getElementById('list-empty-clear-scope-btn')?.addEventListener('click', () => {
+          activeArtistScope = '';
+          activeAlbumScope = '';
+          renderBrowseScope();
           renderList(tracks);
-          if (activeTrackId === tid) {
-            applyMultToDetail(tid);
-          } else {
-            // Update any suggestion in the current detail that shows this track
-            detailEl.querySelectorAll(`[data-raw-bpm][data-track-id="${tid}"]`).forEach((el) => {
-              (el as HTMLElement).textContent = displayBpm((el as HTMLElement).dataset.rawBpm, tid) + ' BPM';
-            });
-          }
         });
-      });
+        document.getElementById('list-empty-clear-filters-btn')?.addEventListener('click', () => {
+          searchEl.value = '';
+          bpmMinEl.value = '';
+          bpmMaxEl.value = '';
+          keyFilterEl.value = '';
+          if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
+          hideUnknownArtistsEl.checked = false;
+          activeQuickFilter = '';
+          renderQuickFilters();
+          void loadTracks();
+        });
+        renderBulkToolbar();
+        listEl.scrollTop = previousScrollTop;
+        return;
+      }
+      listIsVirtualized = shouldVirtualizeList(sorted.length);
+      if (listIsVirtualized) renderVisibleTrackWindow(sorted, previousScrollTop);
+      else renderTrackRows(sorted);
+      listEl.scrollTop = previousScrollTop;
       renderBulkToolbar();
+      updateNowPlayingBar();
     }
 
     // ── BPM editing ───────────────────────────────────────────────────────────
     async function saveBpm(trackId: number, newBpm: number) {
+      const roundedBpm = Math.round(newBpm);
       const res = await fetch(`/api/tracks/${trackId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bpm: newBpm }),
+        body: JSON.stringify({ bpm: roundedBpm }),
       });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('Could not save BPM.');
       // Update local tracks array
       const idx = tracks.findIndex((t) => t.id === trackId);
       if (idx !== -1) {
-        tracks[idx] = { ...tracks[idx], bpm: newBpm, effective_bpm: newBpm };
+        tracks[idx] = { ...tracks[idx], bpm: roundedBpm, effective_bpm: roundedBpm };
         renderList(tracks);
+      }
+      if (selectedDetailTrackId === trackId || activeTrackId === trackId) {
+        await loadTrackDetail(String(trackId), false);
       }
     }
 
@@ -838,9 +2208,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         input.focus();
         input.select();
         const commit = async () => {
-          const val = parseFloat(input.value);
-          if (!isNaN(val) && val > 0) await saveBpm(trackId, val);
-          // Re-render detail to restore display
+          try {
+            const val = parseFloat(input.value);
+            if (!isNaN(val) && val > 0) await saveBpm(trackId, val);
+          } catch {
+            showToast('Could not save BPM.', 'error');
+          }
           const res = await fetch(`/api/tracks/${trackId}`);
           if (res.ok) renderDetail(await res.json());
         };
@@ -860,7 +2233,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function isDetailSectionCollapsed(trackId: number, section: string): boolean {
-      return Boolean(detailSectionCollapsed[sectionStateKey(trackId, section)]);
+      const key = sectionStateKey(trackId, section);
+      if (!(key in detailSectionCollapsed)) {
+        return section === 'metadata-editor' || section === 'cover-match';
+      }
+      return Boolean(detailSectionCollapsed[key]);
     }
 
     function setDetailSectionCollapsed(trackId: number, section: string, collapsed: boolean) {
@@ -872,20 +2249,31 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const track = payload.track as Record<string, unknown>;
       const otherTracks = relatedArtistTracks(track);
       const albums = artistAlbums(String(track.artist ?? ''));
-      const nextTracks = (payload.next_tracks ?? []) as Record<string, unknown>[];
+      let nextTracks = (payload.next_tracks ?? []) as Record<string, unknown>[];
       const coverUrl = (track.album_art_url as string) || '';
       const coverLabel = (track.album ?? track.title ?? 'Unknown') as string;
       const trackId = track.id as number;
       const mult = getMult(trackId);
       const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
-      const cues = Array.isArray(track.manual_cues) ? track.manual_cues as Array<{ time: number; label?: string }> : [];
       const nextPageSize = 10;
-      const nextPageCount = Math.max(1, Math.ceil(nextTracks.length / nextPageSize));
+      const filteredNextTracks = () => {
+        return includeUnknownArtistsInNextTracks
+          ? nextTracks
+          : nextTracks.filter((item) => !isUnknownArtistName(item.artist));
+      };
+      const nextTracksEmptyMessage = includeUnknownArtistsInNextTracks
+        ? 'No compatible tracks found.'
+        : 'No compatible known-artist tracks found. Enable Include Unknown Artist to show them.';
+      const initialNextTracks = filteredNextTracks();
+      const nextPageCount = Math.max(1, Math.ceil(initialNextTracks.length / nextPageSize));
       const currentNextPage = Math.min(nextTracksPageByTrackId[trackId] ?? 0, nextPageCount - 1);
       nextTracksPageByTrackId[trackId] = currentNextPage;
-      const pagedNextTracks = nextTracks.slice(currentNextPage * nextPageSize, (currentNextPage + 1) * nextPageSize);
+      const pagedNextTracks = initialNextTracks.slice(currentNextPage * nextPageSize, (currentNextPage + 1) * nextPageSize);
+      const currentDetailMode = detailMode(trackId);
       const nextCollapsed = isDetailSectionCollapsed(trackId, 'next-tracks');
       const artistCollapsed = isDetailSectionCollapsed(trackId, 'artist-tracks');
+      const metadataCollapsed = isDetailSectionCollapsed(trackId, 'metadata-editor');
+      const coverCollapsed = isDetailSectionCollapsed(trackId, 'cover-match');
       const coverReviewStatus = String(track.album_art_review_status ?? (track.album_art_url ? 'approved' : 'missing'));
       const coverReviewNotes = String(track.album_art_review_notes ?? '');
       const coverSource = String(track.album_art_source ?? (track.album_art_url ? 'unknown' : 'none'));
@@ -911,13 +2299,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             ${coverUrl ? `<img src="${esc(coverUrl)}" alt="Album cover" />` : `<div class="cover-placeholder"><div class="icon">♪</div><div>No cover</div><small>${esc(coverLabel)}</small></div>`}
           </div>
           <div class="hero-copy">
-            <h2><button type="button" class="nav-link hero-link" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</h2>
+            <h2 id="detail-track-heading"><button type="button" class="nav-link hero-link" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</h2>
             <div class="meta">
               <span>ID ${track.id}</span>
               <span>${bpmDisplay} BPM ${multButtons}</span>
               <span>${esc(track.effective_key ?? '--')}</span>
-              <span>${formatDuration(track.duration)}</span>
+              <span><strong>Length</strong> ${formatDuration(track.duration)}</span>
               <span>${formatBitrate(track.bitrate)}</span>
+            </div>
+            <div class="meta meta-path">
+              <span id="detail-track-path" title="${esc(track.path ?? '')}">${esc(track.path ?? '')}</span>
             </div>
             <div class="chips">
               ${albumNameFor(track) ? `<button type="button" class="chip nav-chip" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>` : ''}
@@ -929,8 +2320,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           </div>
         </div>
         <div class="detail-inner">
+          <div class="detail-mode-tabs">
+            <button type="button" class="detail-mode-tab ${currentDetailMode === 'overview' ? 'active' : ''}" data-detail-mode="overview">Overview</button>
+            <button type="button" class="detail-mode-tab ${currentDetailMode === 'match' ? 'active' : ''}" data-detail-mode="match">Match / Metadata</button>
+            <button type="button" class="detail-mode-tab ${currentDetailMode === 'related' ? 'active' : ''}" data-detail-mode="related">Related</button>
+          </div>
           <div class="buttons">
             <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
+            <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
             ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
             ${track.youtube_url ? `<a class="btn" href="${esc(track.youtube_url)}" target="_blank" rel="noreferrer">YouTube</a>` : ''}
             ${sets.length > 0 ? `
@@ -939,27 +2336,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   ${setOptions}
                 </select>
                 <button class="btn" id="add-to-set-btn" type="button">+ Add to playlist</button>
+                <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
               </div>
-            ` : `<button class="btn" id="open-sets-btn" type="button">+ Add to playlist</button>`}
-          </div>
-          <div class="local-player">
-            <audio id="local-audio" class="local-audio-hidden" preload="metadata" src="${esc(`/api/tracks/${track.id}/stream`)}"></audio>
-            <div class="audio-status" id="audio-status">Ready</div>
-          </div>
-          <div class="waveform-panel">
-            <div class="scan-log-head">
-              <strong>Waveform And Cues</strong>
-              <div class="scan-panel-actions">
-                <button class="icon-btn" id="add-cue-btn" type="button">Add Cue</button>
-                <button class="icon-btn" id="clear-cues-btn" type="button">Clear Cues</button>
+            ` : `
+              <div style="display:inline-flex;gap:6px;align-items:center;">
+                <button class="btn" id="open-sets-btn" type="button">+ Add to playlist</button>
+                <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
               </div>
-            </div>
+            `}
+          </div>
+          <audio id="local-audio" class="local-audio-hidden" preload="metadata" src="${esc(`/api/tracks/${track.id}/stream`)}"></audio>
+          <div class="waveform-panel detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview">
             <canvas class="waveform-canvas" id="waveform-${track.id}"></canvas>
-            <div class="cue-list" id="cue-list-${track.id}">
-              ${cues.length ? cues.map((cue, index) => `<button type="button" class="chip nav-chip cue-chip" data-cue-index="${index}" data-cue-time="${cue.time}">${esc(cue.label ?? `Cue ${index + 1}`)} · ${formatDuration(cue.time)}</button>`).join('') : '<span class="chip subtle">No cue points yet</span>'}
-            </div>
           </div>
-          <div class="chips" style="margin-bottom:14px;">
+          <div class="chips detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview" style="margin-bottom:14px;">
             ${track.analysis_stage ? `<span class="chip subtle">Stage ${esc(track.analysis_stage)}</span>` : ''}
             ${track.spotify_id ? `<span class="chip success">Spotify matched</span>` : `<span class="chip subtle">No Spotify match</span>`}
             <span class="chip ${coverStatusClass}">Cover ${esc(coverReviewStatus)}</span>
@@ -967,24 +2357,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <span class="chip subtle">Score ${esc(coverConfidence.toFixed(1))}</span>
             ${track.analysis_error ? `<span class="chip warn">${esc(track.analysis_error)}</span>` : ''}
           </div>
-          <div class="metadata-editor cover-review-panel">
-            <h3>Cover Match</h3>
-            <div class="scan-summary">
-              <div class="scan-summary-item"><span>Source</span><strong>${esc(coverSource || 'none')}</strong></div>
-              <div class="scan-summary-item"><span>Confidence</span><strong>${esc(coverConfidence.toFixed(1))}</strong></div>
-              <div class="scan-summary-item"><span>Status</span><strong>${esc(coverReviewStatus)}</strong></div>
-              <div class="scan-summary-item"><span>Embedded</span><strong>${track.embedded_album_art ? 'yes' : 'no'}</strong></div>
-            </div>
-            <div class="chips">
-              ${track.album_art_url ? '<button class="btn" id="approve-cover-btn" type="button">Approve Cover</button>' : ''}
-              <button class="btn" id="mark-cover-review-btn" type="button">Needs Review</button>
-            </div>
-            ${coverReviewNotes ? `<div class="scan-preflight">${esc(coverReviewNotes)}</div>` : ''}
-          </div>
-          <section class="detail-section ${nextCollapsed ? 'collapsed' : ''}" id="next-tracks-section" data-section="next-tracks">
+          <section class="detail-section detail-mode-section ${currentDetailMode === 'match' ? 'hidden' : ''} ${nextCollapsed ? 'collapsed' : ''}" id="next-tracks-section" data-section="next-tracks" data-mode-section="overview">
             <div class="detail-section-head" id="next-tracks-head">
               <h3>Can play next</h3>
               <div class="detail-section-actions">
+                <label class="preference-field detail-inline-select">
+                  <span>Intent</span>
+                  <select id="next-intent-select">
+                    <option value="safe" ${nextTracksIntent === 'safe' ? 'selected' : ''}>Safe</option>
+                    <option value="up" ${nextTracksIntent === 'up' ? 'selected' : ''}>Energy Up</option>
+                    <option value="down" ${nextTracksIntent === 'down' ? 'selected' : ''}>Energy Down</option>
+                    <option value="same" ${nextTracksIntent === 'same' ? 'selected' : ''}>Same Vibe</option>
+                  </select>
+                </label>
+                <label class="scan-option compact detail-inline-toggle">
+                  <input id="next-include-unknown-artists" type="checkbox" ${includeUnknownArtistsInNextTracks ? 'checked' : ''} />
+                  Include Unknown Artist
+                </label>
                 <span class="detail-page-indicator" id="next-page-indicator">Page ${currentNextPage + 1} / ${nextPageCount}</span>
                 <button type="button" class="icon-btn detail-page-btn" id="next-first-btn" ${currentNextPage === 0 ? 'disabled' : ''}>First</button>
                 <button type="button" class="icon-btn detail-page-btn" id="next-prev-btn" ${currentNextPage === 0 ? 'disabled' : ''}>Previous</button>
@@ -999,11 +2388,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                     <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
                     <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)} · ${esc(item.reason ?? '')}</small>
                   </div>
-                `).join('') || '<div class="empty">No compatible tracks found.</div>'}
+                `).join('') || `<div class="empty">${esc(nextTracksEmptyMessage)}</div>`}
               </div>
             </div>
           </section>
-          <div class="artist-nav-panel">
+          <div class="artist-nav-panel detail-mode-section ${currentDetailMode === 'match' ? 'hidden' : ''}" data-mode-section="overview">
             <div class="artist-nav-block">
               <h3>Artist Catalog</h3>
               <div class="chips">
@@ -1030,29 +2419,70 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             </section>
           </div>
-          ${track.analysis_debug ? `
-            <details class="debug"><summary>Debug info</summary>
-            <pre class="debug-text">${esc(track.analysis_debug)}</pre></details>
-          ` : ''}
-          <div class="metadata-editor">
-            <h3>Edit Metadata</h3>
-            <div class="metadata-grid">
-              <label><span>Artist</span><input id="meta-artist" value="${esc(track.artist ?? '')}" /></label>
-              <label><span>Title</span><input id="meta-title" value="${esc(track.title ?? '')}" /></label>
-              <label><span>Album</span><input id="meta-album" value="${esc(track.album ?? '')}" /></label>
-              <label><span>Key</span><input id="meta-key" value="${esc(track.key ?? track.effective_key ?? '')}" /></label>
-              <label class="metadata-wide"><span>Tags</span><input id="meta-tags" value="${esc(trackTags.join(', '))}" placeholder="warmup, vocal, peak-time" /></label>
-              <label class="metadata-toggle"><input id="meta-ignored" type="checkbox" ${track.ignored ? 'checked' : ''} /><span>Ignored</span></label>
+          <section class="detail-section detail-mode-section ${currentDetailMode === 'match' ? '' : 'hidden'} ${metadataCollapsed ? 'collapsed' : ''}" id="metadata-editor-section" data-section="metadata-editor" data-mode-section="match">
+            <div class="detail-section-head" id="metadata-editor-head">
+              <h3>Edit Metadata</h3>
+              <div class="detail-section-actions">
+                <button type="button" class="icon-btn detail-toggle-btn" id="metadata-editor-toggle-btn">${metadataCollapsed ? 'Expand' : 'Collapse'}</button>
+              </div>
             </div>
-            <div class="buttons">
-              <button class="btn" id="save-metadata-btn" type="button">Save Metadata</button>
+            <div class="detail-section-body metadata-editor" id="metadata-editor-body" ${metadataCollapsed ? 'hidden' : ''}>
+              <div class="metadata-grid">
+                <label><span>Artist</span><input id="meta-artist" list="artist-suggestions" value="${esc(track.artist ?? '')}" /></label>
+                <label><span>Title</span><input id="meta-title" value="${esc(track.title ?? '')}" /></label>
+                <label><span>Album</span><input id="meta-album" list="album-suggestions" value="${esc(track.album ?? '')}" /></label>
+                <label><span>Key</span><input id="meta-key" value="${esc(track.key ?? track.effective_key ?? '')}" /></label>
+                <label class="metadata-wide"><span>Tags</span><input id="meta-tags" value="${esc(trackTags.join(', '))}" placeholder="warmup, vocal, peak-time" /></label>
+                <label class="metadata-toggle"><input id="meta-ignored" type="checkbox" ${track.ignored ? 'checked' : ''} /><span>Ignored</span></label>
+              </div>
+              <div class="buttons">
+                <button class="btn" id="save-metadata-btn" type="button">Save Metadata</button>
+              </div>
             </div>
-          </div>
+          </section>
+          <section class="detail-section detail-mode-section ${currentDetailMode === 'match' ? '' : 'hidden'} ${coverCollapsed ? 'collapsed' : ''}" id="cover-match-section" data-section="cover-match" data-mode-section="match">
+            <div class="detail-section-head" id="cover-match-head">
+              <h3>Cover Match</h3>
+              <div class="detail-section-actions">
+                <button type="button" class="icon-btn detail-toggle-btn" id="cover-match-toggle-btn">${coverCollapsed ? 'Expand' : 'Collapse'}</button>
+              </div>
+            </div>
+            <div class="detail-section-body metadata-editor cover-review-panel" id="cover-match-body" ${coverCollapsed ? 'hidden' : ''}>
+              <div class="scan-summary">
+                <div class="scan-summary-item"><span>Source</span><strong>${esc(coverSource || 'none')}</strong></div>
+                <div class="scan-summary-item"><span>Confidence</span><strong>${esc(coverConfidence.toFixed(1))}</strong></div>
+                <div class="scan-summary-item"><span>Status</span><strong>${esc(coverReviewStatus)}</strong></div>
+                <div class="scan-summary-item"><span>Embedded</span><strong>${track.embedded_album_art ? 'yes' : 'no'}</strong></div>
+              </div>
+              <div class="chips">
+                ${track.album_art_url ? '<button class="btn" id="approve-cover-btn" type="button">Approve Cover</button>' : ''}
+                <button class="btn" id="mark-cover-review-btn" type="button">Needs Review</button>
+              </div>
+              ${coverReviewNotes ? `<div class="scan-preflight">${esc(coverReviewNotes)}</div>` : ''}
+            </div>
+          </section>
         </div>
       `;
 
       attachBpmEdit(trackId);
       bindLibraryNavLinks(detailEl);
+
+      const applyDetailMode = () => {
+        const mode = detailMode(trackId);
+        detailEl.querySelectorAll<HTMLElement>('[data-mode-section]').forEach((section) => {
+          section.classList.toggle('hidden', section.dataset.modeSection !== mode);
+        });
+        detailEl.querySelectorAll<HTMLElement>('.detail-mode-tab[data-detail-mode]').forEach((button) => {
+          button.classList.toggle('active', button.dataset.detailMode === mode);
+        });
+      };
+      detailEl.querySelectorAll<HTMLElement>('.detail-mode-tab[data-detail-mode]').forEach((button) => {
+        button.addEventListener('click', () => {
+          setDetailMode(trackId, (button.dataset.detailMode as 'overview' | 'match' | 'related') ?? 'overview');
+          applyDetailMode();
+        });
+      });
+      applyDetailMode();
 
       document.getElementById(`bpm-mult-${trackId}`)?.querySelectorAll('button[data-mult]').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -1086,7 +2516,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           document.querySelector('[data-panel="sets"]')?.dispatchEvent(new MouseEvent('click'));
         });
       }
-
+      document.getElementById('delete-track-btn')?.addEventListener('click', () => {
+        openDeleteTracksModal([Number(track.id)], 'single');
+      });
       // Suggestion clicks
       detailEl.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
         card.addEventListener('click', () => selectTrack((card as HTMLElement).dataset.trackId!, true));
@@ -1106,17 +2538,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const nextPrevBtn = document.getElementById('next-prev-btn') as HTMLButtonElement | null;
         const nextNextBtn = document.getElementById('next-next-btn') as HTMLButtonElement | null;
         if (!nextSection || !nextBody || !nextToggleBtn || !nextIndicator || !nextFirstBtn || !nextPrevBtn || !nextNextBtn) return;
-        const page = Math.min(nextPageCount - 1, Math.max(0, nextTracksPageByTrackId[trackId] ?? 0));
+        const sourceTracks = filteredNextTracks();
+        const safePageCount = Math.max(1, Math.ceil(sourceTracks.length / nextPageSize));
+        const page = Math.min(safePageCount - 1, Math.max(0, nextTracksPageByTrackId[trackId] ?? 0));
         nextTracksPageByTrackId[trackId] = page;
         const collapsed = isDetailSectionCollapsed(trackId, 'next-tracks');
-        const items = nextTracks.slice(page * nextPageSize, (page + 1) * nextPageSize);
+        const safePage = Math.min(safePageCount - 1, Math.max(0, page));
+        nextTracksPageByTrackId[trackId] = safePage;
+        const items = sourceTracks.slice(safePage * nextPageSize, (safePage + 1) * nextPageSize);
         nextSection.classList.toggle('collapsed', collapsed);
         nextBody.hidden = collapsed;
         nextToggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
-        nextIndicator.textContent = `Page ${page + 1} / ${nextPageCount}`;
-        nextFirstBtn.disabled = page === 0;
-        nextPrevBtn.disabled = page === 0;
-        nextNextBtn.disabled = page >= nextPageCount - 1;
+        nextIndicator.textContent = `Page ${safePage + 1} / ${safePageCount}`;
+        nextFirstBtn.disabled = safePage === 0;
+        nextPrevBtn.disabled = safePage === 0;
+        nextNextBtn.disabled = safePage >= safePageCount - 1;
         nextBody.innerHTML = `
           <div class="suggestions">
             ${items.map((item) => `
@@ -1124,11 +2560,33 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
                 <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)} · ${esc(item.reason ?? '')}</small>
               </div>
-            `).join('') || '<div class="empty">No compatible tracks found.</div>'}
+            `).join('') || `<div class="empty">${esc(nextTracksEmptyMessage)}</div>`}
           </div>
         `;
         bindSectionSuggestions(nextBody);
       };
+      document.getElementById('next-include-unknown-artists')?.addEventListener('change', (event) => {
+        includeUnknownArtistsInNextTracks = (event.currentTarget as HTMLInputElement).checked;
+        nextTracksPageByTrackId[trackId] = 0;
+        renderNextTracksPage();
+      });
+      document.getElementById('next-intent-select')?.addEventListener('change', async (event) => {
+        nextTracksIntent = (((event.currentTarget as HTMLSelectElement).value) === 'up'
+          || ((event.currentTarget as HTMLSelectElement).value) === 'down'
+          || ((event.currentTarget as HTMLSelectElement).value) === 'same'
+          ? (event.currentTarget as HTMLSelectElement).value
+          : 'safe') as 'safe' | 'up' | 'down' | 'same';
+        nextTracksPageByTrackId[trackId] = 0;
+        try {
+          const response = await fetch(`/api/tracks/${trackId}?intent=${encodeURIComponent(nextTracksIntent)}`);
+          if (!response.ok) throw new Error(`Could not refresh recommendations (${response.status})`);
+          const refreshed = await response.json();
+          nextTracks = Array.isArray(refreshed.next_tracks) ? refreshed.next_tracks as Record<string, unknown>[] : [];
+          renderNextTracksPage();
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'Could not refresh recommendations.', 'error');
+        }
+      });
       const applyArtistTracksState = () => {
         const section = document.getElementById('artist-tracks-section');
         const body = document.getElementById('artist-tracks-body');
@@ -1143,6 +2601,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         setDetailSectionCollapsed(trackId, section, !isDetailSectionCollapsed(trackId, section));
         if (section === 'next-tracks') renderNextTracksPage();
         else applyArtistTracksState();
+      };
+      const applySimpleSectionState = (section: 'metadata-editor' | 'cover-match') => {
+        const sectionEl = document.getElementById(`${section}-section`);
+        const body = document.getElementById(`${section}-body`);
+        const toggleBtn = document.getElementById(`${section}-toggle-btn`) as HTMLButtonElement | null;
+        if (!sectionEl || !body || !toggleBtn) return;
+        const collapsed = isDetailSectionCollapsed(trackId, section);
+        sectionEl.classList.toggle('collapsed', collapsed);
+        body.hidden = collapsed;
+        toggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
+      };
+      const toggleSimpleSection = (section: 'metadata-editor' | 'cover-match') => {
+        setDetailSectionCollapsed(trackId, section, !isDetailSectionCollapsed(trackId, section));
+        applySimpleSectionState(section);
       };
       document.getElementById('next-first-btn')?.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -1176,34 +2648,47 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       renderNextTracksPage();
       applyArtistTracksState();
+      document.getElementById('metadata-editor-toggle-btn')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleSimpleSection('metadata-editor');
+      });
+      document.getElementById('cover-match-toggle-btn')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleSimpleSection('cover-match');
+      });
+      document.getElementById('metadata-editor-head')?.addEventListener('click', () => {
+        toggleSimpleSection('metadata-editor');
+      });
+      document.getElementById('cover-match-head')?.addEventListener('click', () => {
+        toggleSimpleSection('cover-match');
+      });
+      applySimpleSectionState('metadata-editor');
+      applySimpleSectionState('cover-match');
 
       // Audio player
       const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
+      const reanalyzeBpmBtn = document.getElementById('reanalyze-bpm-btn') as HTMLButtonElement | null;
       const coverBtn = document.getElementById('cover-btn') as HTMLButtonElement | null;
       const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
-      const audioStatusEl = document.getElementById('audio-status') as HTMLElement | null;
-      const addCueBtn = document.getElementById('add-cue-btn') as HTMLButtonElement | null;
-      const clearCuesBtn = document.getElementById('clear-cues-btn') as HTMLButtonElement | null;
       const resumeKey = `dj-assist-resume-${track.id}`;
+      let lastResumeStateWriteAt = 0;
 
       const loadResumeState = () => {
         try { return JSON.parse(sessionStorage.getItem(resumeKey) || 'null') || {}; } catch { return {}; }
       };
-      const saveResumeState = () => {
+      const saveResumeState = (force = false) => {
         if (!localAudio) return;
+        const now = performance.now();
+        if (!force && now - lastResumeStateWriteAt < 750) return;
+        lastResumeStateWriteAt = now;
         try { sessionStorage.setItem(resumeKey, JSON.stringify({ time: localAudio.currentTime, paused: localAudio.paused })); } catch { /* ignore */ }
       };
 
-      const setAudioStatus = (message: string, state: 'ready' | 'playing' | 'paused' | 'error' = 'ready') => {
-        if (!audioStatusEl) return;
-        audioStatusEl.textContent = message;
-        audioStatusEl.dataset.state = state;
-      };
-
       if (playBtn && localAudio) {
+        nowPlayingTrackId = trackId;
+        updateNowPlayingBar(localAudio);
         const resumeState = loadResumeState();
         let resumeApplied = false;
-        setAudioStatus('Loading track…');
         localAudio.load();
         localAudio.addEventListener('loadedmetadata', () => {
           if (!resumeApplied && resumeState.time > 0) {
@@ -1211,13 +2696,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             resumeApplied = true;
             if (!resumeState.paused) localAudio.play().catch(() => {});
           }
-          setAudioStatus('Ready', 'ready');
+          updateNowPlayingBar(localAudio);
         });
         localAudio.addEventListener('timeupdate', () => {
           saveResumeState();
+          updateNowPlayingBar(localAudio);
         });
         localAudio.addEventListener('canplay', () => {
-          if (localAudio.paused) setAudioStatus('Ready', 'ready');
+          updateNowPlayingBar(localAudio);
         });
         localAudio.addEventListener('error', () => {
           const mediaError = localAudio.error;
@@ -1228,7 +2714,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             code === MediaError.MEDIA_ERR_DECODE ? 'Audio decode error' :
             code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ? 'Audio format not supported' :
             'Audio failed to load';
-          setAudioStatus(label, 'error');
+          showToast(label, 'error');
+          updateNowPlayingBar(localAudio);
+          fetch(`/api/tracks/${trackId}/stream`, { headers: { Range: 'bytes=0-0' } })
+            .then(async (response) => {
+              if (response.status !== 404) return;
+              const payload = await response.json().catch(() => ({}));
+              if (String((payload as Record<string, unknown>).error ?? '') !== 'file missing') return;
+              await pruneMissingTracks([trackId]);
+            })
+            .catch(() => {});
         });
         playBtn.addEventListener('click', async () => {
           try {
@@ -1238,39 +2733,59 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               localAudio.pause();
             }
           } catch (error) {
-            setAudioStatus(error instanceof Error ? error.message : 'Playback failed', 'error');
+            showToast(error instanceof Error ? error.message : 'Playback failed', 'error');
           }
         });
         const setPlaying = (playing: boolean) => {
           playBtn.classList.toggle('playing', playing);
           playBtn.innerHTML = playing ? '<span class="btn-icon">❚❚</span> Pause' : '<span class="btn-icon">▶</span> Play';
         };
-        localAudio.addEventListener('play', () => { setPlaying(true); setAudioStatus('Playing', 'playing'); saveResumeState(); });
-        localAudio.addEventListener('pause', () => { setPlaying(false); setAudioStatus('Paused', 'paused'); saveResumeState(); });
+        localAudio.addEventListener('play', () => { setPlaying(true); saveResumeState(true); updateNowPlayingBar(localAudio); });
+        localAudio.addEventListener('pause', () => { setPlaying(false); saveResumeState(true); updateNowPlayingBar(localAudio); });
         localAudio.addEventListener('ended', () => {
           setPlaying(false);
-          setAudioStatus('Ended', 'paused');
           try { sessionStorage.removeItem(resumeKey); } catch { /* ignore */ }
+          updateNowPlayingBar(localAudio);
+          selectRelativeTrack(1);
         });
         // Sync global button to current state (e.g. resumed track)
         setPlaying(!localAudio.paused);
+        updateNowPlayingBar(localAudio);
       }
-
-      void drawWaveform(trackId, `/api/tracks/${track.id}/stream`, cues, localAudio);
-      detailEl.querySelectorAll(`.cue-chip[data-cue-time]`).forEach((chip) => {
-        chip.addEventListener('click', () => {
-          if (!localAudio) return;
-          localAudio.currentTime = Number((chip as HTMLElement).dataset.cueTime ?? 0);
-          localAudio.play().catch(() => {});
-        });
-      });
-      addCueBtn?.addEventListener('click', async () => {
-        if (!localAudio) return;
-        const nextCues = [...cues, { time: Number(localAudio.currentTime.toFixed(2)), label: `Cue ${cues.length + 1}` }];
-        await saveTrackMetadata(trackId, { manual_cues: nextCues });
-      });
-      clearCuesBtn?.addEventListener('click', async () => {
-        await saveTrackMetadata(trackId, { manual_cues: [] });
+      if (localAudio) {
+        void drawWaveform(trackId, `/api/tracks/${track.id}/stream`, [], localAudio);
+      }
+      reanalyzeBpmBtn?.addEventListener('click', async () => {
+        const previousLabel = reanalyzeBpmBtn.textContent ?? 'Reanalyze BPM';
+        reanalyzeBpmBtn.disabled = true;
+        reanalyzeBpmBtn.textContent = 'Analyzing…';
+        try {
+          const response = await fetch(`/api/tracks/${trackId}/reanalyze-bpm`, { method: 'POST' });
+          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+          if (!response.ok) {
+            showToast(String(payload.error ?? 'BPM reanalysis failed.'), 'error');
+            return;
+          }
+          const refreshed = payload.track && typeof payload.track === 'object'
+            ? payload.track as Record<string, unknown>
+            : null;
+          if (refreshed) {
+            const index = tracks.findIndex((item) => Number(item.id) === trackId);
+            if (index !== -1) tracks[index] = { ...tracks[index], ...refreshed };
+            renderList(tracks);
+          }
+          await loadTrackDetail(String(trackId), false);
+          const bpmValue = Number(refreshed?.effective_bpm ?? refreshed?.bpm ?? 0);
+          showToast(
+            bpmValue > 0 ? `BPM updated to ${Math.round(bpmValue)}.` : 'No BPM could be detected for this file.',
+            bpmValue > 0 ? 'success' : 'warning',
+          );
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'BPM reanalysis failed.', 'error');
+        } finally {
+          reanalyzeBpmBtn.disabled = false;
+          reanalyzeBpmBtn.textContent = previousLabel;
+        }
       });
       document.getElementById('approve-cover-btn')?.addEventListener('click', async () => {
         await saveTrackMetadata(trackId, {
@@ -1386,7 +2901,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           });
           const lastTrack = set.tracks[set.tracks.length - 1];
           if (lastTrack?.id) {
-            const nextRes = await fetch(`/api/tracks/${lastTrack.id}`);
+            const nextRes = await fetch(`/api/tracks/${lastTrack.id}?intent=${encodeURIComponent(nextTracksIntent)}`);
             const nextPayload = await nextRes.json();
             const suggestions = (nextPayload.next_tracks ?? []) as Record<string, unknown>[];
             const container = document.getElementById(`set-suggestions-${setId}`);
@@ -1453,19 +2968,29 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const res = await fetch('/api/health');
       if (!res.ok) return;
       runtimeHealth = (await res.json()).runtime ?? null;
+      const issues: string[] = [];
+      if (!runtimeHealth?.python_ok) issues.push(`Python runtime unavailable${runtimeHealth?.python_error ? `: ${String(runtimeHealth.python_error)}` : ''}`);
+      if (!runtimeHealth?.database_url_set) issues.push('Local database unavailable');
+      if (issues.length) {
+        warningBanner.style.display = 'block';
+        warningBanner.innerHTML = `<strong>Startup diagnostics:</strong> ${esc(issues.join(' | '))}`;
+      } else if (warningBanner.textContent?.includes('Startup diagnostics:')) {
+        warningBanner.style.display = 'none';
+      }
       renderLibraryPanel();
+      renderActivityPanel();
     }
 
     async function loadWatchFolders() {
       const res = await fetch('/api/watch');
       if (!res.ok) return;
       watchFolders = (await res.json()).watches ?? [];
-      renderLibraryPanel();
+      renderActivityPanel();
     }
 
     function applySmartCrate(query: string) {
       if (query === 'bpm:missing') {
-        showOnlyNoBpmEl.checked = true;
+        if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = true;
         loadTracks(searchEl.value.trim());
         return;
       }
@@ -1494,7 +3019,27 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       if (query === 'key:missing') {
         renderList(tracks.filter((track) => !track.effective_key));
+        return;
       }
+    }
+
+    function startReviewMode(kind: 'art' | 'key' | 'decode' | 'attention') {
+      const candidate = tracks.find((track) => {
+        if (kind === 'art') return !track.album_art_url;
+        if (kind === 'key') return !track.effective_key;
+        if (kind === 'decode') return String(track.decode_failed ?? '') === 'true';
+        return trackNeedsAttention(track);
+      });
+      if (!candidate) {
+        showToast('Nothing to review in that category.', 'info');
+        return;
+      }
+      if (kind === 'art') setActiveQuickFilter('missing-art');
+      else if (kind === 'key') setActiveQuickFilter('missing-key');
+      else if (kind === 'decode') setActiveQuickFilter('decode-failed');
+      else setActiveQuickFilter('needs-attention');
+      openPanel('track');
+      void selectTrack(String(candidate.id), false);
     }
 
     function renderLibraryPanel() {
@@ -1520,12 +3065,63 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
           <section class="library-card">
-            <div class="scan-log-head"><strong>App Health</strong></div>
-            <div class="runtime-list">
-              <div><strong>Node</strong><span>${esc(runtimeHealth?.node ?? 'unknown')}</span></div>
-              <div><strong>Python</strong><span>${esc(runtimeHealth?.python ?? runtimeHealth?.python_error ?? 'unknown')}</span></div>
-              <div><strong>Database</strong><span>${runtimeHealth?.database_url_set ? 'ready' : 'needs DATABASE_URL'}</span></div>
-              <div><strong>Spotify</strong><span>${Array.isArray(runtimeHealth?.spotify_missing) && runtimeHealth?.spotify_missing.length ? esc((runtimeHealth?.spotify_missing as string[]).join(', ')) : 'ready'}</span></div>
+            <div class="scan-log-head"><strong>Library Reset</strong></div>
+            <div class="scan-preflight">Clear tracks, playlists, scan history, and watched folders from this app database.</div>
+            <div class="buttons">
+              <button type="button" class="btn danger" id="reset-library-data-btn">Reset Library Data</button>
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Review Mode</strong></div>
+            <div class="chips">
+              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="attention">Needs attention</button>
+              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="art">Missing art</button>
+              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="key">Missing key</button>
+              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="decode">Unreadable</button>
+            </div>
+            <div class="scan-preflight">Jump directly to the next track that needs manual cleanup.</div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Preferences</strong></div>
+            <div class="preferences-list">
+              <label class="preference-row"><input id="pref-default-full-rescan" type="checkbox" ${preferences.defaultFullRescan ? 'checked' : ''} /><span>Default to full rescan</span></label>
+              <label class="preference-row"><input id="pref-autoplay-on-select" type="checkbox" ${preferences.autoplayOnSelect ? 'checked' : ''} /><span>Autoplay when selecting tracks</span></label>
+              <label class="preference-row"><input id="pref-collapse-scan-log" type="checkbox" ${preferences.collapseScanLog ? 'checked' : ''} /><span>Keep scan log collapsed by default</span></label>
+              <label class="preference-field">
+                <span>Default list density</span>
+                <select id="pref-default-list-density">
+                  <option value="comfortable" ${preferences.defaultListDensity === 'comfortable' ? 'selected' : ''}>Comfortable</option>
+                  <option value="compact" ${preferences.defaultListDensity === 'compact' ? 'selected' : ''}>Compact</option>
+                </select>
+              </label>
+              <div class="preference-columns">
+                <strong>Track list columns</strong>
+                <label class="preference-row"><input id="pref-col-album" type="checkbox" ${preferences.listShowAlbum ? 'checked' : ''} /><span>Album</span></label>
+                <label class="preference-row"><input id="pref-col-bitrate" type="checkbox" ${preferences.listShowBitrate ? 'checked' : ''} /><span>Bitrate</span></label>
+                <label class="preference-row"><input id="pref-col-tags" type="checkbox" ${preferences.listShowTags ? 'checked' : ''} /><span>Tags</span></label>
+                <label class="preference-row"><input id="pref-col-bpm-source" type="checkbox" ${preferences.listShowBpmSource ? 'checked' : ''} /><span>BPM source</span></label>
+                <label class="preference-row"><input id="pref-col-key" type="checkbox" ${preferences.listShowKey ? 'checked' : ''} /><span>Key</span></label>
+                <label class="preference-row"><input id="pref-col-length" type="checkbox" ${preferences.listShowLength ? 'checked' : ''} /><span>Length</span></label>
+                <label class="preference-row"><input id="pref-col-recent" type="checkbox" ${preferences.listShowRecent ? 'checked' : ''} /><span>Recent marker</span></label>
+              </div>
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Spotify Credentials</strong></div>
+            <div class="preferences-list">
+              <label class="preference-field">
+                <span>Client ID</span>
+                <input id="spotify-client-id" placeholder="${esc(String(spotifyRuntimeSummary()?.client_id_masked ?? 'Paste Spotify Client ID'))}" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="preference-field">
+                <span>Client Secret</span>
+                <input id="spotify-client-secret" type="password" placeholder="${spotifyRuntimeSummary()?.has_secret ? 'Saved secret on file' : 'Paste Spotify Client Secret'}" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="scan-preflight" id="spotify-credentials-status" data-state="idle">${esc(spotifyRuntimeLabel())}</div>
+              <div class="buttons">
+                <button type="button" class="btn" id="spotify-save-test-btn">Save &amp; Test</button>
+                <button type="button" class="btn" id="spotify-test-saved-btn">Test Saved</button>
+              </div>
             </div>
           </section>
           <section class="library-card">
@@ -1535,22 +3131,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
             <div class="chips">
               ${tags.slice(0, 12).map((tag) => `<button type="button" class="chip nav-chip tag-filter-btn" data-tag="${esc(tag.tag)}">${esc(tag.tag)} · ${esc(tag.count)}</button>`).join('') || '<span class="chip subtle">No tags yet</span>'}
-            </div>
-          </section>
-          <section class="library-card">
-            <div class="scan-log-head"><strong>Watch Folders</strong></div>
-            <div class="watch-form">
-              <input id="watch-directory-input" placeholder="Folder to watch…" value="${esc(scanDirectoryEl.value)}" />
-              <button type="button" class="btn" id="add-watch-btn">Add Watch</button>
-            </div>
-            <div class="scan-history">
-              ${watchFolders.map((watch) => `
-                <div class="scan-history-item">
-                  <strong>${esc(watch.directory ?? '')}</strong>
-                  <span>${esc(watch.status ?? 'watching')} ${watch.lastChangedPath ? `· ${esc(watch.lastChangedPath)}` : ''}</span>
-                  <button type="button" class="icon-btn danger remove-watch-btn" data-directory="${esc(watch.directory ?? '')}">Remove</button>
-                </div>
-              `).join('') || '<div class="scan-log-entry info">No folders watched yet.</div>'}
             </div>
           </section>
           <section class="library-card library-span">
@@ -1619,6 +3199,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           applySmartCrate((button as HTMLElement).dataset.query ?? '');
         });
       });
+      libraryPanel.querySelectorAll('.review-mode-btn[data-review-kind]').forEach((button) => {
+        button.addEventListener('click', () => {
+          startReviewMode(((button as HTMLElement).dataset.reviewKind as 'art' | 'key' | 'decode' | 'attention') ?? 'attention');
+        });
+      });
       libraryPanel.querySelectorAll('.tag-filter-btn[data-tag]').forEach((button) => {
         button.addEventListener('click', () => {
           searchEl.value = String((button as HTMLElement).dataset.tag ?? '');
@@ -1661,6 +3246,136 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           });
         });
       });
+      document.getElementById('pref-default-full-rescan')?.addEventListener('change', (event) => {
+        preferences.defaultFullRescan = (event.currentTarget as HTMLInputElement).checked;
+        if (quickFullRescanEl) quickFullRescanEl.checked = preferences.defaultFullRescan;
+        savePreferences();
+      });
+      document.getElementById('pref-autoplay-on-select')?.addEventListener('change', (event) => {
+        preferences.autoplayOnSelect = (event.currentTarget as HTMLInputElement).checked;
+        savePreferences();
+      });
+      document.getElementById('pref-collapse-scan-log')?.addEventListener('change', (event) => {
+        preferences.collapseScanLog = (event.currentTarget as HTMLInputElement).checked;
+        savePreferences();
+      });
+      document.getElementById('pref-default-list-density')?.addEventListener('change', (event) => {
+        const value = (event.currentTarget as HTMLSelectElement).value === 'compact' ? 'compact' : 'comfortable';
+        preferences.defaultListDensity = value;
+        savePreferences();
+        setListDensity(value);
+      });
+      const bindColumnPreference = (id: string, key: keyof Preferences) => {
+        document.getElementById(id)?.addEventListener('change', (event) => {
+          (preferences[key] as boolean) = (event.currentTarget as HTMLInputElement).checked;
+          savePreferences();
+          renderList(tracks);
+        });
+      };
+      bindColumnPreference('pref-col-album', 'listShowAlbum');
+      bindColumnPreference('pref-col-bitrate', 'listShowBitrate');
+      bindColumnPreference('pref-col-tags', 'listShowTags');
+      bindColumnPreference('pref-col-bpm-source', 'listShowBpmSource');
+      bindColumnPreference('pref-col-key', 'listShowKey');
+      bindColumnPreference('pref-col-length', 'listShowLength');
+      bindColumnPreference('pref-col-recent', 'listShowRecent');
+      document.getElementById('spotify-save-test-btn')?.addEventListener('click', () => {
+        void submitSpotifyCredentials('save');
+      });
+      document.getElementById('spotify-test-saved-btn')?.addEventListener('click', () => {
+        void submitSpotifyCredentials('test-current');
+      });
+      document.getElementById('spotify-client-secret')?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void submitSpotifyCredentials('save');
+      });
+      document.getElementById('reset-library-data-btn')?.addEventListener('click', async () => {
+        const confirmed = window.confirm('Reset the current DJ Assist library data? This clears tracks, playlists, scan history, and watched folders from the app database.');
+        if (!confirmed) return;
+        const response = await fetch('/api/library/reset', { method: 'POST' });
+        if (!response.ok) {
+          showToast('Could not reset the library data.', 'error');
+          return;
+        }
+        tracks = [];
+        sets = [];
+        scanHistory = [];
+        libraryOverview = null;
+        watchFolders = [];
+        activeTrackId = null;
+        nowPlayingTrackId = null;
+        selectedDetailTrackId = null;
+        selectedTrackIds.clear();
+        activeArtistScope = '';
+        activeAlbumScope = '';
+        activeQuickFilter = '';
+        recentNewTrackIds = new Set();
+        hasScanBaseline = false;
+        preScanTrackIds = new Set();
+        searchEl.value = '';
+        bpmMinEl.value = '';
+        bpmMaxEl.value = '';
+        keyFilterEl.value = '';
+        if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
+        hideUnknownArtistsEl.checked = false;
+        renderBrowseScope();
+        renderQuickFilters();
+        renderBulkToolbar();
+        renderList(tracks);
+        detailEl.innerHTML = '<div class="empty">Select a track from the library to view details.</div>';
+        updateNowPlayingBar();
+        await Promise.all([
+          loadLibraryOverview(),
+          loadWatchFolders(),
+          loadScanHistory(),
+        ]);
+        showToast('Library data reset.', 'success');
+      });
+    }
+
+    function renderActivityPanel() {
+      const spotify = spotifyRuntimeSummary();
+      const diagnostics = [
+        { label: 'Database', ok: Boolean(runtimeHealth?.database_url_set), value: runtimeHealth?.database_path ?? 'Not configured' },
+        { label: 'Python', ok: Boolean(runtimeHealth?.python_ok), value: runtimeHealth?.python_executable ?? runtimeHealth?.python ?? runtimeHealth?.python_error ?? 'Not available' },
+        { label: 'Spotify', ok: Boolean(spotify?.configured), value: spotifyRuntimeLabel() },
+        { label: 'Node', ok: true, value: runtimeHealth?.node ?? 'unknown' },
+      ];
+      activityPanel.innerHTML = `
+        <div class="library-grid">
+          <section class="library-card library-span">
+            <div class="scan-log-head"><strong>Startup Diagnostics</strong></div>
+            <div class="runtime-list">
+              ${diagnostics.map((item) => `<div><strong>${esc(item.label)}</strong><span>${item.ok ? 'Ready' : 'Needs attention'} · ${esc(String(item.value ?? ''))}</span></div>`).join('')}
+            </div>
+          </section>
+          <section class="library-card library-span">
+            <div class="scan-log-head"><strong>Watch Folders</strong></div>
+            <div class="watch-form">
+              <input id="watch-directory-input" placeholder="Folder to watch…" value="${esc(scanDirectoryEl.value)}" />
+              <button type="button" class="btn" id="add-watch-btn">Add Watch</button>
+            </div>
+            <div class="scan-history">
+              ${watchFolders.map((watch) => `
+                <div class="scan-history-item">
+                  <strong>${esc(watch.directory ?? '')}</strong>
+                  <span>${esc(watch.status ?? 'watching')} ${watch.lastChangedPath ? `· ${esc(watch.lastChangedPath)}` : ''}</span>
+                  <button type="button" class="icon-btn danger remove-watch-btn" data-directory="${esc(watch.directory ?? '')}">Remove</button>
+                </div>
+              `).join('') || '<div class="scan-log-entry info">No folders watched yet.</div>'}
+            </div>
+          </section>
+          <section class="library-card library-span">
+            <div class="scan-log-head"><strong>Scan Activity</strong></div>
+            <div class="scan-preflight">Live scan log stays available at the bottom of the app. Use this panel for runtime diagnostics and watched folders.</div>
+            <div class="chips">
+              <button type="button" class="chip nav-chip" id="activity-open-log-btn">Open Scan Log</button>
+              <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Collection</button>
+            </div>
+          </section>
+        </div>
+      `;
       document.getElementById('add-watch-btn')?.addEventListener('click', async () => {
         const input = document.getElementById('watch-directory-input') as HTMLInputElement;
         const res = await fetch('/api/watch', {
@@ -1670,7 +3385,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
         if (res.ok) await loadWatchFolders();
       });
-      libraryPanel.querySelectorAll('.remove-watch-btn[data-directory]').forEach((button) => {
+      activityPanel.querySelectorAll('.remove-watch-btn[data-directory]').forEach((button) => {
         button.addEventListener('click', async () => {
           await fetch('/api/watch', {
             method: 'DELETE',
@@ -1679,6 +3394,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           });
           await loadWatchFolders();
         });
+      });
+      document.getElementById('activity-open-log-btn')?.addEventListener('click', () => {
+        if (bottomScanLogEl && scanLogBodyEl && scanLogToggleBtn) {
+          bottomScanLogEl.classList.remove('collapsed');
+          scanLogBodyEl.hidden = false;
+          scanLogToggleBtn.textContent = 'Collapse';
+          scanLogToggleBtn.setAttribute('aria-expanded', 'true');
+        }
+      });
+      document.getElementById('activity-open-collection-btn')?.addEventListener('click', () => {
+        openPanel('library');
       });
     }
 
@@ -1713,16 +3439,39 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const type = String(event.event ?? '');
         if (type === 'job_state') {
           const summary = (event.summary as Record<string, unknown> | null) ?? null;
+          const status = String(event.status ?? 'running');
           activeScanStatus = String(event.status ?? 'running');
           ensureBackgroundRefreshLoop();
-          setScanStatus(String(event.status ?? 'running'), ['failed', 'cancelled'].includes(String(event.status ?? '')) ? 'error' : String(event.status ?? '') === 'completed' ? 'success' : 'running');
+          setScanStatus(status, ['failed', 'cancelled'].includes(status) ? 'error' : status === 'completed' ? 'success' : 'running');
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), String(event.current_file ?? event.directory ?? ''));
           setScanSummary(summary, { createdAt: scanHistory.find((job) => job.id === jobId)?.createdAt ?? null });
-          if (['completed', 'failed', 'cancelled'].includes(String(event.status ?? ''))) {
+          if (['completed', 'failed', 'cancelled'].includes(status)) {
+            frozenTrackIdsDuringScan = null;
             await loadScanHistory();
-            if (String(event.status ?? '') === 'completed') {
+            if (status === 'completed') {
+              const scanned = Number(summary?.scanned ?? 0);
+              const analyzed = Number(summary?.analyzed ?? 0);
               await loadTracks(searchEl.value.trim());
               await loadLibraryOverview();
+              updateRecentNewTrackIdsFromTracks(tracks);
+              const newCount = recentNewTrackIds.size;
+              showToast(
+                newCount
+                  ? `Scan finished: ${scanned} scanned, ${analyzed} analyzed, ${newCount} new.`
+                  : `Scan finished: ${scanned} scanned, ${analyzed} analyzed.`,
+                'success',
+                newCount ? {
+                  label: 'View New Tracks',
+                  onClick: () => {
+                    openPanel('track');
+                    setActiveQuickFilter('new');
+                  },
+                } : undefined,
+              );
+            } else if (status === 'cancelled') {
+              showToast('Scan stopped.', 'warning');
+            } else if (status === 'failed') {
+              showToast('Scan failed.', 'error');
             }
           }
           return;
@@ -1745,16 +3494,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const reason = String(event.reason ?? '');
           const label = String(event.file ?? event.path ?? 'Track');
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), `${label} · ${status}`);
-          if (reason) appendScanLog(`${label}: ${status} (${reason})`, status === 'skipped' ? 'warning' : status === 'error' ? 'error' : 'success');
-          queueDbRefresh();
+          queueDbRefresh(5000, 'light');
           return;
         }
 
         if (type === 'scan_failed') {
           activeScanStatus = 'failed';
+          frozenTrackIdsDuringScan = null;
           ensureBackgroundRefreshLoop();
           setScanStatus('failed', 'error');
           appendScanLog(String(event.error ?? 'Scan failed'), 'error');
+          showToast('Scan failed.', 'error');
           await loadScanHistory();
         }
       };
@@ -1786,15 +3536,29 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const job = payload.job as Record<string, unknown>;
       activeScanJobId = String(job.id);
       activeScanStatus = String(job.status ?? 'idle');
+      if (['queued', 'running'].includes(activeScanStatus) && !frozenTrackIdsDuringScan) {
+        frozenTrackIdsDuringScan = [...tracks]
+          .sort(compareTracks)
+          .map((track) => Number(track.id))
+          .filter((id) => Number.isFinite(id));
+      } else if (!['queued', 'running'].includes(activeScanStatus)) {
+        frozenTrackIdsDuringScan = null;
+      }
       ensureBackgroundRefreshLoop();
       if (typeof job.directory === 'string' && job.directory) {
         scanDirectoryEl.value = job.directory;
+        updateScanDirectoryDisplay();
         pushRecentDirectory(job.directory);
       }
       setScanStatus(String(job.status ?? 'idle'), ['failed', 'cancelled'].includes(String(job.status ?? '')) ? 'error' : String(job.status ?? '') === 'completed' ? 'success' : 'running');
       setScanProgress(Number(job.processedFiles ?? 0), Number(job.totalFiles ?? 0), String(job.currentFile ?? job.directory ?? ''));
       setScanSummary(job.summary as Record<string, unknown>, job);
-      scanPreflightEl.textContent = JSON.stringify(job.validation ?? {});
+      const validation = (job.validation as Record<string, unknown> | null) ?? null;
+      if (validation && typeof validation.audio_file_count !== 'undefined') {
+        scanPreflightEl.textContent = `Supported audio files: ${validation.audio_file_count ?? 0}${validation.empty ? ' · directory looks empty' : ''}`;
+      } else {
+        scanPreflightEl.textContent = 'Music folder ready.';
+      }
       resetScanLog();
       for (const log of ((job.logs ?? []) as Record<string, unknown>[]).slice().reverse()) {
         const level = String(log.level ?? 'info') as 'info' | 'warning' | 'error' | 'success';
@@ -1814,7 +3578,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const res = await fetch(`/api/scan/validate?directory=${encodeURIComponent(directory)}`);
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        scanPreflightEl.textContent = String(payload.error ?? 'Folder check failed');
+        const raw = String(payload.error ?? 'Folder check failed');
+        const lower = raw.toLowerCase();
+        let friendly = raw;
+        if (lower.includes('permission') || lower.includes('eacces') || lower.includes('eperm')) {
+          friendly = 'Folder access was denied. Give DJ Assist permission to read that location in macOS Privacy & Security.';
+        } else if (lower.includes('not found') || lower.includes('enoent')) {
+          friendly = 'That folder could not be found. Choose an existing music folder.';
+        } else if (lower.includes('not a directory')) {
+          friendly = 'The selected path is not a folder. Choose a music folder instead.';
+        }
+        scanPreflightEl.textContent = friendly;
         return;
       }
       const validation = payload.validation ?? {};
@@ -1827,12 +3601,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!directory) {
         setScanStatus('Choose a music folder', 'error');
         setScanProgress(0, 0, 'Choose a music folder');
-        scanDirectoryEl.focus();
+        showToast('Choose a music folder first.', 'warning');
         return;
       }
 
-      scanBtn.disabled = true;
       activeScanStatus = 'queued';
+      frozenTrackIdsDuringScan = [...tracks]
+        .sort(compareTracks)
+        .map((track) => Number(track.id))
+        .filter((id) => Number.isFinite(id));
+      preScanTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
+      hasScanBaseline = true;
       ensureBackgroundRefreshLoop();
       setScanStatus('Scanning collection…', 'running');
       setScanProgress(0, 0, directory);
@@ -1842,8 +3621,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       try {
       try { localStorage.setItem(scanDirectoryKey, directory); } catch { /* ignore */ }
-      try { localStorage.setItem(scanVerboseKey, String(scanVerboseEl.checked)); } catch { /* ignore */ }
-      try { localStorage.setItem(scanRescanModeKey, scanRescanModeEl.value); } catch { /* ignore */ }
       pushRecentDirectory(directory);
 
         const res = await fetch('/api/scan', {
@@ -1851,18 +3628,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             directory,
-            fetchAlbumArt: scanFetchArtEl.checked,
+            fetchAlbumArt: true,
             autoDoubleBpm: true,
-            verbose: scanVerboseEl.checked,
-            rescanMode: scanRescanModeEl.value,
+            verbose: false,
+            rescanMode: quickFullRescanEl?.checked ? 'full' : 'smart',
           }),
         });
 
         if (!res.ok) {
+          frozenTrackIdsDuringScan = null;
           const detail = await res.text();
           setScanStatus('Scan failed', 'error');
           setScanProgress(0, 0, 'Scan request failed');
           appendScanLog(`Scan request failed: ${detail.slice(0, 200)}`, 'error');
+          showToast('Scan could not be started.', 'error');
           warningBanner.style.display = 'block';
           warningBanner.innerHTML = `<strong>Scan failed:</strong> ${esc(detail.slice(0, 400))}`;
           return;
@@ -1874,18 +3653,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         activeScanStatus = String(job.status ?? 'queued');
         ensureBackgroundRefreshLoop();
         appendScanLog(`Scan job created: ${activeScanJobId}`, 'info');
+        showToast('Scan started.', 'success');
         await loadScanHistory();
         await loadScanJob(activeScanJobId, true);
       } catch (error) {
         activeScanStatus = 'failed';
+        frozenTrackIdsDuringScan = null;
         ensureBackgroundRefreshLoop();
         setScanStatus('Scan failed', 'error');
         setScanProgress(0, 0, 'Scan failed');
         appendScanLog(error instanceof Error ? error.message : String(error), 'error');
+        showToast('Scan failed.', 'error');
         warningBanner.style.display = 'block';
         warningBanner.innerHTML = `<strong>Scan failed:</strong> ${esc(error instanceof Error ? error.message : String(error))}`;
-      } finally {
-        scanBtn.disabled = false;
       }
     }
 
@@ -1912,6 +3692,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       tracks = Array.isArray(response.tracks) ? response.tracks as Record<string, unknown>[] : [];
+      refreshMetadataSuggestionLists();
+      updateRecentNewTrackIdsFromTracks(tracks);
       for (const id of [...selectedTrackIds]) {
         if (!tracks.some((track) => Number(track.id) === id)) selectedTrackIds.delete(id);
       }
@@ -1919,41 +3701,262 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const missingEnv = Array.isArray(debug.spotify_missing)
         ? debug.spotify_missing.filter((value): value is string => typeof value === 'string')
         : [];
-      if (missingEnv.length) {
-        warningBanner.style.display = 'block';
-        warningBanner.innerHTML = `<strong>Missing setup:</strong> ${missingEnv.join(', ')}`;
-      } else {
+      if (!missingEnv.length && warningBanner.textContent?.includes('Missing setup:')) {
         warningBanner.style.display = 'none';
       }
       renderList(tracks);
       renderBulkToolbar();
-      if (tracks.length && !activeTrackId) {
-        let storedId: number | null = null;
-        try { storedId = Number(sessionStorage.getItem(activeTrackKey) || 0) || null; } catch { /* ignore */ }
-        const preferred = storedId ? tracks.find((t) => t.id === storedId) ?? null : null;
-        selectTrack(String((preferred ?? tracks[0]).id), Boolean(preferred));
+      renderQuickFilters();
+      if (!hasOpenModal()) {
+        if (tracks.length && activeTrackId == null) {
+          let storedId: number | null = null;
+          try { storedId = Number(sessionStorage.getItem(activeTrackKey) || 0) || null; } catch { /* ignore */ }
+          const preferred = storedId ? tracks.find((t) => t.id === storedId) ?? null : null;
+          setKeyboardPane('list');
+          void selectTrack(String((preferred ?? visibleTracksOrdered()[0] ?? tracks[0]).id), false, true);
+          return;
+        }
+        ensureActiveTrackSelection();
       }
     }
 
-    async function selectTrack(id: string, autoPlay = false) {
+    function applyTrackSelection(id: string, ensureVisible = false) {
       activeTrackId = Number(id);
+      nowPlayingTrackId = activeTrackId;
       try { sessionStorage.setItem(activeTrackKey, String(activeTrackId)); } catch { /* ignore */ }
       renderList(tracks);
-      await loadSets(); // refresh sets so "add to playlist" dropdown is current
-      const res = await fetch(`/api/tracks/${id}`);
+      if (ensureVisible) {
+        requestAnimationFrame(() => {
+          listEl.querySelector<HTMLElement>(`.row[data-id="${activeTrackId}"]`)?.scrollIntoView({ block: 'nearest' });
+        });
+      }
+    }
+
+    async function loadTrackDetail(id: string, autoPlay = false) {
+      const requestedTrackId = Number(id);
+      const requestToken = ++trackDetailRequestToken;
+      await loadSets();
+      const params = new URLSearchParams({ intent: nextTracksIntent });
+      const res = await fetch(`/api/tracks/${id}?${params.toString()}`);
       const payload = await res.json();
+      if (requestToken !== trackDetailRequestToken || activeTrackId !== requestedTrackId) return;
+      selectedDetailTrackId = requestedTrackId;
       renderDetail(payload);
+      updateNowPlayingBar();
       if (autoPlay) {
         const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
         localAudio?.play().catch(() => {});
       }
     }
 
+    function scheduleTrackDetailLoad(id: string, autoPlay = false, delayMs = 0) {
+      if (pendingTrackDetailTimer) {
+        clearTimeout(pendingTrackDetailTimer);
+        pendingTrackDetailTimer = null;
+      }
+      if (delayMs <= 0) {
+        void loadTrackDetail(id, autoPlay);
+        return;
+      }
+      pendingTrackDetailTimer = setTimeout(() => {
+        pendingTrackDetailTimer = null;
+        void loadTrackDetail(id, autoPlay);
+      }, delayMs);
+    }
+
+    async function selectTrack(id: string, autoPlay = false, ensureVisible = false, detailDelayMs = 0) {
+      applyTrackSelection(id, ensureVisible);
+      scheduleTrackDetailLoad(id, autoPlay, detailDelayMs);
+    }
+
     // ── Keyboard playback toggle ─────────────────────────────────────────────
     document.addEventListener('keydown', (event) => {
-      if (event.code !== 'Space') return;
+      if (event.key === 'Escape') {
+        if (tapBpmModal?.classList.contains('open')) {
+          closeModal(tapBpmModal);
+          returnToSongsPane();
+          return;
+        }
+        if (deleteTrackModal?.classList.contains('open')) {
+          closeDeleteTracksModal();
+          return;
+        }
+        if (editMetadataModal?.classList.contains('open')) {
+          closeModal(editMetadataModal);
+          return;
+        }
+        if (commandPaletteModal?.classList.contains('open')) {
+          closeModal(commandPaletteModal);
+          return;
+        }
+        if (shortcutsModal?.classList.contains('open')) {
+          closeModal(shortcutsModal);
+          return;
+        }
+        if (coverModal.classList.contains('open')) {
+          closeModal(coverModal);
+          return;
+        }
+        if (scanLogFullscreen && bottomScanLogEl) {
+          scanLogFullscreen = false;
+          bottomScanLogEl.classList.remove('fullscreen');
+          scanLogFullscreenBtn?.setAttribute('aria-pressed', 'false');
+          if (scanLogFullscreenBtn) scanLogFullscreenBtn.textContent = 'Full Screen';
+          return;
+        }
+        if (bottomScanLogEl && !bottomScanLogEl.classList.contains('collapsed')) {
+          bottomScanLogEl.classList.add('collapsed');
+          if (scanLogBodyEl) scanLogBodyEl.hidden = true;
+          if (scanLogToggleBtn) {
+            scanLogToggleBtn.textContent = 'Expand';
+            scanLogToggleBtn.setAttribute('aria-expanded', 'false');
+          }
+          return;
+        }
+        if (hasActiveCollectionFilters()) {
+          clearCollectionFiltersAndScope();
+          return;
+        }
+      }
       const target = event.target as HTMLElement | null;
-      if (target?.closest('input, textarea, select, button, [contenteditable="true"]')) return;
+      const isEditableTarget = Boolean(target?.closest('input, textarea, select, [contenteditable="true"]'));
+      if (tapBpmModal?.classList.contains('open')) {
+        if (event.code === 'Space') {
+          event.preventDefault();
+          registerTapBpmTap();
+        }
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        commandPaletteActiveIndex = 0;
+        openModal(commandPaletteModal);
+        renderCommandPalette(commandPaletteInput?.value ?? '');
+        commandPaletteInput?.focus();
+        commandPaletteInput?.select();
+        return;
+      }
+      if (event.key === '/') {
+        event.preventDefault();
+        commandPaletteActiveIndex = 0;
+        openModal(commandPaletteModal);
+        renderCommandPalette(commandPaletteInput?.value ?? '');
+        commandPaletteInput?.focus();
+        commandPaletteInput?.select();
+        return;
+      }
+      if (event.key === '?') {
+        event.preventDefault();
+        openModal(shortcutsModal);
+        return;
+      }
+      if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (target?.closest('input, textarea, select, button, [contenteditable="true"]')) return;
+        event.preventDefault();
+        setKeyboardPane(activeKeyboardPane === 'list' ? 'detail' : 'list', { focus: true });
+        return;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        stepSelectionInList(1);
+        return;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        stepSelectionInList(-1);
+        return;
+      }
+      if (isEditableTarget) {
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'c') {
+        event.preventDefault();
+        void copyActiveTrackPath();
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'b') {
+        if (activeTrackId != null) {
+          event.preventDefault();
+          openTapBpmModal();
+        }
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'e') {
+        if (activeTrackId != null) {
+          event.preventDefault();
+          openEditMetadataModal();
+        }
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'd') {
+        if (deleteTrackModal?.classList.contains('open')) return;
+        if (activeTrackId != null) {
+          event.preventDefault();
+          openDeleteTracksModal([activeTrackId], 'single');
+        }
+        return;
+      }
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        searchEl.focus();
+        searchEl.select();
+        return;
+      }
+      if (event.key === 'PageDown' && activeKeyboardPane === 'list') {
+        event.preventDefault();
+        stepSelectionInListPage(1);
+        return;
+      }
+      if (event.key === 'PageUp' && activeKeyboardPane === 'list') {
+        event.preventDefault();
+        stepSelectionInListPage(-1);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        stepSelectionInList(1);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        stepSelectionInList(-1);
+        return;
+      }
+      if (event.key === 'ArrowLeft') {
+        if (seekCurrentAudio(event.shiftKey ? -15 : -5)) {
+          event.preventDefault();
+          return;
+        }
+      }
+      if (event.key === 'ArrowRight') {
+        if (seekCurrentAudio(event.shiftKey ? 15 : 5)) {
+          event.preventDefault();
+          return;
+        }
+      }
+      if (event.key === 'Enter' && activeTrackId != null) {
+        event.preventDefault();
+        if (selectedDetailTrackId !== activeTrackId) {
+          void selectTrack(String(activeTrackId), true, true);
+          return;
+        }
+        const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
+        if (audio?.paused) audio.play().catch(() => {});
+        return;
+      }
+      if (event.key.toLowerCase() === 'a' && activeTrack()) {
+        event.preventDefault();
+        navigateLibrary('artist', String(activeTrack()?.artist ?? ''));
+        return;
+      }
+      if (event.key.toLowerCase() === 'l' && activeTrack() && albumNameFor(activeTrack() ?? {})) {
+        event.preventDefault();
+        const track = activeTrack();
+        if (!track) return;
+        navigateLibrary('album', albumNameFor(track), String(track.artist ?? ''));
+        return;
+      }
+      if (event.code !== 'Space') return;
       const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
       if (!audio) return;
       event.preventDefault();
@@ -1972,8 +3975,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (searchTimer) clearTimeout(searchTimer);
       searchTimer = setTimeout(() => loadTracks(searchEl.value.trim()), 200);
     });
+    searchEl.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const firstVisible = visibleTracksOrdered()[0];
+      if (!firstVisible) return;
+      openPanel('track');
+      setKeyboardPane('list', { focus: true });
+      void selectTrack(String(firstVisible.id), true, true);
+    });
     [bpmMinEl, bpmMaxEl, keyFilterEl].forEach((el) => el.addEventListener('input', () => loadTracks(searchEl.value.trim())));
-    showOnlyNoBpmEl.addEventListener('change', () => loadTracks(searchEl.value.trim()));
+    showOnlyNoBpmEl?.addEventListener('change', () => loadTracks(searchEl.value.trim()));
+    hideUnknownArtistsEl.addEventListener('change', () => renderList(tracks));
     sortsEl.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest('button[data-sort]') as HTMLButtonElement | null;
       if (!button) return;
@@ -1986,6 +3999,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       } else {
         sortMode = clicked;
       }
+      if (frozenTrackIdsDuringScan?.length && ['queued', 'running'].includes(activeScanStatus)) {
+        frozenTrackIdsDuringScan = [...tracks]
+          .sort(compareTracks)
+          .map((track) => Number(track.id))
+          .filter((id) => Number.isFinite(id));
+      }
       setActiveSortButton(sortMode);
       renderList(tracks);
     });
@@ -1994,50 +4013,251 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     try {
       const savedDirectory = localStorage.getItem(scanDirectoryKey);
       if (savedDirectory) scanDirectoryEl.value = savedDirectory;
-      scanVerboseEl.checked = localStorage.getItem(scanVerboseKey) === 'true';
-      scanRescanModeEl.value = localStorage.getItem(scanRescanModeKey) || 'smart';
+      updateScanDirectoryDisplay();
+      preferences = parsePreferences(localStorage.getItem(preferencesKey));
+      const savedNewTrackIds = JSON.parse(localStorage.getItem(recentNewTrackIdsKey) || '[]');
+      if (Array.isArray(savedNewTrackIds)) {
+        recentNewTrackIds = new Set(savedNewTrackIds.map((value) => Number(value)).filter((id) => Number.isFinite(id)));
+      }
+      setListDensity((localStorage.getItem(listDensityKey) as 'comfortable' | 'compact' | null) || preferences.defaultListDensity);
     } catch {
-      /* ignore */
+      updateScanDirectoryDisplay();
+      preferences = { ...defaultPreferences };
+      setListDensity(preferences.defaultListDensity);
     }
-    scanBtn.addEventListener('click', () => { void triggerScan(); });
-    scanCancelBtn.addEventListener('click', async () => {
-      if (!activeScanJobId) return;
-      await fetch(`/api/scan/${activeScanJobId}`, { method: 'DELETE' });
-      activeScanStatus = 'cancelled';
-      ensureBackgroundRefreshLoop();
-      appendScanLog('Cancellation requested', 'warning');
-      queueDbRefresh(500);
+    if (quickFullRescanEl) quickFullRescanEl.checked = preferences.defaultFullRescan;
+    document.getElementById('empty-choose-folder-btn')?.addEventListener('click', () => {
+      void pickDirectoryAndPrefill();
     });
-    scanRecentDirectoriesEl.addEventListener('change', () => {
-      if (!scanRecentDirectoriesEl.value) return;
-      scanDirectoryEl.value = scanRecentDirectoriesEl.value;
-      void preflightDirectory(scanDirectoryEl.value);
+    document.getElementById('empty-start-scan-btn')?.addEventListener('click', () => {
+      void triggerScan();
     });
-    scanUseLastBtn.addEventListener('click', () => {
-      const recent = getRecentDirectories();
-      if (!recent.length) return;
-      scanDirectoryEl.value = recent[0];
-      void preflightDirectory(scanDirectoryEl.value);
+    quickChooseFolderBtn?.addEventListener('click', () => {
+      void pickDirectoryAndPrefill();
     });
-    if (scanPickDirectoryBtn) {
-      scanPickDirectoryBtn.addEventListener('click', async () => {
-        if (!adapter.supportsNativeFolderPicker) return;
-        const directory = await adapter.pickDirectory();
-        if (!directory) return;
-        scanDirectoryEl.value = directory;
-        pushRecentDirectory(directory);
-        void preflightDirectory(directory);
+    openCommandPaletteBtn?.addEventListener('click', () => {
+      commandPaletteActiveIndex = 0;
+      openModal(commandPaletteModal);
+      renderCommandPalette(commandPaletteInput?.value ?? '');
+      commandPaletteInput?.focus();
+    });
+    closeCommandPaletteBtn?.addEventListener('click', () => {
+      closeModal(commandPaletteModal);
+    });
+    closeShortcutsBtn?.addEventListener('click', () => {
+      closeModal(shortcutsModal);
+    });
+    closeEditMetadataBtn?.addEventListener('click', () => {
+      closeModal(editMetadataModal);
+      returnToSongsPane();
+    });
+    closeDeleteTrackBtn?.addEventListener('click', () => {
+      closeDeleteTracksModal();
+    });
+    closeTapBpmBtn?.addEventListener('click', () => {
+      closeModal(tapBpmModal);
+      returnToSongsPane();
+    });
+    commandPaletteModal?.addEventListener('click', (event) => {
+      if (event.target === commandPaletteModal) closeModal(commandPaletteModal);
+    });
+    shortcutsModal?.addEventListener('click', (event) => {
+      if (event.target === shortcutsModal) closeModal(shortcutsModal);
+    });
+    editMetadataModal?.addEventListener('click', (event) => {
+      if (event.target === editMetadataModal) {
+        closeModal(editMetadataModal);
+        returnToSongsPane();
+      }
+    });
+    deleteTrackModal?.addEventListener('click', (event) => {
+      if (event.target === deleteTrackModal) closeDeleteTracksModal();
+    });
+    tapBpmModal?.addEventListener('click', (event) => {
+      if (event.target === tapBpmModal) {
+        closeModal(tapBpmModal);
+        returnToSongsPane();
+      }
+    });
+    deleteTrackModal?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Tab') return;
+      const focusables = [deleteTrackRemoveFileEl, confirmDeleteTrackBtn].filter(Boolean) as HTMLElement[];
+      if (!focusables.length) return;
+      const currentIndex = focusables.findIndex((element) => element === document.activeElement);
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1)
+        : (currentIndex === -1 || currentIndex >= focusables.length - 1 ? 0 : currentIndex + 1);
+      event.preventDefault();
+      focusables[nextIndex]?.focus();
+    });
+    document.getElementById('save-edit-metadata-btn')?.addEventListener('click', () => {
+      void saveEditMetadataModal();
+    });
+    confirmDeleteTrackBtn?.addEventListener('click', () => {
+      void confirmDeleteTracks();
+    });
+    tapBpmResetBtn?.addEventListener('click', () => {
+      resetTapBpmState();
+      tapBpmResetBtn?.focus();
+    });
+    tapBpmSaveBtn?.addEventListener('click', () => {
+      void saveTapBpmValue();
+    });
+    tapBpmManualInputEl?.addEventListener('input', () => {
+      const value = parseFloat(tapBpmManualInputEl.value);
+      tapBpmTapTimes = [];
+      tapBpmValue = Number.isFinite(value) && value > 0 ? Math.round(value * 10) / 10 : 0;
+      if (tapBpmStatusEl) {
+        tapBpmStatusEl.textContent = tapBpmValue > 0
+          ? 'Manual BPM ready to save.'
+          : 'Type a BPM value or tap Space repeatedly.';
+      }
+      updateTapBpmUi();
+    });
+    tapBpmManualInputEl?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void saveTapBpmValue();
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeModal(tapBpmModal);
+        returnToSongsPane();
+      }
+    });
+    editMetadataModal?.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+      input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void saveEditMetadataModal();
       });
-    }
-    scanLogClearBtn.addEventListener('click', () => { resetScanLog(); });
-    initCollapsiblePanel('scan-log', scanLogToggleBtn, scanLogBodyEl, false);
-    initCollapsiblePanel('scan-summary', scanSummaryToggleBtn, scanSummaryBodyEl, false);
-    initCollapsiblePanel('scan-history', scanHistoryToggleBtn, scanHistoryBodyEl, false);
-    scanVerboseEl.addEventListener('change', () => {
-      try { localStorage.setItem(scanVerboseKey, String(scanVerboseEl.checked)); } catch { /* ignore */ }
     });
-    scanRescanModeEl.addEventListener('change', () => {
-      try { localStorage.setItem(scanRescanModeKey, scanRescanModeEl.value); } catch { /* ignore */ }
+    document.getElementById('edit-meta-artist')?.addEventListener('focus', () => {
+      const input = document.getElementById('edit-meta-artist') as HTMLInputElement | null;
+      requestAnimationFrame(() => showInputSuggestions(input));
+    });
+    editMetadataModal?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      if ((event.target as HTMLElement | null)?.closest('button')) return;
+      event.preventDefault();
+      void saveEditMetadataModal();
+    });
+    deleteTrackModal?.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+      input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void confirmDeleteTracks();
+      });
+    });
+    updateTapBpmUi();
+    commandPaletteInput?.addEventListener('input', () => {
+      renderCommandPalette(commandPaletteInput.value);
+    });
+    commandPaletteInput?.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeModal(commandPaletteModal);
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (!commandPaletteResults.length) return;
+        commandPaletteActiveIndex = Math.min(commandPaletteResults.length - 1, commandPaletteActiveIndex + 1);
+        syncCommandPaletteSelection();
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (!commandPaletteResults.length) return;
+        commandPaletteActiveIndex = Math.max(0, commandPaletteActiveIndex - 1);
+        syncCommandPaletteSelection();
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const active = commandPaletteList?.querySelector<HTMLElement>(`.command-palette-item[data-command-index="${commandPaletteActiveIndex}"]`);
+        active?.click();
+      }
+    });
+    quickStartScanBtn?.addEventListener('click', () => {
+      void triggerScan();
+    });
+    listEl.tabIndex = 0;
+    detailEl.tabIndex = 0;
+    listEl.addEventListener('focus', () => setKeyboardPane('list'));
+    detailEl.addEventListener('focus', () => setKeyboardPane('detail'));
+    setKeyboardPane('list');
+    scanLogClearBtn?.addEventListener('click', () => {
+      resetScanLog();
+    });
+    const applyScanLogCollapsedState = (collapsed: boolean) => {
+      if (!bottomScanLogEl || !scanLogBodyEl || !scanLogToggleBtn) return;
+      bottomScanLogEl.classList.toggle('collapsed', collapsed);
+      scanLogBodyEl.hidden = collapsed;
+      scanLogToggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
+      scanLogToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    };
+    let scanLogCollapsed = preferences.collapseScanLog;
+    applyScanLogCollapsedState(scanLogCollapsed);
+    scanLogToggleBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      scanLogCollapsed = !scanLogCollapsed;
+      preferences.collapseScanLog = scanLogCollapsed;
+      savePreferences();
+      applyScanLogCollapsedState(scanLogCollapsed);
+    });
+    bottomScanLogHeadEl?.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('button')) return;
+      scanLogCollapsed = !scanLogCollapsed;
+      preferences.collapseScanLog = scanLogCollapsed;
+      savePreferences();
+      applyScanLogCollapsedState(scanLogCollapsed);
+    });
+    scanLogFullscreenBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!bottomScanLogEl) return;
+      scanLogFullscreen = !scanLogFullscreen;
+      bottomScanLogEl.classList.toggle('fullscreen', scanLogFullscreen);
+      if (scanLogCollapsed) {
+        scanLogCollapsed = false;
+        applyScanLogCollapsedState(false);
+      }
+      scanLogFullscreenBtn.setAttribute('aria-pressed', scanLogFullscreen ? 'true' : 'false');
+      scanLogFullscreenBtn.textContent = scanLogFullscreen ? 'Exit Full Screen' : 'Full Screen';
+    });
+    quickFilterBarEl?.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLElement>('.quick-filter-btn[data-filter]');
+      if (!button) return;
+      setActiveQuickFilter(button.dataset.filter ?? '');
+    });
+    listEl.addEventListener('scroll', () => {
+      if (!listIsVirtualized || !currentRenderedList.length) return;
+      if (listScrollRaf) cancelAnimationFrame(listScrollRaf);
+      listScrollRaf = requestAnimationFrame(() => {
+        listScrollRaf = 0;
+        const scrollTop = listEl.scrollTop;
+        renderVisibleTrackWindow(currentRenderedList, scrollTop);
+        listEl.scrollTop = scrollTop;
+      });
+    });
+    listDensityEl?.addEventListener('change', () => {
+      setListDensity(listDensityEl.value);
+    });
+    document.body.addEventListener('dragover', (event) => {
+      event.preventDefault();
+    });
+    document.body.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      const first = files[0];
+      if (!first) return;
+      const candidate = String((first as File & { path?: string }).path ?? '');
+      if (!candidate) return;
+      const directory = candidate.replace(/\/[^/]+$/, '');
+      if (!directory) return;
+      scanDirectoryEl.value = directory;
+      void preflightDirectory(directory);
+      showToast('Dropped folder ready to scan.', 'success');
     });
     scanDirectoryEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -2045,13 +4265,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         void triggerScan();
       }
     });
-    scanDirectoryEl.addEventListener('blur', () => { void preflightDirectory(scanDirectoryEl.value); });
     setScanStatus('Idle');
     setScanProgress(0, 0, 'No scan in progress');
     resetScanLog();
     updateDesktopStatusBadge();
+    renderQuickFilters();
+    updateNowPlayingBar();
     ensureBackgroundRefreshLoop();
-    renderRecentDirectories();
+    updateScanDirectoryDisplay();
     renderBrowseScope();
     renderBulkToolbar();
     void preflightDirectory(scanDirectoryEl.value);
@@ -2075,6 +4296,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       stopStreamingScanJob();
       if (backgroundRefreshTimer) clearInterval(backgroundRefreshTimer);
       if (queuedDbRefreshTimer) clearTimeout(queuedDbRefreshTimer);
+      if (scanLogFlushTimer) clearTimeout(scanLogFlushTimer);
+      if (listScrollRaf) cancelAnimationFrame(listScrollRaf);
       if (searchTimer) clearTimeout(searchTimer);
     };
   }, [adapter]);

@@ -13,17 +13,37 @@ export default function AppShell({
             <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
             <span className="badge desktop-badge" id="desktop-status-badge">Desktop app</span>
           </div>
+          <div className="quick-actions">
+            <button type="button" className="icon-btn" id="open-command-palette-btn" title="Command palette">Cmd/K</button>
+            <button type="button" className="btn" id="quick-choose-folder-btn">Choose Folder</button>
+            <span className="scan-status" id="scan-status">Idle</span>
+            <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
+            <label className="scan-option compact">
+              <input id="quick-full-rescan" type="checkbox" /> Full rescan
+            </label>
+            <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
+            <div className="scan-progress compact" id="scan-progress">
+              <div className="scan-progress-track">
+                <div className="scan-progress-bar" id="scan-progress-bar" />
+              </div>
+            </div>
+          </div>
           <input id="search" placeholder="Search collection, artist, album..." />
           <div className="filters">
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
             <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
             <input id="key-filter" placeholder="Key" />
             <label>
-              <input id="show-only-no-bpm" type="checkbox" /> Only missing BPM
+              <input id="hide-unknown-artists" type="checkbox" /> Hide unknown artists
             </label>
-            <span className="badge" id="hidden-count-badge">Hidden: 0</span>
+            <div className="quick-filter-bar" id="quick-filter-bar">
+              <button type="button" className="quick-filter-btn" data-filter="high-bitrate">High bitrate</button>
+            </div>
+            <span className="badge" id="hidden-count-badge">Shown: 0</span>
           </div>
         </div>
+        <input id="scan-directory" type="hidden" />
+        <div className="scan-preflight" id="scan-preflight">Choose a music folder to check.</div>
         <div className="browse-scope" id="browse-scope">
           <span className="browse-scope-empty">Viewing full collection</span>
         </div>
@@ -31,12 +51,16 @@ export default function AppShell({
 
       <div className="banner" id="warning-banner" style={{ display: 'none' }} />
       <div className="statusbar" id="statusbar" />
+      <div className="now-playing-bar" id="now-playing-bar" data-state="idle" hidden>
+        <div className="now-playing-copy">
+          <strong id="now-playing-title">Nothing playing</strong>
+          <span id="now-playing-meta">Choose a track to preview it.</span>
+        </div>
+      </div>
 
       <main>
         <section className="pane">
-          <div className="bulk-toolbar" id="bulk-toolbar">
-            <div className="bulk-toolbar-empty">No tracks selected.</div>
-          </div>
+          <div className="bulk-toolbar" id="bulk-toolbar" />
           <div className="sorts" id="sorts">
             <button type="button" data-sort="name" className="active">Name</button>
             <button type="button" data-sort="artist-asc" id="sort-artist">Artist ▲</button>
@@ -52,10 +76,18 @@ export default function AppShell({
             <button type="button" className="panel-tab active" id="tab-track" data-panel="track">Track</button>
             <button type="button" className="panel-tab" id="tab-sets" data-panel="sets">Playlists</button>
             <button type="button" className="panel-tab" id="tab-library" data-panel="library">Collection</button>
+            <button type="button" className="panel-tab" id="tab-activity" data-panel="activity">Activity</button>
           </div>
           <div id="panel-track">
             <div className="detail" id="detail">
-              <div className="empty">Select a track to inspect playback, analysis, and transitions.</div>
+              <div className="empty empty-state">
+                <strong>Your collection is ready for a first scan.</strong>
+                <span>Choose a music folder, confirm diagnostics, and bring tracks into the app.</span>
+                <div className="empty-actions">
+                  <button type="button" className="btn" id="empty-choose-folder-btn">Choose Folder</button>
+                  <button type="button" className="btn" id="empty-start-scan-btn">Start First Scan</button>
+                </div>
+              </div>
             </div>
           </div>
           <div id="panel-sets" style={{ display: 'none' }}>
@@ -68,90 +100,13 @@ export default function AppShell({
               <div className="empty">Loading collection tools…</div>
             </div>
           </div>
+          <div id="panel-activity" style={{ display: 'none' }}>
+            <div className="library-panel" id="activity-panel">
+              <div className="empty">Loading activity…</div>
+            </div>
+          </div>
         </section>
       </main>
-
-      <div className="scan-dock">
-        <div className="scan-bar">
-          <input id="scan-directory" placeholder="Music folder…" />
-          <button type="button" className="btn" id="scan-pick-directory-btn">Choose Folder</button>
-          <select id="scan-recent-directories" defaultValue="">
-            <option value="">Recent folders…</option>
-          </select>
-          <button type="button" className="btn" id="scan-use-last-btn">Use Last</button>
-          <button type="button" className="btn" id="scan-btn">Start Scan</button>
-          <button type="button" className="btn" id="scan-cancel-btn">Stop Scan</button>
-          <select id="scan-rescan-mode" defaultValue="smart">
-            <option value="smart">Smart</option>
-            <option value="missing-metadata">Missing metadata</option>
-            <option value="missing-analysis">Missing BPM/key</option>
-            <option value="missing-art">Missing album art</option>
-            <option value="full">Full rescan</option>
-          </select>
-          <label className="scan-option">
-            <input id="scan-fetch-art" type="checkbox" defaultChecked /> Fetch cover art
-          </label>
-          <label className="scan-option">
-            <input id="scan-verbose" type="checkbox" /> Verbose diagnostics
-          </label>
-          <div className="scan-progress" id="scan-progress">
-            <div className="scan-progress-head">
-              <span className="scan-status" id="scan-status">Idle</span>
-              <span className="scan-progress-meta" id="scan-progress-meta">0 / 0</span>
-            </div>
-            <div className="scan-progress-track">
-              <div className="scan-progress-bar" id="scan-progress-bar" />
-            </div>
-            <div className="scan-progress-file" id="scan-progress-file">No scan in progress</div>
-          </div>
-        </div>
-
-        <div className="scan-log-panel">
-          <div className="scan-log-head">
-            <strong>Scan Log</strong>
-            <div className="scan-panel-actions">
-              <button type="button" className="icon-btn" id="scan-log-clear-btn">Clear</button>
-              <button type="button" className="icon-btn" id="scan-log-toggle-btn" aria-expanded="true" aria-controls="scan-log-body">Collapse</button>
-            </div>
-          </div>
-          <div className="scan-panel-body" id="scan-log-body">
-            <div className="scan-log" id="scan-log">
-              <div className="scan-log-entry info">No scan activity.</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="scan-meta-grid">
-          <div className="scan-summary-panel">
-            <div className="scan-log-head">
-              <strong>Scan Summary</strong>
-              <button type="button" className="icon-btn" id="scan-summary-toggle-btn" aria-expanded="true" aria-controls="scan-summary-body">Collapse</button>
-            </div>
-            <div className="scan-panel-body" id="scan-summary-body">
-              <div className="scan-summary" id="scan-summary">
-                <div className="scan-summary-item"><span>Last run</span><strong>None</strong></div>
-                <div className="scan-summary-item"><span>BPM</span><strong>0</strong></div>
-                <div className="scan-summary-item"><span>Key</span><strong>0</strong></div>
-                <div className="scan-summary-item"><span>Spotify</span><strong>0</strong></div>
-                <div className="scan-summary-item"><span>Album art</span><strong>0</strong></div>
-                <div className="scan-summary-item"><span>Decode failures</span><strong>0</strong></div>
-              </div>
-              <div className="scan-preflight" id="scan-preflight">Choose a music folder to check.</div>
-            </div>
-          </div>
-          <div className="scan-history-panel">
-            <div className="scan-log-head">
-              <strong>Scan History</strong>
-              <button type="button" className="icon-btn" id="scan-history-toggle-btn" aria-expanded="true" aria-controls="scan-history-body">Collapse</button>
-            </div>
-            <div className="scan-panel-body" id="scan-history-body">
-              <div className="scan-history" id="scan-history">
-                <div className="scan-log-entry info">No scan runs yet.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <div className="modal" id="cover-modal" aria-hidden="true">
         <div className="modal-card">
@@ -160,6 +115,131 @@ export default function AppShell({
             <button className="close" id="close-cover" type="button">&times;</button>
           </div>
           <img id="cover-image" alt="Album cover" />
+        </div>
+      </div>
+
+      <div className="toast-stack" id="toast-stack" aria-live="polite" />
+
+      <div className="modal" id="command-palette-modal" aria-hidden="true">
+        <div className="modal-card command-palette-card">
+          <div className="modal-head">
+            <h3>Command Palette</h3>
+            <button className="close" id="close-command-palette" type="button">&times;</button>
+          </div>
+          <input id="command-palette-input" placeholder="Search commands, filters, artists, albums..." />
+          <div className="command-palette-list" id="command-palette-list" />
+        </div>
+      </div>
+
+      <div className="modal" id="shortcuts-modal" aria-hidden="true">
+        <div className="modal-card shortcuts-card">
+          <div className="modal-head">
+            <h3>Keyboard Shortcuts</h3>
+            <button className="close" id="close-shortcuts" type="button">&times;</button>
+          </div>
+          <div className="shortcuts-list">
+            <div><strong>Cmd/Ctrl + K</strong><span>Open command palette</span></div>
+            <div><strong>Space</strong><span>Play or pause</span></div>
+            <div><strong>Arrow Left / Right</strong><span>Scrub current track by 5s</span></div>
+            <div><strong>Arrow Up / Down</strong><span>Select previous or next track</span></div>
+            <div><strong>Ctrl + N / Ctrl + P</strong><span>Select next or previous track</span></div>
+            <div><strong>Enter</strong><span>Play selected track</span></div>
+            <div><strong>C</strong><span>Copy selected track path</span></div>
+            <div><strong>B</strong><span>Open tap BPM counter</span></div>
+            <div><strong>D</strong><span>Delete selected track</span></div>
+            <div><strong>E</strong><span>Edit selected track metadata</span></div>
+            <div><strong>A</strong><span>Browse current artist</span></div>
+            <div><strong>L</strong><span>Browse current album</span></div>
+            <div><strong>F</strong><span>Focus search</span></div>
+            <div><strong>?</strong><span>Open this shortcuts sheet</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="modal" id="edit-metadata-modal" aria-hidden="true">
+        <div className="modal-card edit-metadata-modal-card">
+          <div className="modal-head">
+            <h3>Edit Metadata</h3>
+            <button className="close" id="close-edit-metadata" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="metadata-grid">
+              <label><span>Artist</span><input id="edit-meta-artist" list="artist-suggestions" /></label>
+              <label><span>Title</span><input id="edit-meta-title" /></label>
+              <label><span>Album</span><input id="edit-meta-album" list="album-suggestions" /></label>
+              <label><span>Key</span><input id="edit-meta-key" /></label>
+              <label className="metadata-wide"><span>Tags</span><input id="edit-meta-tags" placeholder="warmup, vocal, peak-time" /></label>
+            </div>
+            <div className="scan-preflight" id="edit-metadata-status">Press Enter or Save Metadata to apply changes.</div>
+            <div className="buttons">
+              <button className="btn" id="save-edit-metadata-btn" type="button">Save Metadata</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="modal" id="delete-track-modal" aria-hidden="true">
+        <div className="modal-card">
+          <div className="modal-head">
+            <h3 id="delete-track-title">Delete Track</h3>
+            <button className="close" id="close-delete-track" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="scan-preflight" id="delete-track-message">Delete this track from DJ Assist?</div>
+            <label className="metadata-toggle">
+              <input id="delete-track-remove-file" type="checkbox" />
+              <span>Delete file from computer</span>
+            </label>
+            <div className="buttons">
+              <button className="btn danger" id="confirm-delete-track-btn" type="button">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="modal" id="tap-bpm-modal" aria-hidden="true">
+        <div className="modal-card">
+          <div className="modal-head">
+            <h3>Tap BPM</h3>
+            <button className="close" id="close-tap-bpm" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="scan-preflight" id="tap-bpm-track-label">Select a track first.</div>
+            <div className="scan-summary">
+              <div className="scan-summary-item"><span>Detected BPM</span><strong id="tap-bpm-value">--</strong></div>
+              <div className="scan-summary-item"><span>Taps</span><strong id="tap-bpm-count">0</strong></div>
+              <div className="scan-summary-item"><span>Confidence</span><strong id="tap-bpm-confidence">Low</strong></div>
+            </div>
+            <label className="metadata-wide">
+              <span>Manual BPM</span>
+              <input id="tap-bpm-manual-input" type="number" step="0.1" min="1" placeholder="Type BPM manually" />
+            </label>
+            <div className="scan-preflight" id="tap-bpm-status">Press Space repeatedly to tap the beat.</div>
+            <div className="buttons">
+              <button className="btn" id="tap-bpm-reset-btn" type="button">Reset</button>
+              <button className="btn" id="tap-bpm-save-btn" type="button">Save BPM</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <datalist id="artist-suggestions" />
+      <datalist id="album-suggestions" />
+
+      <div className="bottom-scan-log collapsed" id="bottom-scan-log">
+        <div className="bottom-scan-log-head" id="bottom-scan-log-head">
+          <strong>Scan Log</strong>
+          <div className="scan-panel-actions">
+            <button type="button" className="icon-btn" id="scan-log-clear-btn">Clear</button>
+            <button type="button" className="icon-btn" id="scan-log-fullscreen-btn" aria-pressed="false">Full Screen</button>
+            <button type="button" className="icon-btn" id="scan-log-toggle-btn" aria-expanded="false" aria-controls="scan-log-body">Expand</button>
+          </div>
+        </div>
+        <div className="bottom-scan-log-body" id="scan-log-body" hidden>
+          <div className="scan-progress-file bottom" id="scan-progress-file">No scan in progress</div>
+          <div className="scan-log" id="scan-log">
+            <div className="scan-log-entry info">No scan activity.</div>
+          </div>
         </div>
       </div>
 

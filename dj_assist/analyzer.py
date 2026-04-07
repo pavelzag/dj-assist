@@ -23,7 +23,7 @@ class TrackAnalysis:
     confidence: float
 
 
-def _load_audio(audio_path: str, duration: int):
+def _load_audio(audio_path: str, duration: int | float | None):
     try:
         import librosa
 
@@ -43,8 +43,6 @@ def _load_audio(audio_path: str, duration: int):
             "error",
             "-i",
             audio_path,
-            "-t",
-            str(duration),
             "-ac",
             "1",
             "-ar",
@@ -53,6 +51,8 @@ def _load_audio(audio_path: str, duration: int):
             "s16le",
             "pipe:1",
         ]
+        if duration is not None:
+            command[5:5] = ["-t", str(duration)]
         env = os.environ.copy()
         env.update({"AV_LOG_FORCE_NOCOLOR": "1"})
         raw = subprocess.check_output(command, stderr=subprocess.DEVNULL, env=env)
@@ -78,27 +78,59 @@ def has_decoding_error(audio_path: str) -> bool:
         return True
 
 
+def _normalize_bpm_candidate(value: float) -> float:
+    bpm = float(value)
+    while bpm < 70:
+        bpm *= 2
+    while bpm > 175:
+        bpm /= 2
+    return round(float(bpm), 1)
+
+
+def _cluster_bpms(candidates: list[float], tolerance: float = 3.5) -> list[list[float]]:
+    if not candidates:
+        return []
+    clusters: list[list[float]] = []
+    for value in sorted(candidates):
+        if not clusters:
+          clusters.append([value])
+          continue
+        current = clusters[-1]
+        center = sum(current) / len(current)
+        if abs(value - center) <= tolerance:
+            current.append(value)
+        else:
+            clusters.append([value])
+    return clusters
+
+
 def detect_bpm(audio_path: str) -> tuple[float, str, str]:
     try:
         import librosa
 
         y, sr = _load_audio(audio_path, 180)
 
-        # Estimate tempo on a few windows and keep the consensus.
         windows = []
         if len(y) > sr * 45:
-            windows = [y[: sr * 45], y[sr * 30 : sr * 75], y[sr * 60 : sr * 105]]
+            windows = [
+                y[: sr * 45],
+                y[sr * 30 : sr * 75],
+                y[sr * 60 : sr * 105],
+                y[sr * 90 : sr * 135],
+            ]
         else:
             windows = [y]
 
         candidates: list[float] = []
         for window in windows:
             onset_env = librosa.onset.onset_strength(y=window, sr=sr)
+            if len(onset_env) < 32 or float(np.max(onset_env)) <= 0:
+                continue
 
             try:
                 tempo = float(librosa.feature.rhythm.tempo(onset_envelope=onset_env, sr=sr)[0])
                 if tempo > 0:
-                    candidates.append(tempo)
+                    candidates.append(_normalize_bpm_candidate(tempo))
             except Exception:
                 pass
 
@@ -106,16 +138,16 @@ def detect_bpm(audio_path: str) -> tuple[float, str, str]:
                 tempo, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
                 tempo = float(tempo)
                 if tempo > 0:
-                    candidates.append(tempo)
+                    candidates.append(_normalize_bpm_candidate(tempo))
             except Exception:
                 pass
 
             try:
                 tempos = librosa.feature.rhythm.tempo(onset_envelope=onset_env, sr=sr, aggregate=None)
-                for tempo in tempos[:3]:
+                for tempo in tempos[:4]:
                     tempo = float(tempo)
                     if tempo > 0:
-                        candidates.append(tempo)
+                        candidates.append(_normalize_bpm_candidate(tempo))
             except Exception:
                 pass
 
@@ -129,28 +161,24 @@ def detect_bpm(audio_path: str) -> tuple[float, str, str]:
                     if lag > 0:
                         tempo = 60.0 * sr / lag
                         if tempo > 0:
-                            candidates.append(float(tempo))
+                            candidates.append(_normalize_bpm_candidate(tempo))
             except Exception:
                 pass
 
         if not candidates:
             return 0.0, "analysis", "no tempo candidates"
 
-        # Drop obvious half/double-time outliers by normalizing into a DJ range first.
-        normalized = []
-        for tempo in candidates:
-            while tempo < 60:
-                tempo *= 2
-            while tempo > 180:
-                tempo /= 2
-            normalized.append(round(float(tempo), 1))
+        clusters = _cluster_bpms(candidates)
+        best_cluster = max(clusters, key=lambda cluster: (len(cluster), -np.std(cluster) if len(cluster) > 1 else 0.0))
+        if len(best_cluster) < max(3, len(windows)):
+            return 0.0, "analysis", "unstable tempo"
 
-        tempo = sorted(normalized)[len(normalized) // 2]
-        while tempo < 60:
-            tempo *= 2
-        while tempo > 180:
-            tempo /= 2
-        return round(float(tempo), 1), "analysis", ""
+        spread = float(np.std(best_cluster)) if len(best_cluster) > 1 else 0.0
+        if spread > 4.0:
+            return 0.0, "analysis", "unstable tempo"
+
+        tempo = round(float(np.median(best_cluster)), 1)
+        return tempo, "analysis", ""
     except Exception:
         return 0.0, "analysis", "decode_failed"
 
@@ -233,6 +261,42 @@ def detect_key(audio_path: str) -> tuple[str, str, float]:
         return camelot, note + "m", minor_score
     except Exception:
         return "", "", 0.0
+
+
+def extract_waveform_peaks(audio_path: str, width: int = 640) -> dict[str, object]:
+    try:
+        safe_width = max(64, min(int(width), 4096))
+        y, sr = _load_audio(audio_path, None)
+        if y is None or len(y) == 0:
+            raise RuntimeError("empty audio")
+
+        if isinstance(y, np.ndarray) and y.ndim > 1:
+            y = np.mean(y, axis=0)
+
+        step = max(1, int(np.ceil(len(y) / safe_width)))
+        peaks: list[dict[str, float]] = []
+        for i in range(safe_width):
+            start = i * step
+            end = min(len(y), start + step)
+            window = y[start:end]
+            if window.size == 0:
+                peaks.append({"min": 0.0, "max": 0.0})
+                continue
+            peaks.append({
+                "min": float(np.min(window)),
+                "max": float(np.max(window)),
+            })
+
+        duration = float(len(y) / float(sr)) if sr else 0.0
+        return {
+            "duration": duration,
+            "sample_rate": int(sr),
+            "samples": int(len(y)),
+            "width": safe_width,
+            "peaks": peaks,
+        }
+    except Exception as exc:
+        raise RuntimeError(f"waveform peak extraction failed: {exc}") from exc
 
 
 def is_compatible_key(key1: str, key2: str) -> tuple[bool, str]:

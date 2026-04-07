@@ -24,12 +24,17 @@ _EMPTY_PREVIEWS: dict = {
     "spotify_album_name": "", "spotify_match_score": 0.0,
     "spotify_high_confidence": False, "spotify_debug": "",
     "spotify_track_number": 0, "spotify_release_year": 0,
+    "acoustid_artist": "", "acoustid_title": "", "acoustid_album": "",
+    "acoustid_match_score": 0.0, "acoustid_id": "", "acoustid_recording_id": "",
+    "acoustid_debug": "",
 }
 
 # Max seconds to wait for Spotify before skipping it for a given track.
-_SPOTIFY_TIMEOUT = float(os.getenv("SPOTIFY_TIMEOUT", "20"))
+_SPOTIFY_TIMEOUT = float(os.getenv("SPOTIFY_TIMEOUT", "3"))
+_SPOTIFY_TIMEOUT_STREAK_LIMIT = int(os.getenv("SPOTIFY_TIMEOUT_STREAK_LIMIT", "3"))
 
 _UNKNOWN_ARTIST_VALUES = {"unknown", "unknown artist", "various artists"}
+_UPPERCASE_TOKENS = {"DJ", "MC", "UK", "USA", "EDM", "RNB", "EP", "LP", "VIP", "ID"}
 
 
 def get_file_hash(filepath: str) -> str:
@@ -67,6 +72,34 @@ def _normalize_text(value: Optional[str]) -> str:
     value = re.sub(r"\([^)]*\)", " ", value)
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _smart_capitalize(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+
+    letters = [char for char in cleaned if char.isalpha()]
+    if letters:
+        has_lower = any(char.islower() for char in letters)
+        has_upper = any(char.isupper() for char in letters)
+        if has_lower and has_upper:
+            return cleaned
+
+    def convert_token(token: str) -> str:
+        if not token:
+            return token
+        upper = token.upper()
+        if upper in _UPPERCASE_TOKENS:
+            return upper
+        if "'" in token:
+            return "'".join(part[:1].upper() + part[1:].lower() if part else part for part in token.split("'"))
+        return token[:1].upper() + token[1:].lower()
+
+    parts = re.split(r"(\s+|[-/&()+[\]{}])", cleaned)
+    return "".join(convert_token(part) if part and not re.fullmatch(r"(\s+|[-/&()+[\]{}])", part) else part for part in parts)
 
 
 def _clean_title(artist: Optional[str], title: Optional[str]) -> Optional[str]:
@@ -239,6 +272,10 @@ def extract_metadata(filepath: str) -> dict:
         metadata["artist"] = _normalize_artist(parts[0])
         metadata["title"] = parts[1].strip() or metadata["title"]
 
+    metadata["artist"] = _smart_capitalize(metadata["artist"])
+    metadata["title"] = _smart_capitalize(metadata["title"])
+    metadata["album"] = _smart_capitalize(metadata["album"])
+
     return metadata
 
 
@@ -389,6 +426,9 @@ def scan_directory(
 
     album_art_cache: dict[str, dict] = {}
 
+    spotify_scan_enabled = spotify_enabled
+    spotify_timeout_streak = 0
+
     with ThreadPoolExecutor(max_workers=1) as spotify_pool:
         iterator = audio_files if progress_callback else tqdm(audio_files, desc="Scanning")
         for filepath in iterator:
@@ -449,25 +489,21 @@ def scan_directory(
                         }
                     )
 
-                # Submit Spotify lookup to background thread immediately so it
-                # runs concurrently with BPM/key detection in the main thread.
-                # When spotify_enabled=False, resolve immediately with empty data.
-                _step("spotify (async)", filepath)
-                if spotify_enabled:
-                    spotify_future: Future = spotify_pool.submit(
-                        build_media_links,
-                        metadata["artist"],
-                        metadata["title"],
-                        metadata["album"],
-                        metadata["duration"],
-                        metadata["track_number"],
-                        metadata["release_year"],
-                        fetch_album_art,
-                    )
-                else:
-                    from concurrent.futures import Future as _Future
-                    _f: Future = spotify_pool.submit(lambda: dict(_EMPTY_PREVIEWS))
-                    spotify_future = _f
+                # Submit remote metadata lookup immediately so it runs
+                # concurrently with BPM/key detection in the main thread.
+                _step("metadata lookup (async)", filepath)
+                spotify_future: Future = spotify_pool.submit(
+                    build_media_links,
+                    metadata["artist"],
+                    metadata["title"],
+                    metadata["album"],
+                    metadata["duration"],
+                    metadata["track_number"],
+                    metadata["release_year"],
+                    fetch_album_art,
+                    filepath,
+                    spotify_scan_enabled,
+                )
 
                 bpm = 0.0
                 bpm_source = ""
@@ -521,12 +557,42 @@ def scan_directory(
                 _step("await-spotify", filepath)
                 try:
                     previews = spotify_future.result(timeout=_SPOTIFY_TIMEOUT)
+                    spotify_timeout_streak = 0
                 except FutureTimeoutError:
                     previews = dict(_EMPTY_PREVIEWS)
                     spotify_future.cancel()
+                    spotify_timeout_streak += 1
                     _emit({"event": "log", "level": "warning", "message": f"Spotify timeout for {Path(filepath).name}"})
+                    if spotify_scan_enabled and spotify_timeout_streak >= max(1, _SPOTIFY_TIMEOUT_STREAK_LIMIT):
+                        spotify_scan_enabled = False
+                        _emit(
+                            {
+                                "event": "log",
+                                "level": "warning",
+                                "message": (
+                                    f"Spotify disabled for the rest of this scan after "
+                                    f"{spotify_timeout_streak} consecutive timeouts."
+                                ),
+                            }
+                        )
                     if verbose:
                         tqdm.write(f"  [spotify timeout] {Path(filepath).name}")
+
+                if not metadata["artist"] and previews.get("acoustid_artist"):
+                    metadata["artist"] = _normalize_artist(str(previews.get("acoustid_artist") or ""))
+                    metadata["artist"] = _smart_capitalize(metadata["artist"])
+                    if metadata["artist"]:
+                        debug_parts.append(f"acoustid_artist={metadata['artist']}")
+                if (not metadata["title"] or not str(metadata["title"]).strip()) and previews.get("acoustid_title"):
+                    metadata["title"] = str(previews.get("acoustid_title") or "").strip() or metadata["title"]
+                    metadata["title"] = _smart_capitalize(metadata["title"])
+                    if metadata["title"]:
+                        debug_parts.append(f"acoustid_title={metadata['title']}")
+                if (not metadata["album"] or not str(metadata["album"]).strip()) and previews.get("acoustid_album"):
+                    metadata["album"] = str(previews.get("acoustid_album") or "").strip() or metadata["album"]
+                    metadata["album"] = _smart_capitalize(metadata["album"])
+                    if metadata["album"]:
+                        debug_parts.append(f"acoustid_album={metadata['album']}")
 
                 if not bpm and can_spotify:
                     analysis_stage = "spotify_bpm"
@@ -545,9 +611,14 @@ def scan_directory(
                     debug_parts.append(f"spotify_key={key}")
 
                 debug_parts.append(f"spotify_id={previews.get('spotify_id') or 'none'}")
+                debug_parts.append(f"acoustid_id={previews.get('acoustid_id') or 'none'}")
                 debug_parts.append(f"album_art_url={previews.get('album_art_url') or 'none'}")
+                if not spotify_scan_enabled:
+                    debug_parts.append("spotify_scan=disabled_after_timeouts")
                 if previews.get("spotify_debug"):
                     debug_parts.append(f"spotify_debug={previews.get('spotify_debug')}")
+                if previews.get("acoustid_debug"):
+                    debug_parts.append(f"acoustid_debug={previews.get('acoustid_debug')}")
 
                 if auto_double_bpm and bpm and 60.0 <= bpm <= 80.0:
                     original_bpm = bpm

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTracks, getTrackById, serializeTrack } from '@/lib/db';
-import { getRecommendedNextTracks } from '@/lib/analyzer';
+import { getRecommendedNextTracks, type RecommendationIntent } from '@/lib/analyzer';
 
 export const runtime = 'nodejs';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -20,16 +20,18 @@ export async function GET(
   }
 
   const allTracks = await getAllTracks();
+  const rawIntent = request.nextUrl.searchParams.get('intent');
+  const intent: RecommendationIntent = rawIntent === 'up' || rawIntent === 'down' || rawIntent === 'same' ? rawIntent : 'safe';
   const recommendations = getRecommendedNextTracks(
-    track.key ?? '',
-    track.bpm ?? 0,
+    track,
     allTracks,
     [track.id],
+    intent,
   );
 
   return NextResponse.json(
     recommendations.map(({ track: t, reason, score }) => ({
-      ...serializeTrack(t as Parameters<typeof serializeTrack>[0]),
+      ...serializeTrack(t as Parameters<typeof serializeTrack>[0], { includeEmbeddedArtwork: false }),
       reason,
       score,
     })),

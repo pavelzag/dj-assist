@@ -8,7 +8,7 @@ DJ Assist is not yet packaged as a single installer. Today, installation means s
 
 - Node.js
 - Python
-- PostgreSQL
+- SQLite
 - the app source code
 
 For non-technical clients, this is not ideal. For a productized rollout, see [Product Shipping Guide](./PRODUCT-SHIPPING.md).
@@ -20,13 +20,13 @@ Current recommended environment:
 - macOS
 - Node 22.x
 - Python 3.11+
-- PostgreSQL 16
+- SQLite
 
 ## What Gets Installed
 
 - Next.js UI application
 - Python scan/analyzer backend
-- PostgreSQL database
+- local SQLite database
 
 ## Step 1: Install Homebrew
 
@@ -58,7 +58,7 @@ brew install python@3.11
 python3 --version
 ```
 
-## Step 4: Install PostgreSQL or Docker Desktop
+## Step 4: Prepare local app data folder
 
 Recommended for the current app:
 
@@ -92,12 +92,12 @@ pip install -U pip
 pip install -r requirements.txt
 ```
 
-## Step 7: Start PostgreSQL
+## Step 7: Prepare the SQLite location
 
 From the project root:
 
 ```bash
-docker compose up -d
+mkdir -p ~/.dj_assist
 ```
 
 ## Step 8: Create `.env.local`
@@ -105,14 +105,14 @@ docker compose up -d
 Create `.env.local` in the project root:
 
 ```bash
-DATABASE_URL=postgres://dj_assist:dj_assist@127.0.0.1:5432/dj_assist
+DJ_ASSIST_DB_PATH=/path/to/dj-assist-data/dj-assist.db
 PYTHON_EXECUTABLE=/path/to/dj-assist/.venv/bin/python
 ```
 
 Example:
 
 ```bash
-DATABASE_URL=postgres://dj_assist:dj_assist@127.0.0.1:5432/dj_assist
+DJ_ASSIST_DB_PATH=/Users/pavel/.dj_assist/dj-assist.db
 PYTHON_EXECUTABLE=/Users/pavel/Projects/dj-assist/.venv/bin/python
 ```
 
@@ -139,7 +139,7 @@ http://localhost:3000
 
 After opening the app:
 
-1. Open the `Library` panel and confirm runtime health looks correct.
+1. Open the `Collection` panel and confirm `Startup Diagnostics` shows the runtime is ready.
 2. Paste a local music-folder path into the scan bar.
 3. Run a scan.
 4. Confirm tracks appear in the library list.
@@ -180,6 +180,13 @@ After opening the app:
 
 ## Troubleshooting
 
+### macOS says the app cannot be opened
+
+If the build is unsigned, open it once from Finder with:
+
+1. Applications -> right-click `DJ Assist` -> `Open`
+2. Or System Settings -> Privacy & Security -> allow the app
+
 ### App refuses to start because of Node version
 
 Run:
@@ -190,7 +197,7 @@ node -v
 
 DJ Assist requires Node 22.x for the current setup.
 
-### `DATABASE_URL environment variable is not set`
+### Database is unavailable
 
 Check `.env.local` exists and restart `npm run dev`.
 
@@ -204,15 +211,14 @@ python -m dj_assist.cli --help
 
 inside the virtualenv.
 
-### Scan cannot connect to database
+If you are using the desktop app, open `Collection -> Startup Diagnostics`.
+That panel shows whether the packaged runtime can see Python and the local database.
 
-Make sure Docker Desktop is running and:
+### Scan cannot open the local database
 
-```bash
-docker compose ps
-```
+Make sure the folder containing `DJ_ASSIST_DB_PATH` is writable.
 
-shows PostgreSQL running.
+shows the app data folder exists and is writable.
 
 ### No waveform or playback
 

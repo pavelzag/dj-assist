@@ -8,10 +8,13 @@ from rich.console import Console
 from rich.table import Table
 
 from .analyzer import get_recommended_next_tracks
+from .analyzer import detect_bpm
+from .analyzer import extract_waveform_peaks
 from .db import Database
 from .scanner import scan_directory
 from .web import run_app
-from .media import SpotifyClient
+from .media import AcoustIdClient, SpotifyClient
+from .tag_writer import write_mp3_metadata
 
 console = Console()
 
@@ -165,6 +168,19 @@ def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: 
             emit({"event": "log", "level": "info", "message": "Spotify disabled — skipping metadata lookups."})
         else:
             console.print("[dim]Spotify disabled — skipping metadata lookups.[/dim]")
+    acoustid = AcoustIdClient()
+    if acoustid.enabled():
+        if acoustid.available():
+            message = "AcoustID enabled — fingerprint metadata recovery is available."
+            level = "info"
+        else:
+            message = "AcoustID key present, but fpcalc was not found — fingerprint lookup is unavailable."
+            level = "warning"
+        if json_progress:
+            emit({"event": "log", "level": level, "message": message})
+        else:
+            style = "yellow" if level == "warning" else "dim"
+            console.print(f"[{style}]{message}[/{style}]")
     results = scan_directory(
         str(directory),
         db,
@@ -188,6 +204,39 @@ def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: 
 @main.command()
 def list() -> None:
     _print_tracks(_db().get_all_tracks())
+
+
+@main.command(name="write-tags")
+@click.argument("file_path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--artist", default=None)
+@click.option("--title", default=None)
+@click.option("--album", default=None)
+@click.option("--key", "musical_key", default=None)
+@click.option("--tags", default=None, help="Comma-separated DJ Assist tags.")
+def write_tags(file_path: Path, artist: str | None, title: str | None, album: str | None, musical_key: str | None, tags: str | None) -> None:
+    tag_list = [item.strip() for item in (tags or "").split(",") if item.strip()]
+    try:
+        write_mp3_metadata(
+            str(file_path),
+            artist=artist,
+            title=title,
+            album=album,
+            key=musical_key,
+            custom_tags=tag_list,
+        )
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+
+
+@main.command(name="waveform-peaks")
+@click.argument("file_path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--width", type=int, default=640, show_default=True)
+def waveform_peaks(file_path: Path, width: int) -> None:
+    try:
+        payload = extract_waveform_peaks(str(file_path), width=width)
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(json.dumps(payload))
 
 
 @main.command()
@@ -219,6 +268,53 @@ def debug(track_id: int) -> None:
         console.print(f"Error: {track.analysis_error}")
     if track.analysis_debug:
         console.print(track.analysis_debug)
+
+
+@main.command(name="reanalyze-bpm")
+@click.argument("track_id", type=int)
+@click.option("--json-output", is_flag=True, help="Emit JSON with the updated BPM analysis.")
+def reanalyze_bpm(track_id: int, json_output: bool) -> None:
+    db = _db()
+    track = db.get_track_by_id(track_id)
+    if not track:
+        raise click.ClickException(f"Track {track_id} not found")
+    if not track.path:
+        raise click.ClickException(f"Track {track_id} has no file path")
+
+    bpm, bpm_source, analysis_error = detect_bpm(track.path)
+    analysis_status = "ok" if bpm else "needs_review"
+    decode_failed = "true" if analysis_error == "decode_failed" else "false"
+    analysis_debug = f"manual_reanalyze_bpm={bpm or 0.0} | local_bpm_error={analysis_error or 'none'}"
+    updated = db.update_track_analysis(
+      track_id,
+      bpm=bpm,
+      bpm_source=bpm_source,
+      analysis_status=analysis_status,
+      analysis_error=analysis_error,
+      analysis_stage="local_bpm",
+      analysis_debug=analysis_debug,
+      decode_failed=decode_failed,
+    )
+    if not updated:
+        raise click.ClickException(f"Track {track_id} not found after update")
+
+    payload = {
+        "id": updated.id,
+        "bpm": updated.bpm or 0.0,
+        "bpm_source": updated.bpm_source or "",
+        "analysis_status": updated.analysis_status or "",
+        "analysis_error": updated.analysis_error or "",
+        "analysis_stage": updated.analysis_stage or "",
+        "analysis_debug": updated.analysis_debug or "",
+        "decode_failed": updated.decode_failed or "",
+    }
+    if json_output:
+        click.echo(json.dumps(payload))
+        return
+
+    console.print(
+        f"{_track_label(updated)} -> BPM {payload['bpm'] or '--'} ({payload['bpm_source'] or 'none'})"
+    )
 
 
 @main.command()
@@ -281,6 +377,7 @@ def fetch_art(force: bool, limit: int | None, verbose: bool) -> None:
                 track.album,
                 track.duration,
                 fetch_album_art=True,
+                file_path=track.path,
             )
             art_url = previews.get("album_art_url") or ""
             if verbose:
