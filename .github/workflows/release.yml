@@ -47,8 +47,14 @@ jobs:
           mkdir -p "$extract_root"
           curl -L "$PYTHON_STANDALONE_URL" -o "$archive"
           tar -xf "$archive" -C "$extract_root"
-          py_bin="$(find "$extract_root" -type f \( -name python3 -o -name python \) | head -n 1)"
+          py_bin="$(
+            find "$extract_root" \( -type f -o -type l \) \
+              \( -name python3.11 -o -name python3 -o -name python \) \
+              | head -n 1
+          )"
           if [ -z "$py_bin" ]; then
+            echo "Contents of extracted runtime:" >&2
+            find "$extract_root" -maxdepth 4 | sed -n '1,120p' >&2
             echo "Could not find python executable in downloaded runtime." >&2
             exit 1
           fi

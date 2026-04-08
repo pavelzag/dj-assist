@@ -1153,13 +1153,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         .replace(/-{2,}/g, '-');
     }
 
-    function tunebatUrlForTrack(track: Record<string, unknown>): string | null {
+    function tunebatUrlForTrack(track: Record<string, unknown>): string {
       const spotifyId = String(track.spotify_id ?? '').trim();
-      if (!spotifyId) return null;
-      const titleSlug = slugifyExternalLabel(track.title ?? 'track');
-      const artistSlug = slugifyExternalLabel(track.artist ?? 'artist');
-      const slug = [titleSlug, artistSlug].filter(Boolean).join('-') || spotifyId;
-      return `https://tunebat.com/Info/${slug}/${spotifyId}`;
+      if (spotifyId) {
+        const titleSlug = slugifyExternalLabel(track.title ?? 'track');
+        const artistSlug = slugifyExternalLabel(track.artist ?? 'artist');
+        const slug = [titleSlug, artistSlug].filter(Boolean).join('-') || spotifyId;
+        return `https://tunebat.com/Info/${slug}/${spotifyId}`;
+      }
+      const title = String(track.title ?? '').trim();
+      const artist = String(track.artist ?? '').trim();
+      const searchQuery = [artist, title].filter(Boolean).join(' ').trim();
+      if (!searchQuery) return 'https://tunebat.com/';
+      return `https://tunebat.com/Search?q=${encodeURIComponent(searchQuery)}`;
     }
 
     async function copyActiveTrackPath() {
@@ -2424,9 +2430,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
             <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
             ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
-            ${tunebatUrl
-              ? `<button class="btn" id="open-tunebat-btn" type="button" title="Open this track on Tunebat">Tunebat</button>`
-              : '<button class="btn" type="button" disabled title="Tunebat link is available after Spotify matching">Tunebat</button>'}
+            <button class="btn" id="open-tunebat-btn" type="button" title="Open this track on Tunebat">Tunebat</button>
             ${track.youtube_url ? '<button class="btn" id="open-youtube-btn" type="button">YouTube</button>' : ''}
             ${sets.length > 0 ? `
               <div style="display:inline-flex;gap:6px;align-items:center;">
@@ -2935,7 +2939,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
       }
       document.getElementById('open-tunebat-btn')?.addEventListener('click', async () => {
-        if (!tunebatUrl) return;
         const opened = await adapter.openExternal(tunebatUrl);
         if (!opened) showToast('Could not open Tunebat.', 'error');
       });
