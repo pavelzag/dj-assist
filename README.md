@@ -72,35 +72,25 @@ A desktop music-library tool for DJs. Scan local audio folders, analyze BPM and 
 
 ## Screenshots
 
-### Library Overview
+### Logo
 
-![Library overview](documentation/Screenshot%202026-04-08%20at%2018.39.29.png)
+![DJ Assist logo](documentation/Screenshot%202026-04-08%20at%2019.18.57.png)
 
-Browse the collection with keyboard-first navigation, sortable columns, cover art, and fast filters for practical cleanup work.
+### Main Screen
 
-### Track Detail And Waveform
+![Main screen](documentation/Screenshot%202026-04-08%20at%2018.39.29.png)
 
-![Track detail and waveform](documentation/Screenshot%202026-04-08%20at%2019.18.57.png)
+### Edit Screen
 
-Inspect the selected track, scrub through the waveform, review BPM and key analysis, and jump to external references such as Tunebat or YouTube.
+![Edit screen](documentation/Screenshot%202026-04-08%20at%2019.27.42.png)
 
-### Collection And Diagnostics
+### Manual BPM Menu
 
-![Collection and diagnostics](documentation/Screenshot%202026-04-08%20at%2019.27.42.png)
+![Manual BPM menu](documentation/Screenshot%202026-04-08%20at%2019.27.52.png)
 
-Manage watch folders, runtime health, scan preferences, and the library reset flow from one operational dashboard.
+### Commands Tab
 
-### Play Next And Metadata Tools
-
-![Play next and metadata tools](documentation/Screenshot%202026-04-08%20at%2019.27.52.png)
-
-Review compatibility suggestions, switch transition intent, and work through metadata correction tools for difficult tracks.
-
-### Scan Activity
-
-![Scan activity](documentation/Screenshot%202026-04-08%20at%2019.28.07.png)
-
-Monitor scan progress, warnings, and detailed activity logs while the library updates in the background.
+![Commands tab](documentation/Screenshot%202026-04-08%20at%2019.28.07.png)
 
 ---
 
