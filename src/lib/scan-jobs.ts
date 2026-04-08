@@ -37,6 +37,7 @@ export type ScanJobState = {
   validation: Record<string, unknown>;
   options: {
     fetchAlbumArt: boolean;
+    fastScan: boolean;
     verbose: boolean;
     rescanMode: RescanMode;
   };
@@ -223,6 +224,7 @@ async function handleStructuredEvent(job: InMemoryJob, event: ScanProgressEvent 
 export async function createScanJob(input: {
   directory: string;
   fetchAlbumArt: boolean;
+  fastScan: boolean;
   verbose: boolean;
   rescanMode: RescanMode;
 }): Promise<ScanJobState> {
@@ -249,6 +251,7 @@ export async function createScanJob(input: {
     validation,
     options: {
       fetchAlbumArt: input.fetchAlbumArt,
+      fastScan: input.fastScan,
       verbose: input.verbose,
       rescanMode: input.rescanMode,
     },
@@ -284,6 +287,7 @@ export async function startScanJob(jobId: string): Promise<void> {
   const request: ScanRequest = {
     directory: job.state.directory,
     fetchAlbumArt: job.state.options.fetchAlbumArt,
+    fastScan: job.state.options.fastScan,
     verbose: job.state.options.verbose,
     autoDoubleBpm: true,
     rescanMode: job.state.options.rescanMode,

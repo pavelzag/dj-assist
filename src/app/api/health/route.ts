@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getDatabasePath } from '@/lib/db';
 import { resolveWorkingPython } from '@/lib/scan';
-import { applySpotifyCredentialsToEnv, effectiveSpotifyCredentials } from '@/lib/runtime-settings';
+import {
+  applySpotifyCredentialsToEnv,
+  effectiveSpotifyCredentials,
+} from '@/lib/runtime-settings';
 import { getClientLogPath } from '@/lib/app-log';
 
 export const runtime = 'nodejs';

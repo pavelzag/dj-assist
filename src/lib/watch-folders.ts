@@ -37,6 +37,7 @@ async function triggerWatchScan(entry: WatchEntry) {
   const job = await createScanJob({
     directory: entry.directory,
     fetchAlbumArt: true,
+    fastScan: false,
     verbose: false,
     rescanMode: 'smart',
   });

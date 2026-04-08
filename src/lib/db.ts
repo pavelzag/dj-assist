@@ -86,6 +86,8 @@ function ensureSchema(): void {
       duration REAL,
       bitrate REAL,
       bpm REAL,
+      bpm_override REAL,
+      bpm_confidence REAL,
       key TEXT,
       key_numeric TEXT,
       spotify_id TEXT,
@@ -114,6 +116,8 @@ function ensureSchema(): void {
       analysis_stage TEXT,
       analysis_debug TEXT,
       file_hash TEXT,
+      file_size INTEGER,
+      file_mtime REAL,
       ignored INTEGER NOT NULL DEFAULT 0,
       custom_tags TEXT,
       artist_canonical TEXT,
@@ -176,6 +180,8 @@ function ensureSchema(): void {
 
   const trackColumns = [
     ['bitrate', 'REAL'],
+    ['bpm_override', 'REAL'],
+    ['bpm_confidence', 'REAL'],
     ['ignored', 'INTEGER NOT NULL DEFAULT 0'],
     ['custom_tags', 'TEXT'],
     ['artist_canonical', 'TEXT'],
@@ -189,6 +195,8 @@ function ensureSchema(): void {
     ['embedded_album_art', 'INTEGER NOT NULL DEFAULT 0'],
     ['album_art_match_debug', 'TEXT'],
     ['spotify_url', 'TEXT'],
+    ['file_size', 'INTEGER'],
+    ['file_mtime', 'REAL'],
   ] as const;
   const trackExisting = new Set(
     db.prepare("SELECT name FROM pragma_table_info('tracks')").all().map((row) => String((row as Record<string, unknown>).name)),
@@ -298,6 +306,8 @@ export interface Track {
   duration: number | null;
   bitrate: number | null;
   bpm: number | null;
+  bpm_override: number | null;
+  bpm_confidence: number | null;
   key: string | null;
   key_numeric: string | null;
   spotify_id: string | null;
@@ -326,6 +336,8 @@ export interface Track {
   analysis_stage: string | null;
   analysis_debug: string | null;
   file_hash: string | null;
+  file_size: number | null;
+  file_mtime: number | null;
   ignored: boolean | null;
   custom_tags: string | null;
   artist_canonical: string | null;
@@ -378,9 +390,13 @@ function mapTrack(row: Record<string, unknown>): Track {
     duration: row.duration == null ? null : Number(row.duration),
     bitrate: row.bitrate == null ? null : Number(row.bitrate),
     bpm: row.bpm == null ? null : Number(row.bpm),
+    bpm_override: row.bpm_override == null ? null : Number(row.bpm_override),
+    bpm_confidence: row.bpm_confidence == null ? null : Number(row.bpm_confidence),
     spotify_tempo: row.spotify_tempo == null ? null : Number(row.spotify_tempo),
     album_art_confidence: row.album_art_confidence == null ? null : Number(row.album_art_confidence),
     spotify_match_score: row.spotify_match_score == null ? null : Number(row.spotify_match_score),
+    file_size: row.file_size == null ? null : Number(row.file_size),
+    file_mtime: row.file_mtime == null ? null : Number(row.file_mtime),
     embedded_album_art: toBoolean(row.embedded_album_art),
     ignored: toBoolean(row.ignored),
     manual_cues: parseJson<Array<{ time: number; label?: string }>>(row.manual_cues, []),
@@ -504,12 +520,13 @@ export async function getScanLogs(scanRunId: string, limit = 200): Promise<ScanL
 }
 
 function sanitizeAlbumArtUrl(
+  trackId: number,
   value: string | null,
   options?: { includeEmbeddedArtwork?: boolean },
 ): string | null {
   if (!value) return value;
   if (options?.includeEmbeddedArtwork === false && value.startsWith('data:')) {
-    return null;
+    return `/api/tracks/${trackId}/art`;
   }
   return value;
 }
@@ -518,9 +535,10 @@ export function serializeTrack(
   track: Track,
   options?: { includeEmbeddedArtwork?: boolean },
 ) {
-  const effectiveBpm = track.bpm ?? track.spotify_tempo ?? null;
+  const effectiveBpm = track.bpm_override ?? track.bpm ?? track.spotify_tempo ?? null;
+  const effectiveBpmSource = track.bpm_override != null ? 'manual' : track.bpm_source;
   const effectiveKey = track.key || track.spotify_key || track.key_numeric || '';
-  const albumArtUrl = sanitizeAlbumArtUrl(track.album_art_url, options);
+  const albumArtUrl = sanitizeAlbumArtUrl(track.id, track.album_art_url, options);
   const displayArtist = smartCapitalize(track.artist);
   const displayTitle = smartCapitalize(track.title);
   const displayAlbum = smartCapitalize(track.album);
@@ -534,6 +552,8 @@ export function serializeTrack(
     duration: track.duration,
     bitrate: track.bitrate,
     bpm: track.bpm,
+    bpm_override: track.bpm_override,
+    bpm_confidence: track.bpm_confidence,
     key: track.key,
     key_numeric: track.key_numeric,
     spotify_id: track.spotify_id,
@@ -555,7 +575,7 @@ export function serializeTrack(
     spotify_match_score: track.spotify_match_score,
     spotify_high_confidence: (track.spotify_high_confidence ?? '').toLowerCase() === 'true',
     album_art_debug: {
-      album_art_url: track.album_art_url ?? '',
+      album_art_url: albumArtUrl ?? '',
       spotify_id: track.spotify_id ?? '',
       spotify_album_name: displaySpotifyAlbumName ?? '',
       spotify_match_score: track.spotify_match_score ?? 0,
@@ -570,7 +590,7 @@ export function serializeTrack(
       has_album_art: Boolean(track.album_art_url),
     },
     youtube_url: track.youtube_url,
-    bpm_source: track.bpm_source,
+    bpm_source: effectiveBpmSource,
     analysis_status: track.analysis_status,
     analysis_error: track.analysis_error,
     decode_failed: track.decode_failed,
@@ -627,11 +647,11 @@ export async function searchTracks(params: SearchParams): Promise<Track[]> {
     values.push(like, like, like, like, like);
   }
   if (params.bpmMin != null) {
-    clauses.push('COALESCE(bpm, spotify_tempo) >= ?');
+    clauses.push('COALESCE(bpm_override, bpm, spotify_tempo) >= ?');
     values.push(params.bpmMin);
   }
   if (params.bpmMax != null) {
-    clauses.push('COALESCE(bpm, spotify_tempo) <= ?');
+    clauses.push('COALESCE(bpm_override, bpm, spotify_tempo) <= ?');
     values.push(params.bpmMax);
   }
   if (params.key?.trim()) {
@@ -647,7 +667,7 @@ export async function searchTracks(params: SearchParams): Promise<Track[]> {
 }
 
 export async function updateTrackBpm(id: number, bpm: number): Promise<void> {
-  execute("UPDATE tracks SET bpm = ?, bpm_source = 'manual' WHERE id = ?", bpm, id);
+  execute('UPDATE tracks SET bpm_override = ? WHERE id = ?', bpm, id);
 }
 
 export async function updateTrackMetadata(

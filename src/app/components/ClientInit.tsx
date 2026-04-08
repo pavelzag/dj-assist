@@ -51,6 +51,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const nowPlayingBarEl = document.getElementById('now-playing-bar') as HTMLElement | null;
     const nowPlayingTitleEl = document.getElementById('now-playing-title') as HTMLElement | null;
     const nowPlayingMetaEl = document.getElementById('now-playing-meta') as HTMLElement | null;
+    const muteBtn = document.getElementById('mute-btn') as HTMLButtonElement | null;
     const commandPaletteModal = document.getElementById('command-palette-modal') as HTMLElement | null;
     const commandPaletteInput = document.getElementById('command-palette-input') as HTMLInputElement | null;
     const commandPaletteList = document.getElementById('command-palette-list') as HTMLElement | null;
@@ -76,6 +77,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const tapBpmConfidenceEl = document.getElementById('tap-bpm-confidence') as HTMLElement | null;
     const tapBpmManualInputEl = document.getElementById('tap-bpm-manual-input') as HTMLInputElement | null;
     const tapBpmStatusEl = document.getElementById('tap-bpm-status') as HTMLElement | null;
+    const tapBpmHalfBtn = document.getElementById('tap-bpm-half-btn') as HTMLButtonElement | null;
+    const tapBpmDoubleBtn = document.getElementById('tap-bpm-double-btn') as HTMLButtonElement | null;
     const tapBpmResetBtn = document.getElementById('tap-bpm-reset-btn') as HTMLButtonElement | null;
     const tapBpmSaveBtn = document.getElementById('tap-bpm-save-btn') as HTMLButtonElement | null;
     const panelTrack = document.getElementById('panel-track') as HTMLElement;
@@ -88,6 +91,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const toastStack = document.getElementById('toast-stack') as HTMLElement;
     const quickChooseFolderBtn = document.getElementById('quick-choose-folder-btn') as HTMLButtonElement | null;
     const quickStartScanBtn = document.getElementById('quick-start-scan-btn') as HTMLButtonElement | null;
+    const quickFastScanEl = document.getElementById('quick-fast-scan') as HTMLInputElement | null;
     const quickFullRescanEl = document.getElementById('quick-full-rescan') as HTMLInputElement | null;
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -98,6 +102,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const recentNewTrackIdsKey = 'dj-assist-recent-new-track-ids';
     type Preferences = {
       defaultFullRescan: boolean;
+      defaultFastScan: boolean;
       autoplayOnSelect: boolean;
       defaultListDensity: 'comfortable' | 'compact';
       collapseScanLog: boolean;
@@ -111,6 +116,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     };
     const defaultPreferences: Preferences = {
       defaultFullRescan: false,
+      defaultFastScan: false,
       autoplayOnSelect: true,
       defaultListDensity: 'comfortable',
       collapseScanLog: true,
@@ -147,6 +153,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let hasScanBaseline = false;
     let recentNewTrackIds = new Set<number>();
     let nowPlayingTrackId: number | null = null;
+    let audioMuted = false;
     let currentPanel: 'track' | 'sets' | 'library' | 'activity' = 'track';
     let tapBpmTrackId: number | null = null;
     let tapBpmTapTimes: number[] = [];
@@ -213,6 +220,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const parsed = JSON.parse(value) as Partial<Preferences>;
         return {
           defaultFullRescan: Boolean(parsed.defaultFullRescan),
+          defaultFastScan: Boolean(parsed.defaultFastScan),
           autoplayOnSelect: parsed.autoplayOnSelect !== false,
           defaultListDensity: parsed.defaultListDensity === 'compact' ? 'compact' : 'comfortable',
           collapseScanLog: parsed.collapseScanLog !== false,
@@ -430,7 +438,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function updateTapBpmUi() {
       if (tapBpmValueEl) tapBpmValueEl.textContent = tapBpmValue > 0 ? String(Math.round(tapBpmValue)) : '--';
       if (tapBpmCountEl) tapBpmCountEl.textContent = String(tapBpmTapTimes.length);
-      if (tapBpmConfidenceEl) tapBpmConfidenceEl.textContent = tapBpmConfidence();
+      if (tapBpmConfidenceEl) {
+        const currentTrack = tapBpmTrackId == null ? null : tracks.find((track) => Number(track.id) === tapBpmTrackId) ?? null;
+        const analyzerConfidence = Number(currentTrack?.bpm_confidence ?? 0);
+        tapBpmConfidenceEl.textContent = tapBpmTapTimes.length >= 4
+          ? tapBpmConfidence()
+          : analyzerConfidence > 0 ? analyzerConfidenceLabel(analyzerConfidence) : 'Low';
+      }
       if (tapBpmManualInputEl && document.activeElement !== tapBpmManualInputEl) {
         tapBpmManualInputEl.value = tapBpmValue > 0 ? String(Math.round(tapBpmValue)) : '';
       }
@@ -482,6 +496,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return 'Low';
     }
 
+    function analyzerConfidenceLabel(value: number) {
+      if (value >= 0.75) return 'Stable';
+      if (value >= 0.45) return 'Settling';
+      return 'Low';
+    }
+
     function registerTapBpmTap() {
       const now = performance.now();
       const lastTap = tapBpmTapTimes[tapBpmTapTimes.length - 1] ?? 0;
@@ -510,9 +530,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       resetTapBpmState();
       const existingBpm = Number(track.effective_bpm ?? track.bpm ?? 0);
+      const analyzerConfidence = Number(track.bpm_confidence ?? 0);
       if (existingBpm > 0) {
         tapBpmValue = existingBpm;
-        if (tapBpmStatusEl) tapBpmStatusEl.textContent = 'You can tap a new BPM or type one manually.';
+        if (tapBpmStatusEl) {
+          tapBpmStatusEl.textContent = analyzerConfidence > 0
+            ? `Current BPM confidence: ${analyzerConfidenceLabel(analyzerConfidence)}. You can tap a new BPM, type one manually, or use /2 or x2.`
+            : 'You can tap a new BPM, type one manually, or use /2 or x2.';
+        }
+        if (tapBpmConfidenceEl && analyzerConfidence > 0) {
+          tapBpmConfidenceEl.textContent = analyzerConfidenceLabel(analyzerConfidence);
+        }
         updateTapBpmUi();
       }
       openModal(tapBpmModal);
@@ -629,7 +657,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function updateScanDirectoryDisplay() {
-      return;
+      if (!scanPreflightEl) return;
+      const directory = scanDirectoryEl?.value.trim() ?? '';
+      if (!directory) {
+        scanPreflightEl.textContent = 'Choose a music folder to check.';
+        return;
+      }
+      const name = directory.split(/[\\/]/).filter(Boolean).pop() ?? directory;
+      const mode = quickFastScanEl?.checked ? ' · Fast scan mode' : '';
+      scanPreflightEl.textContent = `Music folder: ${name}${mode}`;
     }
 
     function setListDensity(density: string) {
@@ -868,6 +904,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       activeQuickFilter = activeQuickFilter === filter ? '' : filter;
       renderQuickFilters();
       renderList(tracks);
+      if (selectedDetailTrackId != null) {
+        void loadTrackDetail(String(selectedDetailTrackId), false);
+      }
     }
 
     function matchesSearchQuery(track: Record<string, unknown>, query: string): boolean {
@@ -1014,7 +1053,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         desktopStatusBadge.dataset.state = 'idle';
         return;
       }
-      desktopStatusBadge.textContent = 'Desktop app';
+      desktopStatusBadge.textContent = '';
       desktopStatusBadge.dataset.state = 'idle';
     }
 
@@ -1031,7 +1070,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const track = nowPlayingTrackId == null
         ? activeTrack()
         : tracks.find((item) => Number(item.id) === nowPlayingTrackId) ?? activeTrack();
-      if (!nowPlayingBarEl || !nowPlayingTitleEl || !nowPlayingMetaEl) return;
+      if (!nowPlayingBarEl) return;
       if (!track) {
         nowPlayingBarEl.hidden = true;
         nowPlayingBarEl.dataset.state = 'idle';
@@ -1040,18 +1079,35 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const currentAudio = audio ?? document.getElementById('local-audio') as HTMLAudioElement | null;
       const isPlaying = Boolean(currentAudio && !currentAudio.paused);
       const stateLabel = currentAudio
-        ? (currentAudio.ended ? 'Ended' : isPlaying ? 'Playing' : 'Paused')
+        ? (currentAudio.ended ? 'Ended' : currentAudio.muted ? 'Muted' : isPlaying ? 'Playing' : 'Paused')
         : 'Ready';
       nowPlayingBarEl.hidden = false;
       nowPlayingBarEl.dataset.state = isPlaying ? 'playing' : 'paused';
-      nowPlayingTitleEl.textContent = `${String(track.artist ?? 'Unknown Artist')} - ${String(track.title ?? 'Untitled')}`;
-      nowPlayingMetaEl.textContent = [
-        albumNameFor(track) || 'Single',
-        formatDuration(track.duration),
-        formatBitrate(track.bitrate),
-        playbackQueue.length ? `${playbackQueue.length} queued` : '',
-        stateLabel,
-      ].filter(Boolean).join(' · ');
+      nowPlayingBarEl.setAttribute('aria-label', `Playback ${stateLabel.toLowerCase()}`);
+      syncMuteButton(currentAudio);
+    }
+
+    function syncMuteButton(audio?: HTMLAudioElement | null) {
+      if (!muteBtn) return;
+      const currentAudio = audio ?? document.getElementById('local-audio') as HTMLAudioElement | null;
+      const muted = Boolean(currentAudio?.muted ?? audioMuted);
+      muteBtn.textContent = muted ? 'Unmute' : 'Mute';
+      muteBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
+      muteBtn.title = muted ? 'Unmute' : 'Mute';
+    }
+
+    function toggleCurrentAudioMute() {
+      const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
+      if (!audio && nowPlayingTrackId == null) return false;
+      audioMuted = audio ? !audio.muted : !audioMuted;
+      if (audio) {
+        audio.muted = audioMuted;
+        updateNowPlayingBar(audio);
+      } else {
+        syncMuteButton();
+      }
+      showToast(audioMuted ? 'Playback muted.' : 'Playback unmuted.', 'info');
+      return true;
     }
 
     function updateRenderedTrackDetail(track: Record<string, unknown>) {
@@ -1086,6 +1142,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function shellEscapePath(rawPath: string): string {
       return `'${rawPath.replace(/'/g, `'\\''`)}'`;
+    }
+
+    function slugifyExternalLabel(value: unknown): string {
+      return String(value ?? '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .replace(/-{2,}/g, '-');
+    }
+
+    function tunebatUrlForTrack(track: Record<string, unknown>): string | null {
+      const spotifyId = String(track.spotify_id ?? '').trim();
+      if (!spotifyId) return null;
+      const titleSlug = slugifyExternalLabel(track.title ?? 'track');
+      const artistSlug = slugifyExternalLabel(track.artist ?? 'artist');
+      const slug = [titleSlug, artistSlug].filter(Boolean).join('-') || spotifyId;
+      return `https://tunebat.com/Info/${slug}/${spotifyId}`;
     }
 
     async function copyActiveTrackPath() {
@@ -2190,12 +2264,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       // Update local tracks array
       const idx = tracks.findIndex((t) => t.id === trackId);
       if (idx !== -1) {
-        tracks[idx] = { ...tracks[idx], bpm: roundedBpm, effective_bpm: roundedBpm };
+        tracks[idx] = { ...tracks[idx], bpm_override: roundedBpm, effective_bpm: roundedBpm };
         renderList(tracks);
       }
       if (selectedDetailTrackId === trackId || activeTrackId === trackId) {
         await loadTrackDetail(String(trackId), false);
       }
+    }
+
+    function adjustTapBpm(multiplier: number) {
+      if (tapBpmValue <= 0) return;
+      tapBpmValue = Math.max(1, Math.round((tapBpmValue * multiplier) * 10) / 10);
+      tapBpmTapTimes = [];
+      if (tapBpmStatusEl) {
+        tapBpmStatusEl.textContent = multiplier > 1
+          ? 'BPM doubled. Save it if it matches the groove.'
+          : 'BPM halved. Save it if it matches the groove.';
+      }
+      updateTapBpmUi();
     }
 
     function attachBpmEdit(trackId: number) {
@@ -2257,13 +2343,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
       const nextPageSize = 10;
       const filteredNextTracks = () => {
-        return includeUnknownArtistsInNextTracks
-          ? nextTracks
-          : nextTracks.filter((item) => !isUnknownArtistName(item.artist));
+        return nextTracks.filter((item) => {
+          if ((hideUnknownArtistsEl.checked || !includeUnknownArtistsInNextTracks) && isUnknownArtistName(item.artist)) {
+            return false;
+          }
+          if (activeQuickFilter === 'high-bitrate' && !isHighBitrate(item)) {
+            return false;
+          }
+          return true;
+        });
       };
-      const nextTracksEmptyMessage = includeUnknownArtistsInNextTracks
-        ? 'No compatible tracks found.'
-        : 'No compatible known-artist tracks found. Enable Include Unknown Artist to show them.';
+      const nextTracksEmptyMessage = activeQuickFilter === 'high-bitrate'
+        ? 'No compatible high-bitrate tracks found.'
+        : (hideUnknownArtistsEl.checked || !includeUnknownArtistsInNextTracks)
+            ? 'No compatible known-artist tracks found.'
+            : 'No compatible tracks found.';
       const initialNextTracks = filteredNextTracks();
       const nextPageCount = Math.max(1, Math.ceil(initialNextTracks.length / nextPageSize));
       const currentNextPage = Math.min(nextTracksPageByTrackId[trackId] ?? 0, nextPageCount - 1);
@@ -2279,6 +2373,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const coverSource = String(track.album_art_source ?? (track.album_art_url ? 'unknown' : 'none'));
       const coverConfidence = Number(track.album_art_confidence ?? 0);
       const coverStatusClass = coverReviewStatus === 'approved' ? 'success' : coverReviewStatus === 'missing' ? 'subtle' : 'warn';
+      const tunebatUrl = tunebatUrlForTrack(track);
       const bpmDisplay = track.effective_bpm
         ? `<span class="bpm-val" id="bpm-display-${trackId}" data-bpm="${track.effective_bpm}" title="Click to edit">${displayBpm(track.effective_bpm, trackId)}</span>`
         : `<span class="bpm-val" id="bpm-display-${trackId}" data-bpm="" title="Click to set BPM">--</span>`;
@@ -2329,6 +2424,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
             <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
             ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
+            ${tunebatUrl
+              ? `<a class="btn" href="${esc(tunebatUrl)}" target="_blank" rel="noreferrer" title="Open this track on Tunebat">Tunebat</a>`
+              : '<button class="btn" type="button" disabled title="Tunebat link is available after Spotify matching">Tunebat</button>'}
             ${track.youtube_url ? `<a class="btn" href="${esc(track.youtube_url)}" target="_blank" rel="noreferrer">YouTube</a>` : ''}
             ${sets.length > 0 ? `
               <div style="display:inline-flex;gap:6px;align-items:center;">
@@ -2686,6 +2784,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       if (playBtn && localAudio) {
         nowPlayingTrackId = trackId;
+        localAudio.muted = audioMuted;
         updateNowPlayingBar(localAudio);
         const resumeState = loadResumeState();
         let resumeApplied = false;
@@ -2696,6 +2795,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             resumeApplied = true;
             if (!resumeState.paused) localAudio.play().catch(() => {});
           }
+          localAudio.muted = audioMuted;
           updateNowPlayingBar(localAudio);
         });
         localAudio.addEventListener('timeupdate', () => {
@@ -2703,6 +2803,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           updateNowPlayingBar(localAudio);
         });
         localAudio.addEventListener('canplay', () => {
+          localAudio.muted = audioMuted;
           updateNowPlayingBar(localAudio);
         });
         localAudio.addEventListener('error', () => {
@@ -2752,6 +2853,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         setPlaying(!localAudio.paused);
         updateNowPlayingBar(localAudio);
       }
+      muteBtn?.addEventListener('click', () => {
+        toggleCurrentAudioMute();
+      });
+      syncMuteButton(localAudio);
       if (localAudio) {
         void drawWaveform(trackId, `/api/tracks/${track.id}/stream`, [], localAudio);
       }
@@ -2776,9 +2881,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           }
           await loadTrackDetail(String(trackId), false);
           const bpmValue = Number(refreshed?.effective_bpm ?? refreshed?.bpm ?? 0);
+          const bpmConfidence = Number(refreshed?.bpm_confidence ?? 0);
+          const confidenceLabel = bpmConfidence > 0 ? analyzerConfidenceLabel(bpmConfidence) : '';
           showToast(
-            bpmValue > 0 ? `BPM updated to ${Math.round(bpmValue)}.` : 'No BPM could be detected for this file.',
-            bpmValue > 0 ? 'success' : 'warning',
+            bpmValue > 0
+              ? `${confidenceLabel === 'Low' ? 'Low-confidence result: ' : ''}BPM updated to ${Math.round(bpmValue)}.${confidenceLabel === 'Low' ? ' Verify with Tap BPM if needed.' : ''}`
+              : 'No BPM could be detected for this file.',
+            bpmValue > 0 ? (confidenceLabel === 'Low' ? 'warning' : 'success') : 'warning',
           );
         } catch (error) {
           showToast(error instanceof Error ? error.message : 'BPM reanalysis failed.', 'error');
@@ -3085,6 +3194,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="scan-log-head"><strong>Preferences</strong></div>
             <div class="preferences-list">
               <label class="preference-row"><input id="pref-default-full-rescan" type="checkbox" ${preferences.defaultFullRescan ? 'checked' : ''} /><span>Default to full rescan</span></label>
+              <label class="preference-row"><input id="pref-default-fast-scan" type="checkbox" ${preferences.defaultFastScan ? 'checked' : ''} /><span>Default to fast scan</span></label>
               <label class="preference-row"><input id="pref-autoplay-on-select" type="checkbox" ${preferences.autoplayOnSelect ? 'checked' : ''} /><span>Autoplay when selecting tracks</span></label>
               <label class="preference-row"><input id="pref-collapse-scan-log" type="checkbox" ${preferences.collapseScanLog ? 'checked' : ''} /><span>Keep scan log collapsed by default</span></label>
               <label class="preference-field">
@@ -3251,6 +3361,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (quickFullRescanEl) quickFullRescanEl.checked = preferences.defaultFullRescan;
         savePreferences();
       });
+      document.getElementById('pref-default-fast-scan')?.addEventListener('change', (event) => {
+        preferences.defaultFastScan = (event.currentTarget as HTMLInputElement).checked;
+        if (quickFastScanEl) quickFastScanEl.checked = preferences.defaultFastScan;
+        savePreferences();
+      });
       document.getElementById('pref-autoplay-on-select')?.addEventListener('change', (event) => {
         preferences.autoplayOnSelect = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
@@ -3258,6 +3373,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('pref-collapse-scan-log')?.addEventListener('change', (event) => {
         preferences.collapseScanLog = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
+      });
+      quickFastScanEl?.addEventListener('change', () => {
+        updateScanDirectoryDisplay();
       });
       document.getElementById('pref-default-list-density')?.addEventListener('change', (event) => {
         const value = (event.currentTarget as HTMLSelectElement).value === 'compact' ? 'compact' : 'comfortable';
@@ -3534,6 +3652,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!res.ok) return;
       const payload = await res.json();
       const job = payload.job as Record<string, unknown>;
+      const jobOptions = (job.options as Record<string, unknown> | null) ?? null;
       activeScanJobId = String(job.id);
       activeScanStatus = String(job.status ?? 'idle');
       if (['queued', 'running'].includes(activeScanStatus) && !frozenTrackIdsDuringScan) {
@@ -3555,9 +3674,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       setScanSummary(job.summary as Record<string, unknown>, job);
       const validation = (job.validation as Record<string, unknown> | null) ?? null;
       if (validation && typeof validation.audio_file_count !== 'undefined') {
-        scanPreflightEl.textContent = `Supported audio files: ${validation.audio_file_count ?? 0}${validation.empty ? ' · directory looks empty' : ''}`;
+        scanPreflightEl.textContent = `Supported audio files: ${validation.audio_file_count ?? 0}${validation.empty ? ' · directory looks empty' : ''}${jobOptions?.fastScan ? ' · Fast scan mode' : ''}`;
       } else {
-        scanPreflightEl.textContent = 'Music folder ready.';
+        scanPreflightEl.textContent = jobOptions?.fastScan ? 'Music folder ready · Fast scan mode' : 'Music folder ready.';
       }
       resetScanLog();
       for (const log of ((job.logs ?? []) as Record<string, unknown>[]).slice().reverse()) {
@@ -3598,6 +3717,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     // ── Scanning ──────────────────────────────────────────────────────────────
     async function triggerScan() {
       const directory = scanDirectoryEl.value.trim();
+      const fastScan = Boolean(quickFastScanEl?.checked);
       if (!directory) {
         setScanStatus('Choose a music folder', 'error');
         setScanProgress(0, 0, 'Choose a music folder');
@@ -3613,11 +3733,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       preScanTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
       hasScanBaseline = true;
       ensureBackgroundRefreshLoop();
-      setScanStatus('Scanning collection…', 'running');
+      setScanStatus(fastScan ? 'Fast scanning collection…' : 'Scanning collection…', 'running');
       setScanProgress(0, 0, directory);
       warningBanner.style.display = 'none';
       resetScanLog();
-      appendScanLog(`Starting scan for ${directory}`);
+      appendScanLog(`Starting ${fastScan ? 'fast ' : ''}scan for ${directory}`);
 
       try {
       try { localStorage.setItem(scanDirectoryKey, directory); } catch { /* ignore */ }
@@ -3629,6 +3749,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           body: JSON.stringify({
             directory,
             fetchAlbumArt: true,
+            fastScan,
             autoDoubleBpm: true,
             verbose: false,
             rescanMode: quickFullRescanEl?.checked ? 'full' : 'smart',
@@ -3670,25 +3791,27 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     // ── Track loading ─────────────────────────────────────────────────────────
-    async function loadTracks(query = '') {
+    async function loadTracks(query = '', options: { autoplayHighlighted?: boolean } = {}) {
+      const { autoplayHighlighted = false } = options;
       const params = new URLSearchParams();
       if (query) params.set('query', query);
       if (bpmMinEl.value) params.set('bpm_min', bpmMinEl.value);
       if (bpmMaxEl.value) params.set('bpm_max', bpmMaxEl.value);
       if (keyFilterEl.value) params.set('key', keyFilterEl.value);
       const res = await fetch(`/api/tracks?${params.toString()}`);
-      const rawBody = await res.text();
-      let response: Record<string, unknown> = {};
-      try {
-        response = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : {};
-      } catch {
-        response = {};
-      }
+      const response = await res.json().catch(() => null) as Record<string, unknown> | null;
       if (!res.ok) {
-        const message = String(response.error ?? rawBody ?? `Track refresh failed (${res.status})`);
+        const message = String(response?.error ?? `Track refresh failed (${res.status})`);
         warningBanner.style.display = 'block';
         warningBanner.innerHTML = `<strong>Collection refresh failed:</strong> ${esc(message.slice(0, 400))}`;
         appendScanLog(`Collection refresh failed: ${message.slice(0, 200)}`, 'error');
+        return;
+      }
+      if (!response || typeof response !== 'object') {
+        const message = 'Track refresh returned an invalid response.';
+        warningBanner.style.display = 'block';
+        warningBanner.innerHTML = `<strong>Collection refresh failed:</strong> ${esc(message)}`;
+        appendScanLog(`Collection refresh failed: ${message}`, 'error');
         return;
       }
       tracks = Array.isArray(response.tracks) ? response.tracks as Record<string, unknown>[] : [];
@@ -3708,12 +3831,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderBulkToolbar();
       renderQuickFilters();
       if (!hasOpenModal()) {
+        const visible = visibleTracksOrdered();
+        if (autoplayHighlighted && visible.length) {
+          const highlighted = activeTrackId != null
+            ? visible.find((track) => Number(track.id) === activeTrackId) ?? null
+            : null;
+          const target = highlighted ?? visible[0] ?? null;
+          if (target) {
+            setKeyboardPane('list');
+            void selectTrack(String(target.id), true, true);
+            return;
+          }
+        }
         if (tracks.length && activeTrackId == null) {
           let storedId: number | null = null;
           try { storedId = Number(sessionStorage.getItem(activeTrackKey) || 0) || null; } catch { /* ignore */ }
           const preferred = storedId ? tracks.find((t) => t.id === storedId) ?? null : null;
           setKeyboardPane('list');
-          void selectTrack(String((preferred ?? visibleTracksOrdered()[0] ?? tracks[0]).id), false, true);
+          void selectTrack(String((preferred ?? visible[0] ?? tracks[0]).id), false, true);
           return;
         }
         ensureActiveTrackSelection();
@@ -3869,6 +4004,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (isEditableTarget) {
         return;
       }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'm') {
+        if (toggleCurrentAudioMute()) {
+          event.preventDefault();
+          return;
+        }
+      }
       if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'c') {
         event.preventDefault();
         void copyActiveTrackPath();
@@ -3984,9 +4125,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       setKeyboardPane('list', { focus: true });
       void selectTrack(String(firstVisible.id), true, true);
     });
-    [bpmMinEl, bpmMaxEl, keyFilterEl].forEach((el) => el.addEventListener('input', () => loadTracks(searchEl.value.trim())));
+    [bpmMinEl, bpmMaxEl].forEach((el) => el.addEventListener('input', () => {
+      void loadTracks(searchEl.value.trim(), { autoplayHighlighted: true });
+    }));
+    keyFilterEl.addEventListener('input', () => {
+      void loadTracks(searchEl.value.trim());
+    });
     showOnlyNoBpmEl?.addEventListener('change', () => loadTracks(searchEl.value.trim()));
-    hideUnknownArtistsEl.addEventListener('change', () => renderList(tracks));
+    hideUnknownArtistsEl.addEventListener('change', () => {
+      renderList(tracks);
+      if (selectedDetailTrackId != null) {
+        void loadTrackDetail(String(selectedDetailTrackId), false);
+      }
+    });
     sortsEl.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest('button[data-sort]') as HTMLButtonElement | null;
       if (!button) return;
@@ -4011,10 +4162,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     // ── Boot ──────────────────────────────────────────────────────────────────
     try {
+      preferences = parsePreferences(localStorage.getItem(preferencesKey));
       const savedDirectory = localStorage.getItem(scanDirectoryKey);
       if (savedDirectory) scanDirectoryEl.value = savedDirectory;
+      if (quickFastScanEl) quickFastScanEl.checked = preferences.defaultFastScan;
+      if (quickFullRescanEl) quickFullRescanEl.checked = preferences.defaultFullRescan;
       updateScanDirectoryDisplay();
-      preferences = parsePreferences(localStorage.getItem(preferencesKey));
       const savedNewTrackIds = JSON.parse(localStorage.getItem(recentNewTrackIdsKey) || '[]');
       if (Array.isArray(savedNewTrackIds)) {
         recentNewTrackIds = new Set(savedNewTrackIds.map((value) => Number(value)).filter((id) => Number.isFinite(id)));
@@ -4099,6 +4252,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     tapBpmResetBtn?.addEventListener('click', () => {
       resetTapBpmState();
       tapBpmResetBtn?.focus();
+    });
+    tapBpmHalfBtn?.addEventListener('click', () => {
+      adjustTapBpm(0.5);
+      tapBpmHalfBtn?.focus();
+    });
+    tapBpmDoubleBtn?.addEventListener('click', () => {
+      adjustTapBpm(2);
+      tapBpmDoubleBtn?.focus();
     });
     tapBpmSaveBtn?.addEventListener('click', () => {
       void saveTapBpmValue();

@@ -5,13 +5,14 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Callable, Optional
 
 from tqdm import tqdm
 
-from .analyzer import detect_bpm, detect_key, has_decoding_error, read_tag_bpm
 from .db import Database
 from .media import build_media_links
 
@@ -32,9 +33,14 @@ _EMPTY_PREVIEWS: dict = {
 # Max seconds to wait for Spotify before skipping it for a given track.
 _SPOTIFY_TIMEOUT = float(os.getenv("SPOTIFY_TIMEOUT", "3"))
 _SPOTIFY_TIMEOUT_STREAK_LIMIT = int(os.getenv("SPOTIFY_TIMEOUT_STREAK_LIMIT", "3"))
+_ANALYSIS_SUBPROCESS_TIMEOUT = float(os.getenv("ANALYSIS_SUBPROCESS_TIMEOUT", "180"))
 
 _UNKNOWN_ARTIST_VALUES = {"unknown", "unknown artist", "various artists"}
 _UPPERCASE_TOKENS = {"DJ", "MC", "UK", "USA", "EDM", "RNB", "EP", "LP", "VIP", "ID"}
+_FAST_GENRE_KEYWORDS = {
+    "psy", "psytrance", "goa", "fullon", "full on", "darkpsy", "suomisaundi",
+    "progressive trance", "trance", "forest", "twilight", "morning", "nitzhonot",
+}
 
 
 def get_file_hash(filepath: str) -> str:
@@ -43,6 +49,98 @@ def get_file_hash(filepath: str) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
+
+
+def _file_signature(filepath: str) -> tuple[int, float]:
+    stat_result = os.stat(filepath)
+    return int(stat_result.st_size), float(stat_result.st_mtime)
+
+
+def _same_file_signature(existing, file_size: int, file_mtime: float) -> bool:
+    try:
+        existing_size = getattr(existing, "file_size", None)
+        existing_mtime = getattr(existing, "file_mtime", None)
+        if existing_size is None or existing_mtime is None:
+            return False
+        return int(existing_size) == int(file_size) and abs(float(existing_mtime) - float(file_mtime)) < 1e-6
+    except Exception:
+        return False
+
+
+def _run_isolated_analysis(filepath: str, bpm_lookup: str, auto_double_bpm: bool) -> dict:
+    command = [
+        sys.executable,
+        "-m",
+        "dj_assist.cli",
+        "analyze-file",
+        filepath,
+        "--bpm-lookup",
+        bpm_lookup,
+    ]
+    if auto_double_bpm:
+        command.append("--auto-double")
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=_ANALYSIS_SUBPROCESS_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "bpm": 0.0,
+            "bpm_source": "",
+            "bpm_error": "analysis_timeout",
+            "bpm_confidence": 0.0,
+            "decode_failed": True,
+            "key": "",
+            "key_numeric": "",
+            "debug": "analysis_subprocess=timeout",
+        }
+    except Exception as exc:
+        return {
+            "bpm": 0.0,
+            "bpm_source": "",
+            "bpm_error": "analysis_subprocess_error",
+            "bpm_confidence": 0.0,
+            "decode_failed": True,
+            "key": "",
+            "key_numeric": "",
+            "debug": f"analysis_subprocess_error={exc}",
+        }
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        detail = stderr or stdout or f"exit={result.returncode}"
+        return {
+            "bpm": 0.0,
+            "bpm_source": "",
+            "bpm_error": "analysis_subprocess_failed",
+            "bpm_confidence": 0.0,
+            "decode_failed": True,
+            "key": "",
+            "key_numeric": "",
+            "debug": f"analysis_subprocess_failed={detail}",
+        }
+
+    try:
+        payload = json.loads(result.stdout)
+        payload["debug"] = ""
+        return payload
+    except Exception as exc:
+        return {
+            "bpm": 0.0,
+            "bpm_source": "",
+            "bpm_error": "analysis_subprocess_invalid_json",
+            "bpm_confidence": 0.0,
+            "decode_failed": True,
+            "key": "",
+            "key_numeric": "",
+            "debug": f"analysis_subprocess_invalid_json={exc}",
+        }
 
 
 def _tag_value(tags, *keys: str) -> Optional[str]:
@@ -72,6 +170,82 @@ def _normalize_text(value: Optional[str]) -> str:
     value = re.sub(r"\([^)]*\)", " ", value)
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _looks_like_fast_genre(*values: Optional[str]) -> bool:
+    haystack = " ".join(_normalize_text(value) for value in values if value).strip()
+    if not haystack:
+        return False
+    return any(keyword in haystack for keyword in _FAST_GENRE_KEYWORDS)
+
+
+def _folder_context_key(filepath: str, metadata: dict) -> str:
+    album = str(metadata.get("album") or "").strip().lower()
+    if album:
+        return f"{Path(filepath).parent}|album:{album}"
+    return str(Path(filepath).parent)
+
+
+def _context_median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values if value > 0)
+    if not ordered:
+        return 0.0
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _normalize_bpm_with_context(
+    filepath: str,
+    metadata: dict,
+    bpm: float,
+    bpm_confidence: float,
+    bpm_source: str,
+    folder_tempos: list[float],
+) -> tuple[float, float, str, str]:
+    if bpm <= 0:
+        return bpm, bpm_confidence, bpm_source, ""
+
+    median_context = _context_median(folder_tempos)
+    fast_genre = _looks_like_fast_genre(
+        metadata.get("artist"),
+        metadata.get("title"),
+        metadata.get("album"),
+        filepath,
+    ) or (132.0 <= median_context <= 156.0)
+
+    adjusted = bpm
+    reason = ""
+    if fast_genre and 68.0 <= bpm <= 92.0:
+        doubled = bpm * 2.0
+        if not median_context or abs(doubled - median_context) <= 10.0:
+            adjusted = doubled
+            reason = "half_time_corrected"
+    elif fast_genre and 176.0 <= bpm <= 210.0:
+        halved = bpm / 2.0
+        if not median_context or abs(halved - median_context) <= 10.0:
+            adjusted = halved
+            reason = "double_time_corrected"
+    elif median_context:
+        doubled = bpm * 2.0
+        halved = bpm / 2.0
+        if 60.0 <= bpm <= 95.0 and 132.0 <= median_context <= 156.0 and abs(doubled - median_context) <= 10.0:
+            adjusted = doubled
+            reason = "context_half_time_corrected"
+        elif 176.0 <= bpm <= 210.0 and 132.0 <= median_context <= 156.0 and abs(halved - median_context) <= 10.0:
+            adjusted = halved
+            reason = "context_double_time_corrected"
+
+    if not reason or adjusted == bpm:
+        return bpm, bpm_confidence, bpm_source, ""
+
+    adjusted = round(float(adjusted), 1)
+    next_source = f"{bpm_source}+sanity" if bpm_source else "sanity"
+    next_confidence = max(float(bpm_confidence or 0.0), 0.72 if median_context else 0.62)
+    return adjusted, next_confidence, next_source, reason
 
 
 def _smart_capitalize(value: Optional[str]) -> Optional[str]:
@@ -389,6 +563,7 @@ def scan_directory(
     fetch_album_art: bool = False,
     verbose: bool = False,
     spotify_enabled: bool = True,
+    fast_scan: bool = False,
     auto_double_bpm: bool = False,
     progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> dict:
@@ -425,8 +600,10 @@ def scan_directory(
             tqdm.write(f"  [{label}] {Path(filepath).name}")
 
     album_art_cache: dict[str, dict] = {}
+    folder_bpm_context: dict[str, list[float]] = {}
 
     spotify_scan_enabled = spotify_enabled
+    enrichment_enabled = not fast_scan
     spotify_timeout_streak = 0
 
     with ThreadPoolExecutor(max_workers=1) as spotify_pool:
@@ -436,8 +613,10 @@ def scan_directory(
                 _emit({"event": "track_start", "path": filepath, "file": Path(filepath).name})
                 _step("db-lookup", filepath)
                 existing = db.get_track_by_path(filepath)
+                file_size, file_mtime = _file_signature(filepath)
+                unchanged = bool(existing and _same_file_signature(existing, file_size, file_mtime))
                 skip_reason = None
-                if existing and skip_existing:
+                if existing and skip_existing and unchanged:
                     has_metadata = bool((existing.artist and existing.artist.strip()) or (existing.title and existing.title.strip()))
                     has_analysis = bool(existing.bpm and existing.key)
                     has_art = bool(existing.album_art_url)
@@ -469,6 +648,9 @@ def scan_directory(
                     _emit({"event": "log", "level": "info", "message": f"{Path(filepath).name}: skipped ({skip_reason})"})
                     continue
 
+                should_compute_hash = existing is None or not unchanged or not getattr(existing, "file_hash", None)
+                file_hash = get_file_hash(filepath) if should_compute_hash else str(getattr(existing, "file_hash", "") or "")
+
                 results["scanned"] += 1
                 _step("metadata", filepath)
                 metadata = extract_metadata(filepath)
@@ -489,26 +671,11 @@ def scan_directory(
                         }
                     )
 
-                # Submit remote metadata lookup immediately so it runs
-                # concurrently with BPM/key detection in the main thread.
-                _step("metadata lookup (async)", filepath)
-                spotify_future: Future = spotify_pool.submit(
-                    build_media_links,
-                    metadata["artist"],
-                    metadata["title"],
-                    metadata["album"],
-                    metadata["duration"],
-                    metadata["track_number"],
-                    metadata["release_year"],
-                    fetch_album_art,
-                    filepath,
-                    spotify_scan_enabled,
-                )
-
                 bpm = 0.0
                 bpm_source = ""
                 bpm_error = ""
                 decode_failed = False
+                bpm_confidence = 0.0
                 analysis_stage = "start"
                 debug_parts = [f"file={filepath}"]
                 can_local = bpm_lookup in {"auto", "local", "both"}
@@ -521,62 +688,82 @@ def scan_directory(
                 debug_parts.append("album_art=enabled" if fetch_album_art else "album_art=disabled")
                 debug_parts.append(f"title_cleaned={metadata['title'] or 'none'}")
 
-                if can_local:
-                    _step("local-bpm", filepath)
-                    analysis_stage = "local_bpm"
-                    bpm, bpm_source, bpm_error = detect_bpm(filepath)
-                    decode_failed = bpm_error == "decode_failed"
-                    debug_parts.append(f"local_bpm={bpm or 0.0}")
+                # Submit remote metadata lookup immediately so it runs
+                # concurrently with BPM/key detection in the main thread.
+                spotify_future: Future | None = None
+                if enrichment_enabled:
+                    needs_acoustid = not bool(metadata["artist"] and metadata["title"])
+                    _step("metadata lookup (async)", filepath)
+                    spotify_future = spotify_pool.submit(
+                        build_media_links,
+                        metadata["artist"],
+                        metadata["title"],
+                        metadata["album"],
+                        metadata["duration"],
+                        metadata["track_number"],
+                        metadata["release_year"],
+                        fetch_album_art,
+                        filepath,
+                        spotify_scan_enabled,
+                        needs_acoustid,
+                    )
+                    debug_parts.append("acoustid=enabled_missing_metadata" if needs_acoustid else "acoustid=skipped_metadata_present")
+
+                if can_local or can_tag:
+                    _step("isolated-analysis", filepath)
+                    analysis_stage = "isolated_analysis"
+                    analysis = _run_isolated_analysis(filepath, bpm_lookup, auto_double_bpm)
+                    bpm = float(analysis.get("bpm") or 0.0)
+                    bpm_source = str(analysis.get("bpm_source") or "")
+                    bpm_error = str(analysis.get("bpm_error") or "")
+                    bpm_confidence = float(analysis.get("bpm_confidence") or 0.0)
+                    decode_failed = bool(analysis.get("decode_failed"))
+                    key = str(analysis.get("key") or "")
+                    key_numeric = str(analysis.get("key_numeric") or "")
+                    debug_parts.append(f"isolated_bpm={bpm or 0.0}")
+                    debug_parts.append(f"isolated_bpm_confidence={bpm_confidence:.3f}")
+                    if bpm_source:
+                        debug_parts.append(f"isolated_bpm_source={bpm_source}")
+                    if key:
+                        debug_parts.append(f"isolated_key={key}")
                     if bpm_error:
-                        debug_parts.append(f"local_bpm_error={bpm_error}")
-
-                if not bpm and can_tag:
-                    analysis_stage = "tag_bpm"
-                    tag_bpm = metadata.get("bpm") or read_tag_bpm(filepath)
-                    if tag_bpm:
-                        bpm = tag_bpm
-                        bpm_source = "tag"
-                        bpm_error = ""
-                        debug_parts.append(f"tag_bpm={tag_bpm}")
-                    else:
-                        debug_parts.append("tag_bpm=none")
-
-                _step("key-detect", filepath)
-                key, key_numeric, _confidence = detect_key(filepath)
-
-                _step("decode-check", filepath)
-                if not decode_failed:
-                    decode_failed = has_decoding_error(filepath)
+                        debug_parts.append(f"isolated_error={bpm_error}")
+                    if analysis.get("debug"):
+                        debug_parts.append(str(analysis.get("debug")))
                     if decode_failed:
                         debug_parts.append("decode_test=failed")
                 else:
-                    debug_parts.append("decode_test=failed")
+                    key = ""
+                    key_numeric = ""
 
                 # Collect Spotify result — if it's still running, wait up to
                 # _SPOTIFY_TIMEOUT seconds then give up and continue without it.
-                _step("await-spotify", filepath)
-                try:
-                    previews = spotify_future.result(timeout=_SPOTIFY_TIMEOUT)
-                    spotify_timeout_streak = 0
-                except FutureTimeoutError:
+                if enrichment_enabled and spotify_future is not None:
+                    _step("await-spotify", filepath)
+                    try:
+                        previews = spotify_future.result(timeout=_SPOTIFY_TIMEOUT)
+                        spotify_timeout_streak = 0
+                    except FutureTimeoutError:
+                        previews = dict(_EMPTY_PREVIEWS)
+                        spotify_future.cancel()
+                        spotify_timeout_streak += 1
+                        _emit({"event": "log", "level": "warning", "message": f"Spotify timeout for {Path(filepath).name}"})
+                        if spotify_scan_enabled and spotify_timeout_streak >= max(1, _SPOTIFY_TIMEOUT_STREAK_LIMIT):
+                            spotify_scan_enabled = False
+                            _emit(
+                                {
+                                    "event": "log",
+                                    "level": "warning",
+                                    "message": (
+                                        f"Spotify disabled for the rest of this scan after "
+                                        f"{spotify_timeout_streak} consecutive timeouts."
+                                    ),
+                                }
+                            )
+                        if verbose:
+                            tqdm.write(f"  [spotify timeout] {Path(filepath).name}")
+                else:
                     previews = dict(_EMPTY_PREVIEWS)
-                    spotify_future.cancel()
-                    spotify_timeout_streak += 1
-                    _emit({"event": "log", "level": "warning", "message": f"Spotify timeout for {Path(filepath).name}"})
-                    if spotify_scan_enabled and spotify_timeout_streak >= max(1, _SPOTIFY_TIMEOUT_STREAK_LIMIT):
-                        spotify_scan_enabled = False
-                        _emit(
-                            {
-                                "event": "log",
-                                "level": "warning",
-                                "message": (
-                                    f"Spotify disabled for the rest of this scan after "
-                                    f"{spotify_timeout_streak} consecutive timeouts."
-                                ),
-                            }
-                        )
-                    if verbose:
-                        tqdm.write(f"  [spotify timeout] {Path(filepath).name}")
 
                 if not metadata["artist"] and previews.get("acoustid_artist"):
                     metadata["artist"] = _normalize_artist(str(previews.get("acoustid_artist") or ""))
@@ -601,6 +788,7 @@ def scan_directory(
                         bpm = spotify_bpm
                         bpm_source = "spotify"
                         bpm_error = ""
+                        bpm_confidence = max(bpm_confidence, 0.55)
                         debug_parts.append(f"spotify_bpm={spotify_bpm}")
                     else:
                         debug_parts.append("spotify_bpm=none")
@@ -610,21 +798,31 @@ def scan_directory(
                     key_numeric = key
                     debug_parts.append(f"spotify_key={key}")
 
+                folder_context_key = _folder_context_key(filepath, metadata)
+                folder_tempos = folder_bpm_context.setdefault(folder_context_key, [])
+                bpm, bpm_confidence, bpm_source, normalization_reason = _normalize_bpm_with_context(
+                    filepath,
+                    metadata,
+                    bpm,
+                    bpm_confidence,
+                    bpm_source,
+                    folder_tempos,
+                )
+                if normalization_reason:
+                    debug_parts.append(f"bpm_normalized={normalization_reason}")
+                    debug_parts.append(f"folder_context_median={_context_median(folder_tempos):.1f}")
+
                 debug_parts.append(f"spotify_id={previews.get('spotify_id') or 'none'}")
                 debug_parts.append(f"acoustid_id={previews.get('acoustid_id') or 'none'}")
                 debug_parts.append(f"album_art_url={previews.get('album_art_url') or 'none'}")
+                if fast_scan:
+                    debug_parts.append("enrichment=disabled_fast_scan")
                 if not spotify_scan_enabled:
                     debug_parts.append("spotify_scan=disabled_after_timeouts")
                 if previews.get("spotify_debug"):
                     debug_parts.append(f"spotify_debug={previews.get('spotify_debug')}")
                 if previews.get("acoustid_debug"):
                     debug_parts.append(f"acoustid_debug={previews.get('acoustid_debug')}")
-
-                if auto_double_bpm and bpm and 60.0 <= bpm <= 80.0:
-                    original_bpm = bpm
-                    bpm = float(round(bpm * 2))
-                    bpm_source = (bpm_source + "+doubled") if bpm_source else "doubled"
-                    debug_parts.append(f"auto_doubled={original_bpm:.1f}→{bpm:.0f}")
 
                 if not bpm:
                     debug_parts.append("bpm=missing")
@@ -687,9 +885,16 @@ def scan_directory(
                         "analysis_stage": analysis_stage,
                         "analysis_debug": " | ".join(debug_parts),
                         "bpm_source": bpm_source,
-                        "file_hash": get_file_hash(filepath),
+                        "bpm_confidence": bpm_confidence,
+                        "file_hash": file_hash,
+                        "file_size": file_size,
+                        "file_mtime": file_mtime,
                     }
                 )
+                if bpm > 0 and (bpm_confidence >= 0.45 or "sanity" in bpm_source or bpm_source == "spotify"):
+                    folder_tempos.append(float(bpm))
+                    if len(folder_tempos) > 24:
+                        del folder_tempos[:-24]
                 results["analyzed"] += 1
                 processed += 1
                 _emit(

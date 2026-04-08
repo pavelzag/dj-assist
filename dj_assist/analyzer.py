@@ -18,9 +18,13 @@ MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 
 @dataclass
 class TrackAnalysis:
     bpm: float
+    bpm_source: str
+    bpm_error: str
+    bpm_confidence: float
+    decode_failed: bool
     key: str
     key_numeric: str
-    confidence: float
+    key_confidence: float
 
 
 def _load_audio(audio_path: str, duration: int | float | None):
@@ -104,83 +108,90 @@ def _cluster_bpms(candidates: list[float], tolerance: float = 3.5) -> list[list[
     return clusters
 
 
-def detect_bpm(audio_path: str) -> tuple[float, str, str]:
-    try:
-        import librosa
+def _detect_bpm_from_audio(y: np.ndarray, sr: int) -> tuple[float, str, str, float]:
+    import librosa
 
-        y, sr = _load_audio(audio_path, 180)
+    windows = []
+    if len(y) > sr * 45:
+        windows = [
+            y[: sr * 45],
+            y[sr * 30 : sr * 75],
+            y[sr * 60 : sr * 105],
+            y[sr * 90 : sr * 135],
+        ]
+    else:
+        windows = [y]
 
-        windows = []
-        if len(y) > sr * 45:
-            windows = [
-                y[: sr * 45],
-                y[sr * 30 : sr * 75],
-                y[sr * 60 : sr * 105],
-                y[sr * 90 : sr * 135],
-            ]
-        else:
-            windows = [y]
+    candidates: list[float] = []
+    for window in windows:
+        onset_env = librosa.onset.onset_strength(y=window, sr=sr)
+        if len(onset_env) < 32 or float(np.max(onset_env)) <= 0:
+            continue
 
-        candidates: list[float] = []
-        for window in windows:
-            onset_env = librosa.onset.onset_strength(y=window, sr=sr)
-            if len(onset_env) < 32 or float(np.max(onset_env)) <= 0:
-                continue
+        try:
+            tempo = float(librosa.feature.rhythm.tempo(onset_envelope=onset_env, sr=sr)[0])
+            if tempo > 0:
+                candidates.append(_normalize_bpm_candidate(tempo))
+        except Exception:
+            pass
 
-            try:
-                tempo = float(librosa.feature.rhythm.tempo(onset_envelope=onset_env, sr=sr)[0])
-                if tempo > 0:
-                    candidates.append(_normalize_bpm_candidate(tempo))
-            except Exception:
-                pass
+        try:
+            tempo, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
+            tempo = float(tempo)
+            if tempo > 0:
+                candidates.append(_normalize_bpm_candidate(tempo))
+        except Exception:
+            pass
 
-            try:
-                tempo, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
+        try:
+            tempos = librosa.feature.rhythm.tempo(onset_envelope=onset_env, sr=sr, aggregate=None)
+            for tempo in tempos[:4]:
                 tempo = float(tempo)
                 if tempo > 0:
                     candidates.append(_normalize_bpm_candidate(tempo))
-            except Exception:
-                pass
+        except Exception:
+            pass
 
-            try:
-                tempos = librosa.feature.rhythm.tempo(onset_envelope=onset_env, sr=sr, aggregate=None)
-                for tempo in tempos[:4]:
-                    tempo = float(tempo)
+        try:
+            window_env = onset_env - float(np.mean(onset_env))
+            autocorr = np.correlate(window_env, window_env, mode="full")[len(window_env) - 1 :]
+            lag_min = max(1, int(sr * 60 / 180))
+            lag_max = min(len(autocorr) - 1, int(sr * 60 / 60))
+            if lag_max > lag_min:
+                lag = int(np.argmax(autocorr[lag_min:lag_max]) + lag_min)
+                if lag > 0:
+                    tempo = 60.0 * sr / lag
                     if tempo > 0:
                         candidates.append(_normalize_bpm_candidate(tempo))
-            except Exception:
-                pass
+        except Exception:
+            pass
 
-            try:
-                window_env = onset_env - float(np.mean(onset_env))
-                autocorr = np.correlate(window_env, window_env, mode="full")[len(window_env) - 1 :]
-                lag_min = max(1, int(sr * 60 / 180))
-                lag_max = min(len(autocorr) - 1, int(sr * 60 / 60))
-                if lag_max > lag_min:
-                    lag = int(np.argmax(autocorr[lag_min:lag_max]) + lag_min)
-                    if lag > 0:
-                        tempo = 60.0 * sr / lag
-                        if tempo > 0:
-                            candidates.append(_normalize_bpm_candidate(tempo))
-            except Exception:
-                pass
+    if not candidates:
+        return 0.0, "analysis", "no tempo candidates", 0.0
 
-        if not candidates:
-            return 0.0, "analysis", "no tempo candidates"
+    clusters = _cluster_bpms(candidates)
+    best_cluster = max(clusters, key=lambda cluster: (len(cluster), -np.std(cluster) if len(cluster) > 1 else 0.0))
+    if len(best_cluster) < max(3, len(windows)):
+        return 0.0, "analysis", "unstable tempo", 0.18
 
-        clusters = _cluster_bpms(candidates)
-        best_cluster = max(clusters, key=lambda cluster: (len(cluster), -np.std(cluster) if len(cluster) > 1 else 0.0))
-        if len(best_cluster) < max(3, len(windows)):
-            return 0.0, "analysis", "unstable tempo"
+    spread = float(np.std(best_cluster)) if len(best_cluster) > 1 else 0.0
+    if spread > 4.0:
+        return 0.0, "analysis", "unstable tempo", max(0.0, 0.45 - min(spread, 12.0) / 20.0)
 
-        spread = float(np.std(best_cluster)) if len(best_cluster) > 1 else 0.0
-        if spread > 4.0:
-            return 0.0, "analysis", "unstable tempo"
+    tempo = round(float(np.median(best_cluster)), 1)
+    support_ratio = min(1.0, len(best_cluster) / max(1.0, len(candidates)))
+    spread_score = max(0.0, 1.0 - (spread / 4.0))
+    candidate_score = min(1.0, len(candidates) / max(4.0, len(windows) * 3.0))
+    confidence = round((support_ratio * 0.55) + (spread_score * 0.3) + (candidate_score * 0.15), 3)
+    return tempo, "analysis", "", confidence
 
-        tempo = round(float(np.median(best_cluster)), 1)
-        return tempo, "analysis", ""
+
+def detect_bpm(audio_path: str) -> tuple[float, str, str, float]:
+    try:
+        y, sr = _load_audio(audio_path, 180)
+        return _detect_bpm_from_audio(y, sr)
     except Exception:
-        return 0.0, "analysis", "decode_failed"
+        return 0.0, "analysis", "decode_failed", 0.0
 
 
 def read_tag_bpm(audio_path: str) -> float:
@@ -216,51 +227,89 @@ def _score_profile(chroma_mean: np.ndarray, profile: np.ndarray) -> tuple[int, f
 
 def detect_key(audio_path: str) -> tuple[str, str, float]:
     try:
-        import librosa
-
         y, sr = _load_audio(audio_path, 60)
-        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-        chroma_mean = np.mean(chroma, axis=1)
-
-        major_idx, major_score = _score_profile(chroma_mean, MAJOR_PROFILE)
-        minor_idx, minor_score = _score_profile(chroma_mean, MINOR_PROFILE)
-
-        if major_score >= minor_score:
-            note = NOTE_NAMES[major_idx]
-            camelot = {
-                "C": "8B",
-                "C#": "3B",
-                "D": "10B",
-                "D#": "5B",
-                "E": "12B",
-                "F": "7B",
-                "F#": "2B",
-                "G": "9B",
-                "G#": "4B",
-                "A": "11B",
-                "A#": "6B",
-                "B": "1B",
-            }[note]
-            return camelot, note, major_score
-
-        note = NOTE_NAMES[minor_idx]
-        camelot = {
-            "C": "5A",
-            "C#": "12A",
-            "D": "7A",
-            "D#": "2A",
-            "E": "9A",
-            "F": "4A",
-            "F#": "11A",
-            "G": "6A",
-            "G#": "1A",
-            "A": "8A",
-            "A#": "3A",
-            "B": "10A",
-        }[note]
-        return camelot, note + "m", minor_score
+        return _detect_key_from_audio(y, sr)
     except Exception:
         return "", "", 0.0
+
+
+def _detect_key_from_audio(y: np.ndarray, sr: int) -> tuple[str, str, float]:
+    import librosa
+
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    chroma_mean = np.mean(chroma, axis=1)
+
+    major_idx, major_score = _score_profile(chroma_mean, MAJOR_PROFILE)
+    minor_idx, minor_score = _score_profile(chroma_mean, MINOR_PROFILE)
+
+    if major_score >= minor_score:
+        note = NOTE_NAMES[major_idx]
+        camelot = {
+            "C": "8B",
+            "C#": "3B",
+            "D": "10B",
+            "D#": "5B",
+            "E": "12B",
+            "F": "7B",
+            "F#": "2B",
+            "G": "9B",
+            "G#": "4B",
+            "A": "11B",
+            "A#": "6B",
+            "B": "1B",
+        }[note]
+        return camelot, note, major_score
+
+    note = NOTE_NAMES[minor_idx]
+    camelot = {
+        "C": "5A",
+        "C#": "12A",
+        "D": "7A",
+        "D#": "2A",
+        "E": "9A",
+        "F": "4A",
+        "F#": "11A",
+        "G": "6A",
+        "G#": "1A",
+        "A": "8A",
+        "A#": "3A",
+        "B": "10A",
+    }[note]
+    return camelot, note + "m", minor_score
+
+
+def analyze_track(audio_path: str) -> TrackAnalysis:
+    try:
+        y, sr = _load_audio(audio_path, 180)
+    except Exception:
+        return TrackAnalysis(
+            bpm=0.0,
+            bpm_source="analysis",
+            bpm_error="decode_failed",
+            bpm_confidence=0.0,
+            decode_failed=True,
+            key="",
+            key_numeric="",
+            key_confidence=0.0,
+        )
+
+    bpm, bpm_source, bpm_error, bpm_confidence = _detect_bpm_from_audio(y, sr)
+    key_window = y[: sr * 60] if sr and len(y) > sr * 60 else y
+    try:
+        key, key_numeric, key_confidence = _detect_key_from_audio(key_window, sr)
+    except Exception:
+        key, key_numeric, key_confidence = "", "", 0.0
+
+    return TrackAnalysis(
+        bpm=bpm,
+        bpm_source=bpm_source,
+        bpm_error=bpm_error,
+        bpm_confidence=bpm_confidence,
+        decode_failed=False,
+        key=key,
+        key_numeric=key_numeric,
+        key_confidence=key_confidence,
+    )
 
 
 def extract_waveform_peaks(audio_path: str, width: int = 640) -> dict[str, object]:

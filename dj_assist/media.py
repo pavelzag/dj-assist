@@ -586,17 +586,21 @@ def build_media_links(
     fetch_album_art: bool = False,
     file_path: str | None = None,
     enable_spotify: bool = True,
+    enable_acoustid: bool = True,
 ) -> dict[str, str | float | bool | int]:
     resolved_artist = artist
     resolved_title = title
     resolved_album = album
-    acoustid = AcoustIdClient().identify_track(
-        file_path,
-        artist=artist,
-        title=title,
-        album=album,
-        duration=duration,
-    )
+    if enable_acoustid:
+        acoustid = AcoustIdClient().identify_track(
+            file_path,
+            artist=artist,
+            title=title,
+            album=album,
+            duration=duration,
+        )
+    else:
+        acoustid = AcoustIdMatch(debug=json.dumps({"enabled": False, "reason": "not_needed_for_scan"}))
     if not resolved_artist and acoustid.artist:
         resolved_artist = acoustid.artist
     if (not resolved_title or not resolved_title.strip()) and acoustid.title:

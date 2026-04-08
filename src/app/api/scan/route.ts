@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     const job = await createScanJob({
       directory,
       fetchAlbumArt: body?.fetchAlbumArt !== false,
+      fastScan: Boolean(body?.fastScan),
       verbose: Boolean(body?.verbose),
       rescanMode: (body?.rescanMode ?? 'smart') as 'smart' | 'missing-metadata' | 'missing-analysis' | 'missing-art' | 'full',
     });

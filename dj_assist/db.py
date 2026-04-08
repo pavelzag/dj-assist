@@ -51,6 +51,8 @@ class Track(Base):
     duration = Column(Float)
     bitrate = Column(Float)
     bpm = Column(Float)
+    bpm_override = Column(Float)
+    bpm_confidence = Column(Float)
     key = Column(String)
     key_numeric = Column(String)
     spotify_id = Column(String)
@@ -79,6 +81,8 @@ class Track(Base):
     analysis_stage = Column(String)
     analysis_debug = Column(String)
     file_hash = Column(String)
+    file_size = Column(Integer)
+    file_mtime = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     set_tracks = relationship("SetTrack", back_populates="track")
@@ -124,7 +128,7 @@ class Database:
 
     @staticmethod
     def _effective_bpm(track: Track) -> float:
-        return float(track.bpm or track.spotify_tempo or 0.0)
+        return float(track.bpm_override or track.bpm or track.spotify_tempo or 0.0)
 
     @staticmethod
     def _effective_key(track: Track) -> str:
@@ -157,6 +161,8 @@ class Database:
             track.duration,
             track.bitrate,
             track.bpm,
+            track.bpm_override,
+            track.bpm_confidence,
             track.key,
             track.key_numeric,
             track.spotify_id,
@@ -185,6 +191,8 @@ class Database:
             track.analysis_stage,
             track.analysis_debug,
             track.file_hash,
+            track.file_size,
+            track.file_mtime,
         ]
         return sum(1 for value in fields if value not in (None, "", 0))
 
@@ -221,12 +229,16 @@ class Database:
             "spotify_high_confidence": "VARCHAR",
             "youtube_url": "VARCHAR",
             "bitrate": "FLOAT",
+            "bpm_override": "FLOAT",
+            "bpm_confidence": "FLOAT",
             "bpm_source": "VARCHAR",
             "analysis_status": "VARCHAR",
             "analysis_error": "VARCHAR",
             "decode_failed": "VARCHAR",
             "analysis_stage": "VARCHAR",
             "analysis_debug": "TEXT",
+            "file_size": "INTEGER",
+            "file_mtime": "FLOAT",
         }
 
         with self.engine.begin() as conn:
@@ -303,6 +315,7 @@ class Database:
         track_id: int,
         *,
         bpm: Optional[float] = None,
+        bpm_confidence: Optional[float] = None,
         bpm_source: Optional[str] = None,
         analysis_status: Optional[str] = None,
         analysis_error: Optional[str] = None,
@@ -316,12 +329,26 @@ class Database:
             if not track:
                 return None
             track.bpm = bpm
+            track.bpm_confidence = bpm_confidence
             track.bpm_source = bpm_source
             track.analysis_status = analysis_status
             track.analysis_error = analysis_error
             track.analysis_stage = analysis_stage
             track.analysis_debug = analysis_debug
             track.decode_failed = decode_failed
+            session.commit()
+            session.refresh(track)
+            return track
+        finally:
+            session.close()
+
+    def update_track_bpm_override(self, track_id: int, bpm_override: Optional[float]) -> Optional[Track]:
+        session = self.get_session()
+        try:
+            track = session.query(Track).filter_by(id=track_id).first()
+            if not track:
+                return None
+            track.bpm_override = bpm_override
             session.commit()
             session.refresh(track)
             return track
@@ -369,9 +396,9 @@ class Database:
                     (Track.artist.ilike(f"%{query}%"))
                 )
             if bpm_min is not None:
-                q = q.filter(func.coalesce(Track.bpm, Track.spotify_tempo) >= bpm_min)
+                q = q.filter(func.coalesce(Track.bpm_override, Track.bpm, Track.spotify_tempo) >= bpm_min)
             if bpm_max is not None:
-                q = q.filter(func.coalesce(Track.bpm, Track.spotify_tempo) <= bpm_max)
+                q = q.filter(func.coalesce(Track.bpm_override, Track.bpm, Track.spotify_tempo) <= bpm_max)
             if key:
                 key = key.strip().upper()
                 q = q.filter(

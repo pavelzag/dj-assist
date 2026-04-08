@@ -36,5 +36,6 @@ export async function POST(
 
   const refreshed = await getTrackById(trackId);
   if (!refreshed) return NextResponse.json({ error: 'not found' }, { status: 404 });
+
   return NextResponse.json({ track: serializeTrack(refreshed) });
 }

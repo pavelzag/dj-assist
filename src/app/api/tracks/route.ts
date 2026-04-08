@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
       ? await searchTracks({ query, bpmMin, bpmMax, key })
       : await getAllTracks();
 
-    let payload = tracks.map((track) => serializeTrack(track));
+    let payload = tracks.map((track) => serializeTrack(track, { includeEmbeddedArtwork: false }));
     if (highConfidenceOnly) {
       payload = payload.filter((t) => t.spotify_high_confidence);
     }

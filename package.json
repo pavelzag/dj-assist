@@ -84,7 +84,7 @@
         "dmg",
         "zip"
       ],
-      "icon": "electron/assets/app-icon.png"
+      "icon": "electron/assets/app-icon.icns"
     },
     "dmg": {
       "artifactName": "${productName}-${version}-${arch}.${ext}"

@@ -1,0 +1,76 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS Release
+    runs-on: macos-15
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      USE_HARD_LINKS: 'false'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromaprint
+        run: brew install chromaprint
+
+      - name: Download standalone Python runtime
+        env:
+          PYTHON_STANDALONE_URL: ${{ vars.PYTHON_STANDALONE_URL_MACOS_ARM64 }}
+        run: |
+          set -e
+          if [ -z "${PYTHON_STANDALONE_URL}" ]; then
+            echo "Repository variable PYTHON_STANDALONE_URL_MACOS_ARM64 is required." >&2
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/python-standalone.tar.gz"
+          extract_root="$RUNNER_TEMP/python-standalone-extract"
+          mkdir -p "$extract_root"
+          curl -L "$PYTHON_STANDALONE_URL" -o "$archive"
+          tar -xf "$archive" -C "$extract_root"
+          py_bin="$(find "$extract_root" -type f \( -name python3 -o -name python \) | head -n 1)"
+          if [ -z "$py_bin" ]; then
+            echo "Could not find python executable in downloaded runtime." >&2
+            exit 1
+          fi
+          py_root="$(cd "$(dirname "$py_bin")/.." && pwd)"
+          echo "DJ_ASSIST_PYTHON_STANDALONE=$py_root" >> "$GITHUB_ENV"
+
+      - name: Build desktop app
+        run: npm run dist:mac
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: |
+            dist-electron/*.dmg
+            dist-electron/*.zip
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-electron/*.dmg
+            dist-electron/*.zip
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+

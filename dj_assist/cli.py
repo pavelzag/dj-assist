@@ -8,8 +8,11 @@ from rich.console import Console
 from rich.table import Table
 
 from .analyzer import get_recommended_next_tracks
+from .analyzer import analyze_track
 from .analyzer import detect_bpm
+from .analyzer import detect_key
 from .analyzer import extract_waveform_peaks
+from .analyzer import read_tag_bpm
 from .db import Database
 from .scanner import scan_directory
 from .web import run_app
@@ -146,11 +149,12 @@ def main() -> None:
 )
 @click.option("--verbose", "-v", is_flag=True, help="Print per-track debug output.")
 @click.option("--no-spotify", is_flag=True, help="Skip all Spotify/album-art lookups.")
+@click.option("--fast-scan", is_flag=True, help="Skip AcoustID and Spotify enrichment for the fastest local scan.")
 @click.option("--auto-double", is_flag=True, help="Double and round BPM for tracks detected in the 60–80 BPM range.")
 @click.option("--json-progress", is_flag=True, help="Emit newline-delimited JSON progress events.")
-def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: str, fetch_album_art: bool, verbose: bool, no_spotify: bool, auto_double: bool, json_progress: bool) -> None:
+def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: str, fetch_album_art: bool, verbose: bool, no_spotify: bool, fast_scan: bool, auto_double: bool, json_progress: bool) -> None:
     db = _db()
-    spotify_enabled = not no_spotify
+    spotify_enabled = not no_spotify and not fast_scan
 
     def emit(event: dict) -> None:
         click.echo(json.dumps(event), err=False)
@@ -165,22 +169,23 @@ def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: 
             spotify_enabled = False
     if not spotify_enabled:
         if json_progress:
-            emit({"event": "log", "level": "info", "message": "Spotify disabled — skipping metadata lookups."})
+            emit({"event": "log", "level": "info", "message": "Spotify disabled — skipping metadata lookups." if not fast_scan else "Fast scan enabled — skipping AcoustID and Spotify enrichment."})
         else:
-            console.print("[dim]Spotify disabled — skipping metadata lookups.[/dim]")
-    acoustid = AcoustIdClient()
-    if acoustid.enabled():
-        if acoustid.available():
-            message = "AcoustID enabled — fingerprint metadata recovery is available."
-            level = "info"
-        else:
-            message = "AcoustID key present, but fpcalc was not found — fingerprint lookup is unavailable."
-            level = "warning"
-        if json_progress:
-            emit({"event": "log", "level": level, "message": message})
-        else:
-            style = "yellow" if level == "warning" else "dim"
-            console.print(f"[{style}]{message}[/{style}]")
+            console.print("[dim]Spotify disabled — skipping metadata lookups.[/dim]" if not fast_scan else "[dim]Fast scan enabled — skipping AcoustID and Spotify enrichment.[/dim]")
+    if not fast_scan:
+        acoustid = AcoustIdClient()
+        if acoustid.enabled():
+            if acoustid.available():
+                message = "AcoustID enabled — fingerprint metadata recovery is available."
+                level = "info"
+            else:
+                message = "AcoustID key present, but fpcalc was not found — fingerprint lookup is unavailable."
+                level = "warning"
+            if json_progress:
+                emit({"event": "log", "level": level, "message": message})
+            else:
+                style = "yellow" if level == "warning" else "dim"
+                console.print(f"[{style}]{message}[/{style}]")
     results = scan_directory(
         str(directory),
         db,
@@ -190,6 +195,7 @@ def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: 
         fetch_album_art=fetch_album_art and spotify_enabled,
         verbose=verbose,
         spotify_enabled=spotify_enabled,
+        fast_scan=fast_scan,
         auto_double_bpm=auto_double,
         progress_callback=emit if json_progress else None,
     )
@@ -239,6 +245,69 @@ def waveform_peaks(file_path: Path, width: int) -> None:
     click.echo(json.dumps(payload))
 
 
+@main.command(name="analyze-file")
+@click.argument("file_path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--bpm-lookup",
+    type=click.Choice(["auto", "local", "tag", "spotify", "both", "off"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+)
+@click.option("--auto-double", is_flag=True, help="Double and round BPM for tracks detected in the 60–80 BPM range.")
+def analyze_file(file_path: Path, bpm_lookup: str, auto_double: bool) -> None:
+    bpm = 0.0
+    bpm_source = ""
+    bpm_error = ""
+    bpm_confidence = 0.0
+    decode_failed = False
+    key = ""
+    key_numeric = ""
+    key_confidence = 0.0
+
+    can_local = bpm_lookup in {"auto", "local", "both"}
+    can_tag = bpm_lookup in {"auto", "local", "tag", "both"}
+
+    if can_local:
+        analysis = analyze_track(str(file_path))
+        bpm = analysis.bpm
+        bpm_source = analysis.bpm_source
+        bpm_error = analysis.bpm_error
+        bpm_confidence = analysis.bpm_confidence
+        decode_failed = analysis.decode_failed
+        key = analysis.key
+        key_numeric = analysis.key_numeric
+        key_confidence = analysis.key_confidence
+
+    if not bpm and can_tag:
+        tag_bpm = read_tag_bpm(str(file_path))
+        if tag_bpm:
+            bpm = tag_bpm
+            bpm_source = "tag"
+            bpm_error = ""
+
+    if not can_local:
+        key, key_numeric, key_confidence = detect_key(str(file_path))
+
+    if auto_double and bpm and 60.0 <= bpm <= 80.0:
+        bpm = float(round(bpm * 2))
+        bpm_source = (bpm_source + "+doubled") if bpm_source else "doubled"
+
+    click.echo(
+        json.dumps(
+            {
+                "bpm": bpm,
+                "bpm_source": bpm_source,
+                "bpm_error": bpm_error,
+                "bpm_confidence": bpm_confidence,
+                "decode_failed": decode_failed,
+                "key": key,
+                "key_numeric": key_numeric,
+                "confidence": key_confidence,
+            }
+        )
+    )
+
+
 @main.command()
 @click.option("--query", default=None)
 @click.option("--artist", default=None)
@@ -281,14 +350,19 @@ def reanalyze_bpm(track_id: int, json_output: bool) -> None:
     if not track.path:
         raise click.ClickException(f"Track {track_id} has no file path")
 
-    bpm, bpm_source, analysis_error = detect_bpm(track.path)
+    bpm, bpm_source, analysis_error, bpm_confidence = detect_bpm(track.path)
     analysis_status = "ok" if bpm else "needs_review"
     decode_failed = "true" if analysis_error == "decode_failed" else "false"
-    analysis_debug = f"manual_reanalyze_bpm={bpm or 0.0} | local_bpm_error={analysis_error or 'none'}"
+    analysis_debug = (
+        f"manual_reanalyze_bpm={bpm or 0.0} | "
+        f"local_bpm_error={analysis_error or 'none'} | "
+        f"bpm_confidence={bpm_confidence:.3f}"
+    )
     updated = db.update_track_analysis(
       track_id,
       bpm=bpm,
       bpm_source=bpm_source,
+      bpm_confidence=bpm_confidence,
       analysis_status=analysis_status,
       analysis_error=analysis_error,
       analysis_stage="local_bpm",
@@ -302,6 +376,7 @@ def reanalyze_bpm(track_id: int, json_output: bool) -> None:
         "id": updated.id,
         "bpm": updated.bpm or 0.0,
         "bpm_source": updated.bpm_source or "",
+        "bpm_confidence": float(updated.bpm_confidence or 0.0),
         "analysis_status": updated.analysis_status or "",
         "analysis_error": updated.analysis_error or "",
         "analysis_stage": updated.analysis_stage or "",

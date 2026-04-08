@@ -51,8 +51,33 @@ header h1 { margin: 0; text-transform: uppercase; display: flex; align-items: ba
 .quick-actions .btn {
   background: rgba(255,255,255,0.03);
 }
+.header-global-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
 .title-dj   { color: var(--orange); font-weight: 900; font-size: 24px; letter-spacing: -0.01em; text-shadow: 0 0 18px rgba(255,108,0,0.45); }
 .title-assist { color: var(--text); font-weight: 300; font-size: 15px; letter-spacing: 0.26em; opacity: 0.8; }
+.search-shortcut-hint {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.search-shortcut-hint strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.header-search-input-hidden {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
 
 header input {
   width: min(520px, 100%);
@@ -495,44 +520,22 @@ main {
   position: sticky;
   top: 90px;
   z-index: 55;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin: 0 18px 8px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(10,14,24,0.96) 0%, rgba(8,12,20,0.94) 100%);
-  backdrop-filter: blur(10px);
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 .now-playing-bar[hidden] { display: none !important; }
-.now-playing-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-.now-playing-copy strong,
-.now-playing-copy span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.now-playing-copy strong {
-  font-size: 13px;
-}
-.now-playing-copy span {
-  font-size: 11px;
-  color: var(--muted);
-}
 .now-playing-actions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  margin-left: 0;
 }
 .now-playing-bar[data-state="playing"] {
-  border-color: rgba(255,108,0,0.32);
-  box-shadow: 0 0 0 1px rgba(255,108,0,0.08) inset;
+  border-color: transparent;
+  box-shadow: none;
 }
 .library-panel {
   background: var(--panel);

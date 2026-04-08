@@ -11,13 +11,15 @@ export default function AppShell({
         <div className="header-main">
           <div className="header-brand">
             <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
-            <span className="badge desktop-badge" id="desktop-status-badge">Desktop app</span>
           </div>
           <div className="quick-actions">
             <button type="button" className="icon-btn" id="open-command-palette-btn" title="Command palette">Cmd/K</button>
             <button type="button" className="btn" id="quick-choose-folder-btn">Choose Folder</button>
             <span className="scan-status" id="scan-status">Idle</span>
             <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
+            <label className="scan-option compact">
+              <input id="quick-fast-scan" type="checkbox" /> Fast scan
+            </label>
             <label className="scan-option compact">
               <input id="quick-full-rescan" type="checkbox" /> Full rescan
             </label>
@@ -28,7 +30,8 @@ export default function AppShell({
               </div>
             </div>
           </div>
-          <input id="search" placeholder="Search collection, artist, album..." />
+          <div className="search-shortcut-hint">Use <strong>F</strong> or <strong>/</strong> to search</div>
+          <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album..." aria-label="Search collection" />
           <div className="filters">
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
             <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
@@ -41,6 +44,9 @@ export default function AppShell({
             </div>
             <span className="badge" id="hidden-count-badge">Shown: 0</span>
           </div>
+          <div className="header-global-actions">
+            <button type="button" className="icon-btn" id="mute-btn" aria-pressed="false" title="Mute">Mute</button>
+          </div>
         </div>
         <input id="scan-directory" type="hidden" />
         <div className="scan-preflight" id="scan-preflight">Choose a music folder to check.</div>
@@ -51,12 +57,7 @@ export default function AppShell({
 
       <div className="banner" id="warning-banner" style={{ display: 'none' }} />
       <div className="statusbar" id="statusbar" />
-      <div className="now-playing-bar" id="now-playing-bar" data-state="idle" hidden>
-        <div className="now-playing-copy">
-          <strong id="now-playing-title">Nothing playing</strong>
-          <span id="now-playing-meta">Choose a track to preview it.</span>
-        </div>
-      </div>
+      <div className="now-playing-bar" id="now-playing-bar" data-state="idle" hidden />
 
       <main>
         <section className="pane">
@@ -148,6 +149,7 @@ export default function AppShell({
             <div><strong>B</strong><span>Open tap BPM counter</span></div>
             <div><strong>D</strong><span>Delete selected track</span></div>
             <div><strong>E</strong><span>Edit selected track metadata</span></div>
+            <div><strong>M</strong><span>Mute or unmute playback</span></div>
             <div><strong>A</strong><span>Browse current artist</span></div>
             <div><strong>L</strong><span>Browse current album</span></div>
             <div><strong>F</strong><span>Focus search</span></div>
@@ -216,6 +218,8 @@ export default function AppShell({
             </label>
             <div className="scan-preflight" id="tap-bpm-status">Press Space repeatedly to tap the beat.</div>
             <div className="buttons">
+              <button className="btn" id="tap-bpm-half-btn" type="button">/2</button>
+              <button className="btn" id="tap-bpm-double-btn" type="button">x2</button>
               <button className="btn" id="tap-bpm-reset-btn" type="button">Reset</button>
               <button className="btn" id="tap-bpm-save-btn" type="button">Save BPM</button>
             </div>

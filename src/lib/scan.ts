@@ -6,6 +6,7 @@ import { join } from 'node:path';
 export interface ScanRequest {
   directory: string;
   fetchAlbumArt?: boolean;
+  fastScan?: boolean;
   rescanExisting?: boolean;
   rescanMode?: 'smart' | 'missing-metadata' | 'missing-analysis' | 'missing-art' | 'full';
   autoDoubleBpm?: boolean;
@@ -75,6 +76,7 @@ function buildScanArgs(request: ScanRequest): string[] {
   args.push('--rescan-mode', rescanMode);
   if (request.fetchAlbumArt !== false) args.push('--fetch-album-art');
   else args.push('--no-fetch-album-art');
+  if (request.fastScan) args.push('--fast-scan');
   if (request.autoDoubleBpm !== false) args.push('--auto-double');
   if (request.verbose) args.push('--verbose');
 
