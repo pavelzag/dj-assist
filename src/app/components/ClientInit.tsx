@@ -3918,6 +3918,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       scheduleTrackDetailLoad(id, autoPlay, detailDelayMs);
     }
 
+    function playHighlightedTrackImmediately() {
+      if (activeTrackId == null) return;
+      const activeId = String(activeTrackId);
+      const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
+      const expectedStreamPath = `/api/tracks/${activeId}/stream`;
+      const audioMatchesSelection = Boolean(audio?.getAttribute('src')?.includes(expectedStreamPath));
+      if (selectedDetailTrackId !== activeTrackId || !audio || !audioMatchesSelection) {
+        void selectTrack(activeId, true, true, 0);
+        return;
+      }
+      audio.play().catch(() => {});
+    }
+
     // ── Keyboard playback toggle ─────────────────────────────────────────────
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
@@ -4091,12 +4104,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       if (event.key === 'Enter' && activeTrackId != null) {
         event.preventDefault();
-        if (selectedDetailTrackId !== activeTrackId) {
-          void selectTrack(String(activeTrackId), true, true);
-          return;
-        }
-        const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
-        if (audio?.paused) audio.play().catch(() => {});
+        playHighlightedTrackImmediately();
         return;
       }
       if (event.key.toLowerCase() === 'a' && activeTrack()) {
