@@ -22,10 +22,15 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       USE_HARD_LINKS: 'false'
     steps:
-      - name: Checkout
+      - name: Checkout tag
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Checkout current ref
+        if: github.event_name != 'workflow_dispatch' || inputs.tag == ''
+        uses: actions/checkout@v4
 
       - name: Resolve release tag
         id: release_meta
