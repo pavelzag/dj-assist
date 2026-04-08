@@ -8,6 +8,7 @@ const { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } = require('ele
 const DEFAULT_URL = 'http://127.0.0.1:3000/';
 const DEFAULT_HOST = process.env.DJ_ASSIST_ELECTRON_HOST || '127.0.0.1';
 const DEFAULT_PORT = process.env.DJ_ASSIST_ELECTRON_PORT || '3000';
+const MIN_SPLASH_MS = 3000;
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'app-icon.png');
 const APP_ROOT = path.join(__dirname, '..');
 let mainWindow = null;
@@ -15,6 +16,7 @@ let managedServerProcess = null;
 let managedServerOwned = false;
 let quitConfirmed = false;
 let quitPromptOpen = false;
+let splashShownAt = 0;
 
 function appIconDataUrl() {
   try {
@@ -298,6 +300,10 @@ function isServerReachable(url) {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function ensureManagedServer() {
   if (!shouldManageServer()) return;
 
@@ -446,6 +452,7 @@ function createMainWindow(options = {}) {
     return win;
   }
   win.loadURL(renderSplashHtml()).catch(() => {});
+  splashShownAt = Date.now();
 
   if (process.env.DJ_ASSIST_OPEN_DEVTOOLS === '1') {
     win.webContents.openDevTools({ mode: 'detach' });
@@ -459,11 +466,16 @@ function createMainWindow(options = {}) {
   return win;
 }
 
-function loadMainRenderer(win = mainWindow) {
+async function loadMainRenderer(win = mainWindow) {
   if (!win || win.isDestroyed()) return;
+  const remainingSplashMs = Math.max(0, MIN_SPLASH_MS - (Date.now() - splashShownAt));
+  if (remainingSplashMs > 0) {
+    await delay(remainingSplashMs);
+    if (!win || win.isDestroyed()) return;
+  }
   const targetUrl = process.env.DJ_ASSIST_ELECTRON_URL || DEFAULT_URL;
   appendMainLog(`Loading renderer URL ${targetUrl}`);
-  win.loadURL(targetUrl).catch((error) => {
+  await win.loadURL(targetUrl).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     appendMainLog(`loadURL failed: ${message}`);
     showDiagnosticWindow('DJ Assist could not start', 'The local desktop backend did not load.', message);
@@ -484,6 +496,19 @@ ipcMain.handle('desktop:show-item-in-folder', async (_event, targetPath) => {
   return true;
 });
 
+ipcMain.handle('desktop:open-external', async (_event, targetUrl) => {
+  const value = String(targetUrl ?? '').trim();
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    await shell.openExternal(parsed.toString());
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 app.whenReady().then(() => {
   app.setName('DJ Assist');
   appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
@@ -498,7 +523,7 @@ app.whenReady().then(() => {
   createMainWindow();
   ensureManagedServer()
     .then(() => {
-      loadMainRenderer();
+      void loadMainRenderer();
 
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

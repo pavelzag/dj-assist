@@ -1,16 +1,19 @@
 import type { ReactNode } from 'react';
+import packageJson from '../../../package.json';
 
 export default function AppShell({
   clientInit,
 }: {
   clientInit: ReactNode;
 }) {
+  const appVersion = packageJson.version;
   return (
     <>
       <header data-platform="electron">
         <div className="header-main">
           <div className="header-brand">
             <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
+            <span className="app-version-badge" title="Application version">{`v${appVersion}`}</span>
           </div>
           <div className="quick-actions">
             <button type="button" className="icon-btn" id="open-command-palette-btn" title="Command palette">Cmd/K</button>

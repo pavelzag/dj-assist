@@ -2425,9 +2425,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
             ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
             ${tunebatUrl
-              ? `<a class="btn" href="${esc(tunebatUrl)}" target="_blank" rel="noreferrer" title="Open this track on Tunebat">Tunebat</a>`
+              ? `<button class="btn" id="open-tunebat-btn" type="button" title="Open this track on Tunebat">Tunebat</button>`
               : '<button class="btn" type="button" disabled title="Tunebat link is available after Spotify matching">Tunebat</button>'}
-            ${track.youtube_url ? `<a class="btn" href="${esc(track.youtube_url)}" target="_blank" rel="noreferrer">YouTube</a>` : ''}
+            ${track.youtube_url ? '<button class="btn" id="open-youtube-btn" type="button">YouTube</button>' : ''}
             ${sets.length > 0 ? `
               <div style="display:inline-flex;gap:6px;align-items:center;">
                 <select id="set-select" style="background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;">
@@ -2934,6 +2934,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           coverModal.setAttribute('aria-hidden', 'false');
         });
       }
+      document.getElementById('open-tunebat-btn')?.addEventListener('click', async () => {
+        if (!tunebatUrl) return;
+        const opened = await adapter.openExternal(tunebatUrl);
+        if (!opened) showToast('Could not open Tunebat.', 'error');
+      });
+      document.getElementById('open-youtube-btn')?.addEventListener('click', async () => {
+        const youtubeUrl = String(track.youtube_url ?? '').trim();
+        if (!youtubeUrl) return;
+        const opened = await adapter.openExternal(youtubeUrl);
+        if (!opened) showToast('Could not open YouTube.', 'error');
+      });
     }
 
     // ── Sets panel ────────────────────────────────────────────────────────────
