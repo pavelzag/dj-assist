@@ -488,6 +488,7 @@ def _resolve_album_art(
     album_group_key = _album_group_key(metadata.get("artist"), metadata.get("album") or spotify_album_name)
     embedded_url = str(metadata.get("embedded_album_art_url") or "")
     spotify_url = str(previews.get("album_art_url") or "")
+    artist_image_url = str(previews.get("artist_image_url") or "")
     spotify_score = float(previews.get("spotify_match_score") or 0.0)
     cached = album_art_cache.get(album_group_key, {}) if album_group_key else {}
 
@@ -532,6 +533,16 @@ def _resolve_album_art(
                 "album_art_confidence": spotify_score,
                 "album_art_review_status": "approved" if high_confidence else "needs_review",
                 "album_art_review_notes": "spotify album match accepted" if high_confidence else "spotify match below auto-approve threshold",
+            }
+        )
+    elif fetch_album_art and artist_image_url:
+        result.update(
+            {
+                "album_art_url": artist_image_url,
+                "album_art_source": "artist",
+                "album_art_confidence": max(10.0, min(spotify_score, 17.9)),
+                "album_art_review_status": "needs_review",
+                "album_art_review_notes": "spotify artist image used as fallback because no album cover was available",
             }
         )
     elif fetch_album_art and previews.get("spotify_id"):

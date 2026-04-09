@@ -130,7 +130,7 @@ export default function AppShell({
             <h3>Command Palette</h3>
             <button className="close" id="close-command-palette" type="button">&times;</button>
           </div>
-          <input id="command-palette-input" placeholder="Search commands, filters, artists, albums..." />
+          <input id="command-palette-input" placeholder="Search commands, artists, albums, or BPM like 140 or bpm:138-142..." />
           <div className="command-palette-list" id="command-palette-list" />
         </div>
       </div>
@@ -143,12 +143,14 @@ export default function AppShell({
           </div>
           <div className="shortcuts-list">
             <div><strong>Cmd/Ctrl + K</strong><span>Open command palette</span></div>
+            <div><strong>Palette BPM</strong><span>Type `140` or `bpm:138-142` to find tracks by BPM</span></div>
             <div><strong>Space</strong><span>Play or pause</span></div>
             <div><strong>Arrow Left / Right</strong><span>Scrub current track by 5s</span></div>
             <div><strong>Arrow Up / Down</strong><span>Select previous or next track</span></div>
             <div><strong>Ctrl + N / Ctrl + P</strong><span>Select next or previous track</span></div>
             <div><strong>Enter</strong><span>Play selected track</span></div>
             <div><strong>C</strong><span>Copy selected track path</span></div>
+            <div><strong>S</strong><span>Select or unselect the highlighted track</span></div>
             <div><strong>B</strong><span>Open tap BPM counter</span></div>
             <div><strong>D</strong><span>Delete selected track</span></div>
             <div><strong>E</strong><span>Edit selected track metadata</span></div>
@@ -197,6 +199,22 @@ export default function AppShell({
             </label>
             <div className="buttons">
               <button className="btn danger" id="confirm-delete-track-btn" type="button">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="modal" id="quit-app-modal" aria-hidden="true">
+        <div className="modal-card">
+          <div className="modal-head">
+            <h3>Quit DJ Assist</h3>
+            <button className="close" id="close-quit-app" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="scan-preflight" id="quit-app-message">Are you sure you want to close DJ Assist? Any active scan or playback will stop when the app quits.</div>
+            <div className="buttons">
+              <button className="btn" id="cancel-quit-app-btn" type="button">Cancel</button>
+              <button className="btn danger" id="confirm-quit-app-btn" type="button">Quit</button>
             </div>
           </div>
         </div>

@@ -47,6 +47,7 @@ class SpotifyMatch:
     key: str = ""
     mode: str = ""
     album_art_url: str = ""
+    artist_image_url: str = ""
     album_name: str = ""
     match_score: float = 0.0
     high_confidence: bool = False
@@ -241,8 +242,12 @@ class SpotifyClient:
                     album = best_item.get("album") or {}
                     images = album.get("images") or []
                     album_art_url = ""
+                    artist_image_url = ""
                     if include_album_art and images and best_score >= self._art_confidence_threshold():
                         album_art_url = images[0].get("url", "")
+                    if include_album_art and not album_art_url:
+                        artist_ids = [str(artist.get("id") or "").strip() for artist in best_item.get("artists", [])]
+                        artist_image_url = self._fetch_artist_image(next((artist_id for artist_id in artist_ids if artist_id), ""))
                     album_track_number = int(best_item.get("track_number") or 0)
                     album_release_year = self._parse_release_year(album.get("release_date"))
                     return SpotifyMatch(
@@ -254,6 +259,7 @@ class SpotifyClient:
                         key=key,
                         mode=mode,
                         album_art_url=album_art_url,
+                        artist_image_url=artist_image_url,
                         album_name=album.get("name", "") or "",
                         match_score=best_score,
                         high_confidence=best_score >= self._art_confidence_threshold(),
@@ -355,6 +361,25 @@ class SpotifyClient:
             return tempo, camelot, mode
         except Exception:
             return 0.0, "", ""
+
+    def _fetch_artist_image(self, artist_id: str) -> str:
+        if not artist_id or not self.enabled():
+            return ""
+
+        try:
+            response = self._get_with_retry(
+                f"https://api.spotify.com/v1/artists/{artist_id}",
+                headers=self._headers(),
+                timeout=_SPOTIFY_HTTP_TIMEOUT,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            images = payload.get("images") or []
+            if not images:
+                return ""
+            return str(images[0].get("url") or "")
+        except Exception:
+            return ""
 
     @staticmethod
     def _key_to_camelot(key_index: int, mode: str) -> str:
@@ -559,6 +584,7 @@ def _empty_media_links() -> dict[str, str | float | bool | int]:
         "spotify_key": "",
         "spotify_mode": "",
         "album_art_url": "",
+        "artist_image_url": "",
         "spotify_album_name": "",
         "spotify_match_score": 0.0,
         "spotify_high_confidence": False,
@@ -659,6 +685,7 @@ def build_media_links(
         "spotify_key": spotify.key,
         "spotify_mode": spotify.mode,
         "album_art_url": spotify.album_art_url,
+        "artist_image_url": spotify.artist_image_url,
         "spotify_album_name": spotify.album_name,
         "spotify_match_score": spotify.match_score,
         "spotify_high_confidence": spotify.high_confidence,

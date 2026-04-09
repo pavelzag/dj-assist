@@ -69,6 +69,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const deleteTrackRemoveFileEl = document.getElementById('delete-track-remove-file') as HTMLInputElement | null;
     const closeDeleteTrackBtn = document.getElementById('close-delete-track') as HTMLButtonElement | null;
     const confirmDeleteTrackBtn = document.getElementById('confirm-delete-track-btn') as HTMLButtonElement | null;
+    const quitAppModal = document.getElementById('quit-app-modal') as HTMLElement | null;
+    const closeQuitAppBtn = document.getElementById('close-quit-app') as HTMLButtonElement | null;
+    const cancelQuitAppBtn = document.getElementById('cancel-quit-app-btn') as HTMLButtonElement | null;
+    const confirmQuitAppBtn = document.getElementById('confirm-quit-app-btn') as HTMLButtonElement | null;
     const tapBpmModal = document.getElementById('tap-bpm-modal') as HTMLElement | null;
     const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
     const tapBpmTrackLabelEl = document.getElementById('tap-bpm-track-label') as HTMLElement | null;
@@ -172,12 +176,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let selectedDetailTrackId: number | null = null;
     let pendingTrackDetailTimer: ReturnType<typeof setTimeout> | null = null;
     let trackDetailRequestToken = 0;
+    let nextTracksRefreshToken = 0;
+    let trackDetailAbortController: AbortController | null = null;
     let saveEditMetadataInFlight = false;
+    let quitAppInFlight = false;
     let pendingDeleteTrackIds: number[] = [];
     let pendingDeleteSource: 'single' | 'bulk' = 'single';
     let includeUnknownArtistsInNextTracks = false;
     let nextTracksIntent: 'safe' | 'up' | 'down' | 'same' = 'safe';
     const trackMultipliers: Record<number, number> = {};
+    const nextTracksByTrackId: Record<number, Record<string, unknown>[]> = {};
     const nextTracksPageByTrackId: Record<number, number> = {};
     const detailSectionCollapsed: Record<string, boolean> = {};
     const detailModeByTrackId: Record<number, 'overview' | 'match' | 'related'> = {};
@@ -723,6 +731,27 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function renderCommandPalette(query = '') {
       if (!commandPaletteList) return;
       const normalized = normalizeText(query);
+      const bpmQuery = (() => {
+        const trimmed = String(query ?? '').trim().toLowerCase();
+        if (!trimmed) return null;
+        const rangeMatch = trimmed.match(/^bpm\s*:\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/)
+          || trimmed.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/);
+        if (rangeMatch) {
+          const min = Number(rangeMatch[1]);
+          const max = Number(rangeMatch[2]);
+          if (Number.isFinite(min) && Number.isFinite(max)) {
+            return { min: Math.min(min, max), max: Math.max(min, max), exact: false };
+          }
+        }
+        const exactMatch = trimmed.match(/^bpm\s*:\s*(\d+(?:\.\d+)?)$/) || trimmed.match(/^(\d+(?:\.\d+)?)$/);
+        if (exactMatch) {
+          const value = Number(exactMatch[1]);
+          if (Number.isFinite(value)) {
+            return { min: value - 0.5, max: value + 0.5, exact: true };
+          }
+        }
+        return null;
+      })();
       const commands: Array<{ label: string; meta: string; run: () => void }> = [
         { label: 'Choose Folder', meta: 'Scan', run: () => void pickDirectoryAndPrefill() },
         { label: 'Start Scan', meta: 'Scan', run: () => void triggerScan() },
@@ -749,11 +778,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         } },
       ];
       const trackResults = tracks
-        .filter((track) => !normalized || normalizeText(`${track.artist ?? ''} ${track.title ?? ''} ${albumNameFor(track)}`).includes(normalized))
+        .filter((track) => {
+          const matchesText = !normalized || normalizeText(`${track.artist ?? ''} ${track.title ?? ''} ${albumNameFor(track)}`).includes(normalized);
+          if (matchesText) return true;
+          if (!bpmQuery) return false;
+          const bpm = Number(track.effective_bpm ?? track.bpm ?? 0);
+          return Number.isFinite(bpm) && bpm >= bpmQuery.min && bpm <= bpmQuery.max;
+        })
         .slice(0, 8)
         .map((track) => ({
           label: `${String(track.artist ?? 'Unknown Artist')} - ${String(track.title ?? 'Untitled')}`,
-          meta: albumNameFor(track) || 'Track',
+          meta: `${displayBpm(track.effective_bpm, track.id as number)} BPM${albumNameFor(track) ? ` · ${albumNameFor(track)}` : ''}`,
           kind: 'track' as const,
           run: () => {
             openPanel('track');
@@ -777,8 +812,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             navigateLibrary('artist', artist);
           },
         }));
-      const results = [...commands.map((item) => ({ ...item, kind: 'command' as const })), ...artistResults, ...trackResults]
-        .filter((item) => !normalized || normalizeText(`${item.label} ${item.meta}`).includes(normalized))
+      const results = (
+        bpmQuery
+          ? [...trackResults]
+          : [...commands.map((item) => ({ ...item, kind: 'command' as const })), ...artistResults, ...trackResults]
+      )
+        .filter((item) => !normalized || bpmQuery || normalizeText(`${item.label} ${item.meta}`).includes(normalized))
         .slice(0, 12);
       commandPaletteResults = results;
       commandPaletteActiveIndex = Math.min(commandPaletteActiveIndex, Math.max(0, results.length - 1));
@@ -905,7 +944,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderQuickFilters();
       renderList(tracks);
       if (selectedDetailTrackId != null) {
-        void loadTrackDetail(String(selectedDetailTrackId), false);
+        void refreshSelectedTrackRecommendations({ resetPage: true });
       }
     }
 
@@ -1010,6 +1049,92 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return activeTrackId == null ? null : tracks.find((track) => Number(track.id) === activeTrackId) ?? null;
     }
 
+    function filteredNextTracksFor(trackId: number): Record<string, unknown>[] {
+      const source = nextTracksByTrackId[trackId] ?? [];
+      return source.filter((item) => {
+        if ((hideUnknownArtistsEl.checked || !includeUnknownArtistsInNextTracks) && isUnknownArtistName(item.artist)) {
+          return false;
+        }
+        if (activeQuickFilter === 'high-bitrate' && !isHighBitrate(item)) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    function nextTracksEmptyMessage() {
+      if (activeQuickFilter === 'high-bitrate') return 'No compatible high-bitrate tracks found.';
+      if (hideUnknownArtistsEl.checked || !includeUnknownArtistsInNextTracks) {
+        return 'No compatible known-artist tracks found.';
+      }
+      return 'No compatible tracks found.';
+    }
+
+    function bindSuggestionCards(root: ParentNode) {
+      root.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
+        card.addEventListener('click', () => selectTrack((card as HTMLElement).dataset.trackId!, true));
+      });
+      bindLibraryNavLinks(root);
+    }
+
+    function renderNextTracksSection(trackId: number) {
+      const nextSection = document.getElementById('next-tracks-section');
+      const nextBody = document.getElementById('next-tracks-body');
+      const nextToggleBtn = document.getElementById('next-tracks-toggle-btn') as HTMLButtonElement | null;
+      const nextIndicator = document.getElementById('next-page-indicator');
+      const nextFirstBtn = document.getElementById('next-first-btn') as HTMLButtonElement | null;
+      const nextPrevBtn = document.getElementById('next-prev-btn') as HTMLButtonElement | null;
+      const nextNextBtn = document.getElementById('next-next-btn') as HTMLButtonElement | null;
+      if (!nextSection || !nextBody || !nextToggleBtn || !nextIndicator || !nextFirstBtn || !nextPrevBtn || !nextNextBtn) return;
+      if (selectedDetailTrackId !== trackId) return;
+
+      const nextPageSize = 10;
+      const sourceTracks = filteredNextTracksFor(trackId);
+      const safePageCount = Math.max(1, Math.ceil(sourceTracks.length / nextPageSize));
+      const page = Math.min(safePageCount - 1, Math.max(0, nextTracksPageByTrackId[trackId] ?? 0));
+      const collapsed = isDetailSectionCollapsed(trackId, 'next-tracks');
+      nextTracksPageByTrackId[trackId] = page;
+      const items = sourceTracks.slice(page * nextPageSize, (page + 1) * nextPageSize);
+
+      nextSection.classList.toggle('collapsed', collapsed);
+      nextBody.hidden = collapsed;
+      nextToggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
+      nextIndicator.textContent = `Page ${page + 1} / ${safePageCount}`;
+      nextFirstBtn.disabled = page === 0;
+      nextPrevBtn.disabled = page === 0;
+      nextNextBtn.disabled = page >= safePageCount - 1;
+      nextBody.innerHTML = `
+        <div class="suggestions">
+          ${items.map((item) => `
+            <div class="suggestion" data-track-id="${item.id}">
+              <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
+              <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)} · ${esc(item.reason ?? '')}</small>
+            </div>
+          `).join('') || `<div class="empty">${esc(nextTracksEmptyMessage())}</div>`}
+        </div>
+      `;
+      bindSuggestionCards(nextBody);
+    }
+
+    async function refreshSelectedTrackRecommendations(options: { resetPage?: boolean } = {}) {
+      const { resetPage = false } = options;
+      if (selectedDetailTrackId == null) return;
+      const trackId = selectedDetailTrackId;
+      if (!document.getElementById('next-tracks-body')) return;
+      const requestToken = ++nextTracksRefreshToken;
+      try {
+        const response = await fetch(`/api/tracks/${trackId}?intent=${encodeURIComponent(nextTracksIntent)}`);
+        if (!response.ok) throw new Error(`Could not refresh recommendations (${response.status})`);
+        const refreshed = await response.json();
+        if (requestToken !== nextTracksRefreshToken || selectedDetailTrackId !== trackId) return;
+        nextTracksByTrackId[trackId] = Array.isArray(refreshed.next_tracks) ? refreshed.next_tracks as Record<string, unknown>[] : [];
+        if (resetPage) nextTracksPageByTrackId[trackId] = 0;
+        renderNextTracksSection(trackId);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Could not refresh recommendations.', 'error');
+      }
+    }
+
     function updateRecentNewTrackIdsFromTracks(items: Record<string, unknown>[]) {
       if (!hasScanBaseline) return;
       recentNewTrackIds = new Set(
@@ -1023,6 +1148,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function selectedTracks(): Record<string, unknown>[] {
       return tracks.filter((track) => selectedTrackIds.has(Number(track.id)));
+    }
+
+    function toggleTrackSelection(trackId: number) {
+      if (selectedTrackIds.has(trackId)) selectedTrackIds.delete(trackId);
+      else selectedTrackIds.add(trackId);
+      renderList(tracks);
+      renderBulkToolbar();
     }
 
     function setScanStatus(message: string, state: 'idle' | 'running' | 'success' | 'error' = 'idle') {
@@ -1479,13 +1611,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         deleteTrackTitleEl.textContent = uniqueIds.length === 1 ? 'Delete Track' : `Delete ${uniqueIds.length} Tracks`;
       }
       if (deleteTrackMessageEl) {
-        deleteTrackMessageEl.textContent = uniqueIds.length === 1
-          ? 'Remove this track from DJ Assist. You can also delete the audio file from the computer.'
-          : `Remove ${uniqueIds.length} tracks from DJ Assist. You can also delete their audio files from the computer.`;
+        if (uniqueIds.length === 1) {
+          const track = tracks.find((item) => Number(item.id) === uniqueIds[0]) ?? null;
+          const artist = String(track?.artist ?? '').trim();
+          const title = String(track?.title ?? '').trim() || 'Untitled';
+          const label = artist ? `${artist} - ${title}` : title;
+          deleteTrackMessageEl.textContent = `Remove "${label}" from DJ Assist. You can also delete the audio file from the computer.`;
+        } else {
+          deleteTrackMessageEl.textContent = `Remove ${uniqueIds.length} tracks from DJ Assist. You can also delete their audio files from the computer.`;
+        }
       }
       openModal(deleteTrackModal);
       requestAnimationFrame(() => {
-        confirmDeleteTrackBtn?.focus();
+        deleteTrackRemoveFileEl?.focus();
       });
     }
 
@@ -1494,6 +1632,29 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       pendingDeleteSource = 'single';
       if (deleteTrackRemoveFileEl) deleteTrackRemoveFileEl.checked = false;
       closeModal(deleteTrackModal);
+    }
+
+    function openQuitAppModal() {
+      if (!quitAppModal || quitAppInFlight) return;
+      openModal(quitAppModal);
+      requestAnimationFrame(() => {
+        cancelQuitAppBtn?.focus();
+      });
+    }
+
+    async function closeQuitAppModal() {
+      closeModal(quitAppModal);
+      await adapter.cancelQuit();
+    }
+
+    async function confirmQuitApp() {
+      if (quitAppInFlight) return;
+      quitAppInFlight = true;
+      try {
+        await adapter.confirmQuit();
+      } finally {
+        quitAppInFlight = false;
+      }
     }
 
     async function pruneMissingTracks(ids: number[]) {
@@ -1529,7 +1690,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       await loadSets();
       if (currentPanel === 'sets') await renderSetsPanel();
       if (nextTrackId != null && tracks.some((track) => Number(track.id) === nextTrackId)) {
-        await selectTrack(String(nextTrackId), false);
+        await selectTrack(String(nextTrackId), true, true);
       } else if (activeTrackId != null && uniqueIds.includes(activeTrackId)) {
         clearActiveTrackDetail();
       }
@@ -1578,7 +1739,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       await loadSets();
       if (currentPanel === 'sets') await renderSetsPanel();
       if (nextTrackId != null && tracks.some((track) => Number(track.id) === nextTrackId)) {
-        await selectTrack(String(nextTrackId), false);
+        await selectTrack(String(nextTrackId), true, true);
       } else if (activeTrackId != null && uniqueIds.includes(activeTrackId)) {
         clearActiveTrackDetail();
       }
@@ -2341,30 +2502,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const track = payload.track as Record<string, unknown>;
       const otherTracks = relatedArtistTracks(track);
       const albums = artistAlbums(String(track.artist ?? ''));
-      let nextTracks = (payload.next_tracks ?? []) as Record<string, unknown>[];
       const coverUrl = (track.album_art_url as string) || '';
       const coverLabel = (track.album ?? track.title ?? 'Unknown') as string;
       const trackId = track.id as number;
+      nextTracksByTrackId[trackId] = Array.isArray(payload.next_tracks) ? payload.next_tracks as Record<string, unknown>[] : [];
       const mult = getMult(trackId);
       const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
       const nextPageSize = 10;
-      const filteredNextTracks = () => {
-        return nextTracks.filter((item) => {
-          if ((hideUnknownArtistsEl.checked || !includeUnknownArtistsInNextTracks) && isUnknownArtistName(item.artist)) {
-            return false;
-          }
-          if (activeQuickFilter === 'high-bitrate' && !isHighBitrate(item)) {
-            return false;
-          }
-          return true;
-        });
-      };
-      const nextTracksEmptyMessage = activeQuickFilter === 'high-bitrate'
-        ? 'No compatible high-bitrate tracks found.'
-        : (hideUnknownArtistsEl.checked || !includeUnknownArtistsInNextTracks)
-            ? 'No compatible known-artist tracks found.'
-            : 'No compatible tracks found.';
-      const initialNextTracks = filteredNextTracks();
+      const initialNextTracks = filteredNextTracksFor(trackId);
       const nextPageCount = Math.max(1, Math.ceil(initialNextTracks.length / nextPageSize));
       const currentNextPage = Math.min(nextTracksPageByTrackId[trackId] ?? 0, nextPageCount - 1);
       nextTracksPageByTrackId[trackId] = currentNextPage;
@@ -2490,7 +2635,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                     <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
                     <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)} · ${esc(item.reason ?? '')}</small>
                   </div>
-                `).join('') || `<div class="empty">${esc(nextTracksEmptyMessage)}</div>`}
+                `).join('') || `<div class="empty">${esc(nextTracksEmptyMessage())}</div>`}
               </div>
             </div>
           </section>
@@ -2625,52 +2770,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       detailEl.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
         card.addEventListener('click', () => selectTrack((card as HTMLElement).dataset.trackId!, true));
       });
-      const bindSectionSuggestions = (root: ParentNode) => {
-        root.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
-          card.addEventListener('click', () => selectTrack((card as HTMLElement).dataset.trackId!, true));
-        });
-        bindLibraryNavLinks(root);
-      };
-      const renderNextTracksPage = () => {
-        const nextSection = document.getElementById('next-tracks-section');
-        const nextBody = document.getElementById('next-tracks-body');
-        const nextToggleBtn = document.getElementById('next-tracks-toggle-btn') as HTMLButtonElement | null;
-        const nextIndicator = document.getElementById('next-page-indicator');
-        const nextFirstBtn = document.getElementById('next-first-btn') as HTMLButtonElement | null;
-        const nextPrevBtn = document.getElementById('next-prev-btn') as HTMLButtonElement | null;
-        const nextNextBtn = document.getElementById('next-next-btn') as HTMLButtonElement | null;
-        if (!nextSection || !nextBody || !nextToggleBtn || !nextIndicator || !nextFirstBtn || !nextPrevBtn || !nextNextBtn) return;
-        const sourceTracks = filteredNextTracks();
-        const safePageCount = Math.max(1, Math.ceil(sourceTracks.length / nextPageSize));
-        const page = Math.min(safePageCount - 1, Math.max(0, nextTracksPageByTrackId[trackId] ?? 0));
-        nextTracksPageByTrackId[trackId] = page;
-        const collapsed = isDetailSectionCollapsed(trackId, 'next-tracks');
-        const safePage = Math.min(safePageCount - 1, Math.max(0, page));
-        nextTracksPageByTrackId[trackId] = safePage;
-        const items = sourceTracks.slice(safePage * nextPageSize, (safePage + 1) * nextPageSize);
-        nextSection.classList.toggle('collapsed', collapsed);
-        nextBody.hidden = collapsed;
-        nextToggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
-        nextIndicator.textContent = `Page ${safePage + 1} / ${safePageCount}`;
-        nextFirstBtn.disabled = safePage === 0;
-        nextPrevBtn.disabled = safePage === 0;
-        nextNextBtn.disabled = safePage >= safePageCount - 1;
-        nextBody.innerHTML = `
-          <div class="suggestions">
-            ${items.map((item) => `
-              <div class="suggestion" data-track-id="${item.id}">
-                <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(item.artist ?? 'Unknown Artist')}">${esc(item.artist ?? 'Unknown Artist')}</button> - ${esc(item.title ?? 'Untitled')}</strong><br>
-                <small>${albumNameFor(item) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(item))}" data-nav-artist="${esc(item.artist ?? '')}">${esc(albumNameFor(item))}</button> · ` : ''}<span data-raw-bpm="${item.effective_bpm ?? ''}" data-track-id="${item.id}">${displayBpm(item.effective_bpm, item.id as number)} BPM</span> · ${esc(item.effective_key ?? '--')} · ${formatBitrate(item.bitrate)} · ${esc(item.reason ?? '')}</small>
-              </div>
-            `).join('') || `<div class="empty">${esc(nextTracksEmptyMessage)}</div>`}
-          </div>
-        `;
-        bindSectionSuggestions(nextBody);
-      };
       document.getElementById('next-include-unknown-artists')?.addEventListener('change', (event) => {
         includeUnknownArtistsInNextTracks = (event.currentTarget as HTMLInputElement).checked;
         nextTracksPageByTrackId[trackId] = 0;
-        renderNextTracksPage();
+        renderNextTracksSection(trackId);
       });
       document.getElementById('next-intent-select')?.addEventListener('change', async (event) => {
         nextTracksIntent = (((event.currentTarget as HTMLSelectElement).value) === 'up'
@@ -2683,8 +2786,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const response = await fetch(`/api/tracks/${trackId}?intent=${encodeURIComponent(nextTracksIntent)}`);
           if (!response.ok) throw new Error(`Could not refresh recommendations (${response.status})`);
           const refreshed = await response.json();
-          nextTracks = Array.isArray(refreshed.next_tracks) ? refreshed.next_tracks as Record<string, unknown>[] : [];
-          renderNextTracksPage();
+          nextTracksByTrackId[trackId] = Array.isArray(refreshed.next_tracks) ? refreshed.next_tracks as Record<string, unknown>[] : [];
+          renderNextTracksSection(trackId);
         } catch (error) {
           showToast(error instanceof Error ? error.message : 'Could not refresh recommendations.', 'error');
         }
@@ -2701,7 +2804,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       };
       const toggleDetailSection = (section: 'next-tracks' | 'artist-tracks') => {
         setDetailSectionCollapsed(trackId, section, !isDetailSectionCollapsed(trackId, section));
-        if (section === 'next-tracks') renderNextTracksPage();
+        if (section === 'next-tracks') renderNextTracksSection(trackId);
         else applyArtistTracksState();
       };
       const applySimpleSectionState = (section: 'metadata-editor' | 'cover-match') => {
@@ -2721,17 +2824,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('next-first-btn')?.addEventListener('click', (event) => {
         event.stopPropagation();
         nextTracksPageByTrackId[trackId] = 0;
-        renderNextTracksPage();
+        renderNextTracksSection(trackId);
       });
       document.getElementById('next-prev-btn')?.addEventListener('click', (event) => {
         event.stopPropagation();
         nextTracksPageByTrackId[trackId] = Math.max(0, (nextTracksPageByTrackId[trackId] ?? 0) - 1);
-        renderNextTracksPage();
+        renderNextTracksSection(trackId);
       });
       document.getElementById('next-next-btn')?.addEventListener('click', (event) => {
         event.stopPropagation();
-        nextTracksPageByTrackId[trackId] = Math.min(nextPageCount - 1, (nextTracksPageByTrackId[trackId] ?? 0) + 1);
-        renderNextTracksPage();
+        const pageCount = Math.max(1, Math.ceil(filteredNextTracksFor(trackId).length / nextPageSize));
+        nextTracksPageByTrackId[trackId] = Math.min(pageCount - 1, (nextTracksPageByTrackId[trackId] ?? 0) + 1);
+        renderNextTracksSection(trackId);
       });
       document.getElementById('next-tracks-toggle-btn')?.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -2748,7 +2852,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('artist-tracks-head')?.addEventListener('click', () => {
         toggleDetailSection('artist-tracks');
       });
-      renderNextTracksPage();
+      renderNextTracksSection(trackId);
       applyArtistTracksState();
       document.getElementById('metadata-editor-toggle-btn')?.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -3424,15 +3528,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       document.getElementById('reset-library-data-btn')?.addEventListener('click', async () => {
         const confirmed = window.confirm('Reset the current DJ Assist library data? This clears tracks, playlists, scan history, and watched folders from the app database.');
-        if (!confirmed) return;
-        const response = await fetch('/api/library/reset', { method: 'POST' });
-        if (!response.ok) {
-          showToast('Could not reset the library data.', 'error');
-          return;
-        }
-        tracks = [];
-        sets = [];
-        scanHistory = [];
+      if (!confirmed) return;
+      const response = await fetch('/api/library/reset', { method: 'POST' });
+      if (!response.ok) {
+        showToast('Could not reset the library data.', 'error');
+        return;
+      }
+      stopStreamingScanJob();
+      activeScanJobId = null;
+      activeScanStatus = 'idle';
+      frozenTrackIdsDuringScan = null;
+      pendingTrackDetailTimer && clearTimeout(pendingTrackDetailTimer);
+      pendingTrackDetailTimer = null;
+      trackDetailAbortController?.abort();
+      tracks = [];
+      sets = [];
+      scanHistory = [];
         libraryOverview = null;
         watchFolders = [];
         activeTrackId = null;
@@ -3457,12 +3568,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         renderList(tracks);
         detailEl.innerHTML = '<div class="empty">Select a track from the library to view details.</div>';
         updateNowPlayingBar();
-        await Promise.all([
-          loadLibraryOverview(),
-          loadWatchFolders(),
-          loadScanHistory(),
-        ]);
-        showToast('Library data reset.', 'success');
+      await Promise.all([
+        loadLibraryOverview(),
+        loadWatchFolders(),
+        loadScanHistory(),
+      ]);
+      setScanStatus('Idle');
+      setScanProgress(0, 0, 'No scan in progress');
+      resetScanLog();
+      showToast('Library data reset.', 'success');
       });
     }
 
@@ -3740,12 +3854,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
 
       activeScanStatus = 'queued';
-      frozenTrackIdsDuringScan = [...tracks]
-        .sort(compareTracks)
-        .map((track) => Number(track.id))
-        .filter((id) => Number.isFinite(id));
+      frozenTrackIdsDuringScan = tracks.length
+        ? [...tracks]
+            .sort(compareTracks)
+            .map((track) => Number(track.id))
+            .filter((id) => Number.isFinite(id))
+        : null;
       preScanTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
-      hasScanBaseline = true;
+      hasScanBaseline = tracks.length > 0;
       ensureBackgroundRefreshLoop();
       setScanStatus(fastScan ? 'Fast scanning collection…' : 'Scanning collection…', 'running');
       setScanProgress(0, 0, directory);
@@ -3884,11 +4000,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function loadTrackDetail(id: string, autoPlay = false) {
       const requestedTrackId = Number(id);
       const requestToken = ++trackDetailRequestToken;
-      await loadSets();
+      trackDetailAbortController?.abort();
+      const abortController = new AbortController();
+      trackDetailAbortController = abortController;
+      if (!sets.length) {
+        void loadSets().catch(() => {});
+      }
       const params = new URLSearchParams({ intent: nextTracksIntent });
-      const res = await fetch(`/api/tracks/${id}?${params.toString()}`);
-      const payload = await res.json();
+      let payload: Record<string, unknown>;
+      try {
+        const res = await fetch(`/api/tracks/${id}?${params.toString()}`, { signal: abortController.signal });
+        payload = await res.json();
+      } catch (error) {
+        if (abortController.signal.aborted) return;
+        showToast(error instanceof Error ? error.message : 'Could not load track details.', 'error');
+        return;
+      }
       if (requestToken !== trackDetailRequestToken || activeTrackId !== requestedTrackId) return;
+      if (trackDetailAbortController === abortController) {
+        trackDetailAbortController = null;
+      }
       selectedDetailTrackId = requestedTrackId;
       renderDetail(payload);
       updateNowPlayingBar();
@@ -3941,6 +4072,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
         if (deleteTrackModal?.classList.contains('open')) {
           closeDeleteTracksModal();
+          return;
+        }
+        if (quitAppModal?.classList.contains('open')) {
+          void closeQuitAppModal();
           return;
         }
         if (editMetadataModal?.classList.contains('open')) {
@@ -4040,6 +4175,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'c') {
         event.preventDefault();
         void copyActiveTrackPath();
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 's') {
+        if (activeTrackId != null) {
+          event.preventDefault();
+          toggleTrackSelection(activeTrackId);
+        }
         return;
       }
       if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'b') {
@@ -4157,7 +4299,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     hideUnknownArtistsEl.addEventListener('change', () => {
       renderList(tracks);
       if (selectedDetailTrackId != null) {
-        void loadTrackDetail(String(selectedDetailTrackId), false);
+        void refreshSelectedTrackRecommendations({ resetPage: true });
       }
     });
     sortsEl.addEventListener('click', (event) => {
@@ -4248,6 +4390,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     deleteTrackModal?.addEventListener('click', (event) => {
       if (event.target === deleteTrackModal) closeDeleteTracksModal();
     });
+    quitAppModal?.addEventListener('click', (event) => {
+      if (event.target === quitAppModal) {
+        void closeQuitAppModal();
+      }
+    });
     tapBpmModal?.addEventListener('click', (event) => {
       if (event.target === tapBpmModal) {
         closeModal(tapBpmModal);
@@ -4265,11 +4412,31 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       event.preventDefault();
       focusables[nextIndex]?.focus();
     });
+    quitAppModal?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Tab') return;
+      const focusables = [cancelQuitAppBtn, confirmQuitAppBtn].filter(Boolean) as HTMLElement[];
+      if (!focusables.length) return;
+      const currentIndex = focusables.findIndex((element) => element === document.activeElement);
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1)
+        : (currentIndex === -1 || currentIndex >= focusables.length - 1 ? 0 : currentIndex + 1);
+      event.preventDefault();
+      focusables[nextIndex]?.focus();
+    });
     document.getElementById('save-edit-metadata-btn')?.addEventListener('click', () => {
       void saveEditMetadataModal();
     });
     confirmDeleteTrackBtn?.addEventListener('click', () => {
       void confirmDeleteTracks();
+    });
+    closeQuitAppBtn?.addEventListener('click', () => {
+      void closeQuitAppModal();
+    });
+    cancelQuitAppBtn?.addEventListener('click', () => {
+      void closeQuitAppModal();
+    });
+    confirmQuitAppBtn?.addEventListener('click', () => {
+      void confirmQuitApp();
     });
     tapBpmResetBtn?.addEventListener('click', () => {
       resetTapBpmState();
@@ -4364,6 +4531,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     quickStartScanBtn?.addEventListener('click', () => {
       void triggerScan();
+    });
+    const unsubscribeQuitRequest = adapter.onQuitRequested(() => {
+      openQuitAppModal();
     });
     listEl.tabIndex = 0;
     detailEl.tabIndex = 0;
@@ -4482,6 +4652,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (scanLogFlushTimer) clearTimeout(scanLogFlushTimer);
       if (listScrollRaf) cancelAnimationFrame(listScrollRaf);
       if (searchTimer) clearTimeout(searchTimer);
+      trackDetailAbortController?.abort();
+      unsubscribeQuitRequest();
     };
   }, [adapter]);
 

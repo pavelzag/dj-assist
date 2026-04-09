@@ -423,12 +423,26 @@ export async function cancelScanJob(jobId: string): Promise<void> {
 
 export async function cancelAllScanJobs(): Promise<void> {
   const jobs = [...jobsStore().values()];
+  const pendingStops: Promise<void>[] = [];
   for (const job of jobs) {
     if (!job.child) continue;
     job.state.status = 'cancelled';
+    const child = job.child;
+    const closed = new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      child.once('close', finish);
+      setTimeout(finish, 1500);
+    });
     job.child.kill('SIGTERM');
     await pushLog(job, 'warning', 'Scan cancelled due to library reset', 'cancel');
+    pendingStops.push(closed);
   }
+  await Promise.all(pendingStops);
 }
 
 export async function getScanJobSnapshot(jobId: string) {

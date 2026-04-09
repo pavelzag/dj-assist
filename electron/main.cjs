@@ -16,6 +16,7 @@ let managedServerProcess = null;
 let managedServerOwned = false;
 let quitConfirmed = false;
 let quitPromptOpen = false;
+let quitRequestPending = false;
 let splashShownAt = 0;
 
 function appIconDataUrl() {
@@ -388,6 +389,17 @@ function confirmQuit() {
   }
 }
 
+function requestRendererQuitConfirmation() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const currentUrl = mainWindow.webContents.getURL();
+  if (!currentUrl || currentUrl.startsWith('data:text/html')) return false;
+  quitRequestPending = true;
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('desktop:request-quit');
+  return true;
+}
+
 function createMainWindow(options = {}) {
   const icon = nativeImage.createFromPath(APP_ICON_PATH);
   const win = new BrowserWindow({
@@ -441,6 +453,7 @@ function createMainWindow(options = {}) {
   win.on('close', (event) => {
     if (quitConfirmed) return;
     event.preventDefault();
+    if (requestRendererQuitConfirmation()) return;
     if (confirmQuit()) {
       quitConfirmed = true;
       app.quit();
@@ -509,6 +522,18 @@ ipcMain.handle('desktop:open-external', async (_event, targetUrl) => {
   }
 });
 
+ipcMain.handle('desktop:confirm-quit', async () => {
+  quitRequestPending = false;
+  quitConfirmed = true;
+  app.quit();
+  return true;
+});
+
+ipcMain.handle('desktop:cancel-quit', async () => {
+  quitRequestPending = false;
+  return true;
+});
+
 app.whenReady().then(() => {
   app.setName('DJ Assist');
   appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
@@ -555,6 +580,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
   if (!quitConfirmed) {
     event.preventDefault();
+    if (quitRequestPending || requestRendererQuitConfirmation()) return;
     if (!confirmQuit()) return;
     quitConfirmed = true;
     app.quit();
