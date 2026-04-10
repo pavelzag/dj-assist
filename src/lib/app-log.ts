@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export type ClientDiagnosticLogEntry = {
@@ -24,4 +24,27 @@ export async function appendClientDiagnosticLog(entry: ClientDiagnosticLogEntry)
   await mkdir(path.dirname(filePath), { recursive: true });
   await appendFile(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
   return filePath;
+}
+
+export async function getClientDiagnosticLogs(limit = 100): Promise<ClientDiagnosticLogEntry[]> {
+  const filePath = getClientLogPath();
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-Math.max(1, Math.min(limit, 500)))
+      .reverse()
+      .flatMap((line) => {
+        try {
+          const parsed = JSON.parse(line) as ClientDiagnosticLogEntry;
+          return parsed && typeof parsed === 'object' ? [parsed] : [];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
 }

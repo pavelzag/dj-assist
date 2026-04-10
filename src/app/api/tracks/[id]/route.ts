@@ -100,7 +100,7 @@ export async function PATCH(
     }
   }
 
-  if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined || body.album_art_review_status !== undefined || body.album_art_review_notes !== undefined) {
+  if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined || body.album_art_url !== undefined || body.album_art_source !== undefined || body.album_art_confidence !== undefined || body.album_art_review_status !== undefined || body.album_art_review_notes !== undefined) {
     await updateTrackMetadata(trackId, {
       artist: body.artist,
       title: body.title,
@@ -112,6 +112,9 @@ export async function PATCH(
         time: Number(cue.time ?? 0),
         label: cue.label ? String(cue.label) : undefined,
       })) : undefined,
+      album_art_url: body.album_art_url !== undefined ? String(body.album_art_url ?? '') : undefined,
+      album_art_source: body.album_art_source !== undefined ? String(body.album_art_source ?? '') : undefined,
+      album_art_confidence: body.album_art_confidence !== undefined ? Number(body.album_art_confidence ?? 0) : undefined,
       album_art_review_status: body.album_art_review_status !== undefined ? String(body.album_art_review_status ?? '') : undefined,
       album_art_review_notes: body.album_art_review_notes !== undefined ? String(body.album_art_review_notes ?? '') : undefined,
     });

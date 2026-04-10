@@ -680,6 +680,9 @@ export async function updateTrackMetadata(
     ignored?: boolean;
     custom_tags?: string[];
     manual_cues?: Array<{ time: number; label?: string }>;
+    album_art_url?: string | null;
+    album_art_source?: string | null;
+    album_art_confidence?: number | null;
     album_art_review_status?: string | null;
     album_art_review_notes?: string | null;
   },
@@ -697,6 +700,9 @@ export async function updateTrackMetadata(
     key: patch.key !== undefined ? patch.key : current.key,
     ignored: patch.ignored !== undefined ? patch.ignored : current.ignored,
     custom_tags: patch.custom_tags !== undefined ? serializeTags(patch.custom_tags) : current.custom_tags,
+    album_art_url: patch.album_art_url !== undefined ? patch.album_art_url : current.album_art_url,
+    album_art_source: patch.album_art_source !== undefined ? patch.album_art_source : current.album_art_source,
+    album_art_confidence: patch.album_art_confidence !== undefined ? patch.album_art_confidence : current.album_art_confidence,
     album_art_review_status: patch.album_art_review_status !== undefined ? patch.album_art_review_status : current.album_art_review_status,
     album_art_review_notes: patch.album_art_review_notes !== undefined ? patch.album_art_review_notes : current.album_art_review_notes,
     artist_canonical: canonicalizeArtistName(artist),
@@ -707,6 +713,7 @@ export async function updateTrackMetadata(
   execute(
     `UPDATE tracks
      SET title = ?, artist = ?, album = ?, key = ?, ignored = ?, custom_tags = ?,
+         album_art_url = ?, album_art_source = ?, album_art_confidence = ?,
          album_art_review_status = ?, album_art_review_notes = ?, artist_canonical = ?,
          album_canonical = ?, manual_cues = ?
      WHERE id = ?`,
@@ -716,6 +723,9 @@ export async function updateTrackMetadata(
     values.key,
     boolInt(Boolean(values.ignored)),
     values.custom_tags,
+    values.album_art_url,
+    values.album_art_source,
+    values.album_art_confidence,
     values.album_art_review_status,
     values.album_art_review_notes,
     values.artist_canonical,

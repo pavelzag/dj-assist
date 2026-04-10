@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import click
@@ -164,14 +165,16 @@ def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: 
         if missing:
             if json_progress:
                 emit({"event": "log", "level": "warning", "message": f"Spotify env missing: {', '.join(missing)}"})
+                emit({"event": "log", "level": "info", "message": "Spotify disabled, but fallback artwork providers remain available."})
             else:
                 console.print(f"[yellow]Spotify env missing:[/yellow] {', '.join(missing)}")
+                console.print("[dim]Spotify disabled, but fallback artwork providers remain available.[/dim]")
             spotify_enabled = False
     if not spotify_enabled:
         if json_progress:
-            emit({"event": "log", "level": "info", "message": "Spotify disabled — skipping metadata lookups." if not fast_scan else "Fast scan enabled — skipping AcoustID and Spotify enrichment."})
+            emit({"event": "log", "level": "info", "message": "Spotify disabled — skipping Spotify metadata lookups." if not fast_scan else "Fast scan enabled — skipping Spotify and AcoustID, but artwork fallbacks remain enabled."})
         else:
-            console.print("[dim]Spotify disabled — skipping metadata lookups.[/dim]" if not fast_scan else "[dim]Fast scan enabled — skipping AcoustID and Spotify enrichment.[/dim]")
+            console.print("[dim]Spotify disabled — skipping Spotify metadata lookups.[/dim]" if not fast_scan else "[dim]Fast scan enabled — skipping Spotify and AcoustID, but artwork fallbacks remain enabled.[/dim]")
     if not fast_scan:
         acoustid = AcoustIdClient()
         if acoustid.enabled():
@@ -192,7 +195,7 @@ def scan(directory: Path, no_skip_existing: bool, rescan_mode: str, bpm_lookup: 
         skip_existing=not no_skip_existing,
         rescan_mode="full" if no_skip_existing else rescan_mode.lower(),
         bpm_lookup=bpm_lookup.lower(),
-        fetch_album_art=fetch_album_art and spotify_enabled,
+        fetch_album_art=fetch_album_art,
         verbose=verbose,
         spotify_enabled=spotify_enabled,
         fast_scan=fast_scan,
@@ -343,21 +346,56 @@ def debug(track_id: int) -> None:
 @click.argument("track_id", type=int)
 @click.option("--json-output", is_flag=True, help="Emit JSON with the updated BPM analysis.")
 def reanalyze_bpm(track_id: int, json_output: bool) -> None:
+    started_at = time.perf_counter()
+    timeline: list[dict[str, object]] = []
+
+    def mark(stage: str, **extra: object) -> None:
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        entry = {"stage": stage, "elapsed_ms": elapsed_ms, **extra}
+        timeline.append(entry)
+        click.echo(f"[reanalyze-bpm] {json.dumps(entry, ensure_ascii=True)}", err=True)
+
     db = _db()
+    mark("db_lookup_start", track_id=track_id)
     track = db.get_track_by_id(track_id)
     if not track:
         raise click.ClickException(f"Track {track_id} not found")
     if not track.path:
         raise click.ClickException(f"Track {track_id} has no file path")
 
+    mark("detect_bpm_start", path=track.path)
     bpm, bpm_source, analysis_error, bpm_confidence = detect_bpm(track.path)
+    mark(
+        "detect_bpm_done",
+        bpm=bpm or 0.0,
+        bpm_source=bpm_source or "",
+        analysis_error=analysis_error or "",
+        bpm_confidence=float(bpm_confidence or 0.0),
+    )
     analysis_status = "ok" if bpm else "needs_review"
     decode_failed = "true" if analysis_error == "decode_failed" else "false"
+    reanalyze_debug: dict[str, object] = {
+        "track_id": track_id,
+        "path": track.path,
+        "artist": track.artist or "",
+        "title": track.title or "",
+        "album": track.album or "",
+        "local_bpm": bpm or 0.0,
+        "local_bpm_source": bpm_source or "",
+        "local_bpm_error": analysis_error or "",
+        "bpm_confidence": float(bpm_confidence or 0.0),
+        "album_art_present_before": bool(track.album_art_url),
+        "album_art_source_before": track.album_art_source or "",
+        "art_recheck_attempted": False,
+        "art_saved": False,
+        "timeline": timeline,
+    }
     analysis_debug = (
         f"manual_reanalyze_bpm={bpm or 0.0} | "
         f"local_bpm_error={analysis_error or 'none'} | "
         f"bpm_confidence={bpm_confidence:.3f}"
     )
+    mark("db_update_analysis_start")
     updated = db.update_track_analysis(
       track_id,
       bpm=bpm,
@@ -369,8 +407,24 @@ def reanalyze_bpm(track_id: int, json_output: bool) -> None:
       analysis_debug=analysis_debug,
       decode_failed=decode_failed,
     )
+    mark("db_update_analysis_done", updated=bool(updated))
     if not updated:
         raise click.ClickException(f"Track {track_id} not found after update")
+
+    mark("art_refresh_start", has_album_art=bool(updated.album_art_url))
+    art_result = _refresh_track_art(track_id, force=False)
+    reanalyze_debug["art_refresh"] = art_result
+    mark(
+        "art_refresh_done",
+        ok=bool(art_result.get("ok", False)),
+        art_saved=bool(art_result.get("art_saved", False)),
+        message=str(art_result.get("message") or ""),
+    )
+    mark("db_reload_track_start")
+    refreshed_after_art = db.get_track_by_id(track_id)
+    if refreshed_after_art:
+        updated = refreshed_after_art
+    mark("db_reload_track_done", found=bool(refreshed_after_art))
 
     payload = {
         "id": updated.id,
@@ -382,7 +436,11 @@ def reanalyze_bpm(track_id: int, json_output: bool) -> None:
         "analysis_stage": updated.analysis_stage or "",
         "analysis_debug": updated.analysis_debug or "",
         "decode_failed": updated.decode_failed or "",
+        "album_art_url": updated.album_art_url or "",
+        "album_art_source": updated.album_art_source or "",
+        "debug": reanalyze_debug,
     }
+    mark("complete", final_bpm=payload["bpm"], final_album_art_source=payload["album_art_source"])
     if json_output:
         click.echo(json.dumps(payload))
         return
@@ -390,6 +448,169 @@ def reanalyze_bpm(track_id: int, json_output: bool) -> None:
     console.print(
         f"{_track_label(updated)} -> BPM {payload['bpm'] or '--'} ({payload['bpm_source'] or 'none'})"
     )
+
+
+def _refresh_track_art(track_id: int, force: bool = False) -> dict:
+    from .media import build_media_links, SpotifyClient
+    from .scanner import _resolve_album_art
+
+    started_at = time.perf_counter()
+    timeline: list[dict[str, object]] = []
+
+    def mark(stage: str, **extra: object) -> None:
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        entry = {"stage": stage, "elapsed_ms": elapsed_ms, **extra}
+        timeline.append(entry)
+        click.echo(f"[reanalyze-art] {json.dumps(entry, ensure_ascii=True)}", err=True)
+
+    db = _db()
+    mark("db_lookup_start", track_id=track_id, force=force)
+    track = db.get_track_by_id(track_id)
+    if not track:
+        mark("db_lookup_missing")
+        return {"ok": False, "track_id": track_id, "message": "track not found", "timeline": timeline}
+    if not track.path:
+        mark("db_lookup_missing_path")
+        return {"ok": False, "track_id": track_id, "message": "track has no file path", "timeline": timeline}
+    if track.album_art_url and not force:
+        mark("skip_existing_art", album_art_source=track.album_art_source or "")
+        return {
+            "ok": True,
+            "track_id": track_id,
+            "message": "track already has album art",
+            "art_saved": False,
+            "art_skip_reason": "already_has_album_art",
+            "album_art_url": track.album_art_url or "",
+            "album_art_source": track.album_art_source or "",
+            "timeline": timeline,
+        }
+
+    missing = SpotifyClient().missing_credentials()
+    spotify_enabled = not bool(missing)
+    if missing:
+        mark("spotify_credentials_missing", missing=",".join(missing))
+
+    result: dict[str, object] = {
+        "ok": True,
+        "track_id": track_id,
+        "path": track.path,
+        "artist": track.artist or "",
+        "title": track.title or "",
+        "album": track.album or "",
+        "album_art_present_before": bool(track.album_art_url),
+        "album_art_source_before": track.album_art_source or "",
+        "art_saved": False,
+        "timeline": timeline,
+    }
+
+    mark(
+        "build_media_links_start",
+        artist=track.artist or "",
+        title=track.title or "",
+        album=track.album or "",
+        duration=float(track.duration or 0.0),
+    )
+    needs_acoustid = not bool((track.artist and str(track.artist).strip()) and (track.title and str(track.title).strip()))
+    mark("build_media_links_mode", needs_acoustid=needs_acoustid)
+    previews = build_media_links(
+        track.artist,
+        track.title,
+        track.album,
+        track.duration,
+        fetch_album_art=True,
+        file_path=track.path,
+        enable_spotify=spotify_enabled,
+        enable_acoustid=needs_acoustid,
+    )
+    mark(
+        "build_media_links_done",
+        spotify_id=previews.get("spotify_id") or "",
+        spotify_match_score=float(previews.get("spotify_match_score") or 0.0),
+        has_album_art=bool(previews.get("album_art_url")),
+        has_artist_image=bool(previews.get("artist_image_url")),
+    )
+    result["spotify_id"] = previews.get("spotify_id") or ""
+    result["spotify_match_score"] = float(previews.get("spotify_match_score") or 0.0)
+    result["spotify_album_art_url"] = previews.get("album_art_url") or ""
+    result["spotify_artist_image_url"] = previews.get("artist_image_url") or ""
+    result["spotify_debug"] = previews.get("spotify_debug") or ""
+    result["theaudiodb_debug"] = previews.get("theaudiodb_debug") or ""
+    result["musicbrainz_debug"] = previews.get("musicbrainz_debug") or ""
+    result["discogs_debug"] = previews.get("discogs_debug") or ""
+    result["album_art_provider"] = previews.get("album_art_provider") or ""
+    result["artist_image_provider"] = previews.get("artist_image_provider") or ""
+
+    album_art = _resolve_album_art(
+        {
+            "artist": track.artist,
+            "title": track.title,
+            "album": track.album,
+            "embedded_album_art_url": "",
+        },
+        previews,
+        True,
+        {},
+        {},
+    )
+    mark(
+        "resolve_album_art_done",
+        resolved_source=album_art.get("album_art_source") or "",
+        resolved_status=album_art.get("album_art_review_status") or "",
+        has_resolved_art=bool(album_art.get("album_art_url")),
+    )
+    album_art_url = str(album_art.get("album_art_url") or "")
+    result["resolved_album_art_url"] = album_art_url
+    result["resolved_album_art_source"] = album_art.get("album_art_source") or ""
+    result["resolved_album_art_review_status"] = album_art.get("album_art_review_status") or ""
+    result["resolved_album_art_review_notes"] = album_art.get("album_art_review_notes") or ""
+
+    if not album_art_url:
+        mark("resolve_album_art_empty")
+        result["message"] = "no album art or artist image could be resolved"
+        return result
+
+    mark("db_save_art_start", album_art_source=album_art.get("album_art_source") or "")
+    db.add_track(
+        {
+            "path": track.path,
+            "album_art_url": album_art_url,
+            "album_art_source": album_art.get("album_art_source") or "",
+            "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
+            "album_art_review_status": album_art.get("album_art_review_status") or "missing",
+            "album_art_review_notes": album_art.get("album_art_review_notes") or "",
+            "album_group_key": album_art.get("album_group_key") or "",
+            "embedded_album_art": bool(album_art.get("embedded_album_art")),
+            "spotify_id": previews.get("spotify_id") or track.spotify_id,
+            "spotify_uri": previews.get("spotify_uri") or track.spotify_uri,
+            "spotify_url": previews.get("spotify_url") or track.spotify_url,
+            "spotify_preview_url": previews.get("spotify_preview_url") or track.spotify_preview_url,
+            "spotify_album_name": previews.get("spotify_album_name") or track.spotify_album_name,
+            "spotify_match_score": float(previews.get("spotify_match_score") or 0.0),
+            "spotify_high_confidence": str(previews.get("spotify_high_confidence") or False).lower(),
+        }
+    )
+    mark("db_save_art_done")
+    refreshed = db.get_track_by_id(track_id)
+    result["art_saved"] = True
+    result["message"] = f"saved {album_art.get('album_art_source') or 'art'} image"
+    result["album_art_url"] = refreshed.album_art_url if refreshed else album_art_url
+    result["album_art_source"] = refreshed.album_art_source if refreshed else album_art.get("album_art_source") or ""
+    mark("complete", final_album_art_source=result["album_art_source"])
+    return result
+
+
+@main.command(name="reanalyze-art")
+@click.argument("track_id", type=int)
+@click.option("--force", is_flag=True, help="Refresh art even if the track already has an image.")
+@click.option("--json-output", is_flag=True, help="Emit JSON with the updated art analysis.")
+def reanalyze_art(track_id: int, force: bool, json_output: bool) -> None:
+    payload = _refresh_track_art(track_id, force=force)
+    if json_output:
+        click.echo(json.dumps(payload))
+        return
+    if not payload.get("ok", False):
+        raise click.ClickException(str(payload.get("message") or "Unable to refresh artwork"))
+    console.print(str(payload.get("message") or "Artwork refresh complete."))
 
 
 @main.command()
@@ -419,6 +640,7 @@ def fetch_art(force: bool, limit: int | None, verbose: bool) -> None:
     """Fetch missing album art from Spotify for already-scanned tracks."""
     from tqdm import tqdm
     from .media import SpotifyClient, build_media_links
+    from .scanner import _resolve_album_art
 
     missing = SpotifyClient().missing_credentials()
     if missing:
@@ -443,6 +665,8 @@ def fetch_art(force: bool, limit: int | None, verbose: bool) -> None:
     errors = 0
 
     from .scanner import _art_debug_reason
+    album_art_cache: dict[str, dict] = {}
+    artist_art_cache: dict[str, dict] = {}
 
     for track in tqdm(targets, desc="Fetching art"):
         try:
@@ -454,18 +678,37 @@ def fetch_art(force: bool, limit: int | None, verbose: bool) -> None:
                 fetch_album_art=True,
                 file_path=track.path,
             )
-            art_url = previews.get("album_art_url") or ""
+            album_art = _resolve_album_art(
+                {
+                    "artist": track.artist,
+                    "title": track.title,
+                    "album": track.album,
+                    "embedded_album_art_url": "",
+                },
+                previews,
+                True,
+                album_art_cache,
+                artist_art_cache,
+            )
+            art_url = str(album_art.get("album_art_url") or "")
             if verbose:
                 label = _track_label(track)
                 reason = _art_debug_reason(previews, fetch_album_art=True)
                 icon = "🎨" if art_url else "✗"
-                tqdm.write(f"  {icon} {label}  |  art: {reason}")
+                source = str(album_art.get("album_art_source") or "none")
+                tqdm.write(f"  {icon} {label}  |  art: {reason}  |  source: {source}")
             if not art_url:
                 skipped += 1
                 continue
             db.add_track({
                 "path": track.path,
                 "album_art_url": art_url,
+                "album_art_source": album_art.get("album_art_source") or "",
+                "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
+                "album_art_review_status": album_art.get("album_art_review_status") or "missing",
+                "album_art_review_notes": album_art.get("album_art_review_notes") or "",
+                "album_group_key": album_art.get("album_group_key") or "",
+                "embedded_album_art": bool(album_art.get("embedded_album_art")),
                 "spotify_id": previews.get("spotify_id") or track.spotify_id,
                 "spotify_uri": previews.get("spotify_uri") or track.spotify_uri,
                 "spotify_url": previews.get("spotify_url") or track.spotify_url,

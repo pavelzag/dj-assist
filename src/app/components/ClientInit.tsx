@@ -35,13 +35,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const scanProgressBarEl = document.getElementById('scan-progress-bar') as HTMLElement;
     const scanProgressFileEl = document.getElementById('scan-progress-file') as HTMLElement;
     const scanPreflightEl = document.getElementById('scan-preflight') as HTMLElement;
-    const scanLogEl = document.getElementById('scan-log') as HTMLElement;
-    const scanLogClearBtn = document.getElementById('scan-log-clear-btn') as HTMLButtonElement | null;
-    const scanLogFullscreenBtn = document.getElementById('scan-log-fullscreen-btn') as HTMLButtonElement | null;
-    const scanLogToggleBtn = document.getElementById('scan-log-toggle-btn') as HTMLButtonElement | null;
-    const scanLogBodyEl = document.getElementById('scan-log-body') as HTMLElement | null;
-    const bottomScanLogEl = document.getElementById('bottom-scan-log') as HTMLElement | null;
-    const bottomScanLogHeadEl = document.getElementById('bottom-scan-log-head') as HTMLElement | null;
+    const scanLogEl = document.getElementById('activity-log-list') as HTMLElement | null;
     const coverModal = document.getElementById('cover-modal') as HTMLElement;
     const coverImage = document.getElementById('cover-image') as HTMLImageElement;
     const coverTitle = document.getElementById('cover-title') as HTMLElement;
@@ -108,6 +102,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       defaultFullRescan: boolean;
       defaultFastScan: boolean;
       autoplayOnSelect: boolean;
+      loadLibraryOnStartup: boolean;
       defaultListDensity: 'comfortable' | 'compact';
       collapseScanLog: boolean;
       listShowAlbum: boolean;
@@ -122,6 +117,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       defaultFullRescan: false,
       defaultFastScan: false,
       autoplayOnSelect: true,
+      loadLibraryOnStartup: true,
       defaultListDensity: 'comfortable',
       collapseScanLog: true,
       listShowAlbum: true,
@@ -151,7 +147,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let runtimeHealth: Record<string, unknown> | null = null;
     let spotifySettingsBusy = false;
     let activeSetId: number | null = null;
-    let scanLogFullscreen = false;
     let activeQuickFilter = '';
     let preScanTrackIds = new Set<number>();
     let hasScanBaseline = false;
@@ -164,7 +159,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let tapBpmValue = 0;
     let playbackQueue: number[] = [];
     let scanLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
-    let pendingScanLogEntries: Array<{ message: string; level: 'info' | 'warning' | 'error' | 'success' }> = [];
+    let activityLogAutoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+    let pendingScanLogEntries: Array<{
+      message: string;
+      level: 'info' | 'warning' | 'error' | 'success';
+      timestamp: string;
+      timestampLabel: string;
+    }> = [];
+    const recentScanLogSignatures = new Map<string, number>();
     let queuedRefreshMode: 'light' | 'full' | null = null;
     let commandPaletteResults: Array<{ label: string; meta: string; kind: 'command' | 'track' | 'artist'; run: () => void }> = [];
     let commandPaletteActiveIndex = 0;
@@ -230,6 +232,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           defaultFullRescan: Boolean(parsed.defaultFullRescan),
           defaultFastScan: Boolean(parsed.defaultFastScan),
           autoplayOnSelect: parsed.autoplayOnSelect !== false,
+          loadLibraryOnStartup: parsed.loadLibraryOnStartup !== false,
           defaultListDensity: parsed.defaultListDensity === 'compact' ? 'compact' : 'comfortable',
           collapseScanLog: parsed.collapseScanLog !== false,
           listShowAlbum: parsed.listShowAlbum !== false,
@@ -1314,6 +1317,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
+    async function copyFrontendLogs() {
+      const list = document.getElementById('frontend-log-list');
+      if (!list) return false;
+      const text = list.innerText.trim();
+      if (!text) return false;
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('Frontend logs copied.', 'success');
+        return true;
+      } catch {
+        showToast('Could not copy frontend logs.', 'error');
+        return false;
+      }
+    }
+
     function selectRelativeTrack(offset: -1 | 1) {
       if (offset === 1 && playbackQueue.length) {
         const nextQueued = playbackQueue.shift();
@@ -1386,8 +1404,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       for (const item of entries.reverse()) {
         const entry = document.createElement('div');
         entry.className = `scan-log-entry ${item.level}`;
-        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        entry.textContent = `${timestamp}  ${item.message}`;
+        const timestamp = document.createElement('time');
+        timestamp.className = 'scan-log-timestamp';
+        timestamp.dateTime = item.timestamp;
+        timestamp.textContent = item.timestampLabel;
+        entry.appendChild(timestamp);
+        entry.append(document.createTextNode(item.message));
         fragment.appendChild(entry);
       }
       scanLogEl.prepend(fragment);
@@ -1419,8 +1441,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       message: string,
       level: 'info' | 'warning' | 'error' | 'success' = 'info',
       context?: Record<string, unknown>,
+      options?: { timestamp?: string },
     ) {
-      pendingScanLogEntries.push({ message, level });
+      const rawTimestamp = String(options?.timestamp ?? '').trim();
+      const now = rawTimestamp ? new Date(rawTimestamp) : new Date();
+      const nowMs = Number.isFinite(now.getTime()) ? now.getTime() : Date.now();
+      const signature = `${level}|${message}`;
+      const lastSeenMs = recentScanLogSignatures.get(signature) ?? 0;
+      if (nowMs - lastSeenMs < 5000) return;
+      recentScanLogSignatures.set(signature, nowMs);
+      if (recentScanLogSignatures.size > 500) {
+        const entries = [...recentScanLogSignatures.entries()].sort((a, b) => b[1] - a[1]).slice(0, 300);
+        recentScanLogSignatures.clear();
+        for (const [key, value] of entries) recentScanLogSignatures.set(key, value);
+      }
+      pendingScanLogEntries.push({
+        message,
+        level,
+        timestamp: now.toISOString(),
+        timestampLabel: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      });
       persistClientDiagnosticLog(message, level, 'scan-log', context);
       if (scanLogFlushTimer) return;
       scanLogFlushTimer = setTimeout(() => {
@@ -1428,8 +1468,166 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }, 220);
     }
 
+    function pickNestedObject(value: unknown, path: string[]): Record<string, unknown> | null {
+      let current: unknown = value;
+      for (const key of path) {
+        if (!current || typeof current !== 'object') return null;
+        current = (current as Record<string, unknown>)[key];
+      }
+      return current && typeof current === 'object' ? current as Record<string, unknown> : null;
+    }
+
+    function extractSpotifyDebugPayload(value: unknown): unknown {
+      const candidates = [
+        value,
+        value && typeof value === 'object' ? (value as Record<string, unknown>).spotify_debug : undefined,
+        pickNestedObject(value, ['stdout'])?.spotify_debug,
+        pickNestedObject(value, ['stdout', 'debug'])?.spotify_debug,
+        pickNestedObject(value, ['art_refresh'])?.spotify_debug,
+        pickNestedObject(value, ['stdout', 'art_refresh'])?.spotify_debug,
+        pickNestedObject(value, ['stdout', 'debug', 'art_refresh'])?.spotify_debug,
+      ];
+      return candidates.find((candidate) => {
+        if (typeof candidate === 'string') return candidate.trim().length > 0;
+        return Boolean(candidate);
+      });
+    }
+
+    function spotifyDebugEventLevel(event: Record<string, unknown>): 'info' | 'warning' | 'error' {
+      const stage = String(event.stage ?? '').toLowerCase();
+      const status = Number(event.status ?? 0);
+      const responseExcerpt = String(event.response_excerpt ?? '').toLowerCase();
+      if (
+        status >= 400 ||
+        stage.includes('error') ||
+        /error|exception|invalid_client|unauthorized|timed out|timeout/.test(responseExcerpt)
+      ) {
+        return 'error';
+      }
+      if (status === 429 || stage.includes('retry')) return 'warning';
+      return 'info';
+    }
+
+    function appendSpotifyStderrLog(
+      prefix: string,
+      stderrRaw: unknown,
+      baseContext?: Record<string, unknown>,
+    ) {
+      const stderr = String(stderrRaw ?? '').trim();
+      if (!stderr) return;
+      const lines = stderr.split('\n').map((line) => line.trim()).filter(Boolean);
+      let appended = false;
+      for (const line of lines) {
+        if (!line.startsWith('[spotify-debug] ')) continue;
+        const payload = line.slice('[spotify-debug] '.length).trim();
+        if (!payload) continue;
+        try {
+          const parsed = JSON.parse(payload) as Record<string, unknown>;
+          const stage = String(parsed.stage ?? '');
+          if (!stage) continue;
+          const status = parsed.status != null ? ` status=${String(parsed.status)}` : '';
+          const meta = parsed.meta && typeof parsed.meta === 'object' ? parsed.meta as Record<string, unknown> : null;
+          const kind = meta?.kind ? ` kind=${String(meta.kind)}` : '';
+          const query = typeof meta?.query === 'string' && meta.query
+            ? ` query="${meta.query}"`
+            : '';
+          const excerpt = typeof parsed.response_excerpt === 'string' && parsed.response_excerpt
+            ? ` resp=${parsed.response_excerpt}`
+            : '';
+          appendScanLog(`${prefix} Spotify ${stage}:${kind}${status}${query}${excerpt}`, spotifyDebugEventLevel(parsed), {
+            ...baseContext,
+            category: 'spotify-debug',
+            spotifyDebugEvent: parsed,
+          });
+          appended = true;
+        } catch {
+          appendScanLog(`${prefix} Spotify stderr: ${payload}`, 'warning', {
+            ...baseContext,
+            category: 'spotify-debug',
+          });
+          appended = true;
+        }
+      }
+      if (!appended) {
+        appendScanLog(`${prefix} stderr: ${stderr}`, 'warning', {
+          ...baseContext,
+          category: 'process-stderr',
+        });
+      }
+    }
+
+    function appendSpotifyDebugLog(
+      prefix: string,
+      spotifyDebugRaw: unknown,
+      baseContext?: Record<string, unknown>,
+    ) {
+      const rawPayload = extractSpotifyDebugPayload(spotifyDebugRaw);
+      if (!rawPayload) return;
+      try {
+        const parsed = typeof rawPayload === 'string'
+          ? JSON.parse(rawPayload) as Record<string, unknown>
+          : rawPayload as Record<string, unknown>;
+        const events = Array.isArray(parsed.events) ? parsed.events as Record<string, unknown>[] : [];
+        const querySummaries = Array.isArray(parsed.queries) ? parsed.queries as Record<string, unknown>[] : [];
+        const errors = Array.isArray(parsed.errors) ? parsed.errors as Record<string, unknown>[] : [];
+        for (const item of querySummaries) {
+          const query = String(item.query ?? '').slice(0, 120);
+          const items = Number(item.items ?? 0);
+          if (!query) continue;
+          appendScanLog(`${prefix} Spotify query "${query}" -> ${items} item(s)`, 'info', {
+            ...baseContext,
+            category: 'spotify-debug',
+            spotifyDebug: parsed,
+          });
+        }
+        for (const error of errors) {
+          const query = String(error.query ?? '').slice(0, 120);
+          const message = String(error.error ?? 'Unknown Spotify error');
+          appendScanLog(
+            `${prefix} Spotify query error${query ? ` "${query}"` : ''}: ${message}`,
+            'error',
+            {
+              ...baseContext,
+              category: 'spotify-debug',
+              spotifyDebugError: error,
+            },
+          );
+        }
+        for (const event of events) {
+          const stage = String(event.stage ?? '');
+          if (!stage) continue;
+          const status = event.status != null ? ` status=${String(event.status)}` : '';
+          const meta = event.meta && typeof event.meta === 'object' ? event.meta as Record<string, unknown> : null;
+          const kind = meta?.kind ? ` kind=${String(meta.kind)}` : '';
+          const query = typeof meta?.query === 'string' && meta.query
+            ? ` query="${meta.query}"`
+            : '';
+          const excerpt = typeof event.response_excerpt === 'string' && event.response_excerpt
+            ? ` resp=${event.response_excerpt}`
+            : '';
+          appendScanLog(`${prefix} Spotify ${stage}:${kind}${status}${query}${excerpt}`, spotifyDebugEventLevel(event), {
+            ...baseContext,
+            category: 'spotify-debug',
+            spotifyDebugEvent: event,
+          });
+        }
+        if (!querySummaries.length && !events.length && !errors.length) {
+          appendScanLog(`${prefix} Spotify debug: ${JSON.stringify(parsed).slice(0, 400)}`, 'info', {
+            ...baseContext,
+            category: 'spotify-debug',
+          });
+        }
+      } catch {
+        appendScanLog(`${prefix} Spotify debug: ${String(rawPayload).slice(0, 400)}`, 'info', {
+          ...baseContext,
+          category: 'spotify-debug',
+        });
+      }
+    }
+
     function resetScanLog() {
       pendingScanLogEntries = [];
+      recentScanLogSignatures.clear();
       if (scanLogFlushTimer) {
         clearTimeout(scanLogFlushTimer);
         scanLogFlushTimer = null;
@@ -1773,6 +1971,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         <div class="bulk-toolbar-main">
           <strong>${selected.length} selected</strong>
           <button type="button" class="btn danger" id="bulk-delete-btn">Delete</button>
+          <button type="button" class="btn" id="bulk-reanalyze-art-btn">Fill Missing Art</button>
           <button type="button" class="btn" id="bulk-ignore-btn">Ignore</button>
           <button type="button" class="btn" id="bulk-unignore-btn">Unignore</button>
           <button type="button" class="btn" id="bulk-tags-btn">Add Tags</button>
@@ -1801,6 +2000,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('bulk-ignore-btn')?.addEventListener('click', () => { void runBulkAction('ignore'); });
       document.getElementById('bulk-unignore-btn')?.addEventListener('click', () => { void runBulkAction('unignore'); });
       document.getElementById('bulk-delete-btn')?.addEventListener('click', () => { openDeleteTracksModal([...selectedTrackIds], 'bulk'); });
+      document.getElementById('bulk-reanalyze-art-btn')?.addEventListener('click', () => {
+        void reanalyzeArtBulk([...selectedTrackIds], { label: 'selected tracks' });
+      });
       document.getElementById('bulk-tags-btn')?.addEventListener('click', () => {
         const input = prompt('Add comma-separated tags to selected tracks');
         if (!input) return;
@@ -1881,6 +2083,149 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       void loadLibraryOverview();
       return payload;
+    }
+
+    async function reanalyzeArtForTrack(
+      trackId: number,
+      options: { force?: boolean; reloadDetail?: boolean } = {},
+    ) {
+      const { force = false, reloadDetail = true } = options;
+      appendScanLog(`Reanalyze Art started for track ${trackId}`, 'info', {
+        category: 'reanalyze-art',
+        trackId,
+        force,
+      });
+      const response = await fetch(`/api/tracks/${trackId}/reanalyze-art`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+      const debugInfo = payload.debug && typeof payload.debug === 'object' ? payload.debug as Record<string, unknown> : undefined;
+      appendSpotifyDebugLog('Reanalyze Art', debugInfo, { trackId, category: 'reanalyze-art' });
+      appendSpotifyStderrLog('Reanalyze Art', debugInfo?.stderr, { trackId, category: 'reanalyze-art' });
+      if (!response.ok) {
+        appendScanLog(`Reanalyze Art failed for track ${trackId}: ${String(payload.error ?? 'Artwork refresh failed.')}`, 'error', {
+          category: 'reanalyze-art',
+          trackId,
+          debug: debugInfo,
+        });
+        throw new Error(String(payload.error ?? 'Artwork refresh failed.'));
+      }
+
+      const refreshed = payload.track && typeof payload.track === 'object'
+        ? payload.track as Record<string, unknown>
+        : null;
+      if (refreshed) {
+        const trackIndex = tracks.findIndex((item) => Number(item.id) === trackId);
+        if (trackIndex !== -1) tracks[trackIndex] = refreshed;
+        else tracks = [refreshed, ...tracks];
+        renderList(tracks);
+      }
+      if (reloadDetail) {
+        await loadTrackDetail(String(trackId), false);
+      }
+      appendScanLog(`Reanalyze Art finished for track ${trackId}: ${String(payload.message ?? 'Artwork refresh complete.')}`, 'success', {
+        category: 'reanalyze-art',
+        trackId,
+        albumArtSource: String(refreshed?.album_art_source ?? ''),
+        albumArtUrl: String(refreshed?.album_art_url ?? ''),
+        debug: debugInfo,
+      });
+      return { payload, refreshed };
+    }
+
+    async function reanalyzeArtBulk(ids: number[], options: { force?: boolean; label?: string } = {}) {
+      const { force = false, label = 'tracks' } = options;
+      if (!ids.length) {
+        showToast('No tracks to refresh art for.', 'info');
+        return;
+      }
+      appendScanLog(`Fill Missing Art started for ${ids.length} ${label}.`, 'info', {
+        category: 'reanalyze-art-bulk',
+        trackIds: ids,
+        force,
+      });
+      const response = await fetch('/api/tracks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, action: 'reanalyze_art', force }),
+      });
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok) {
+        appendScanLog(`Fill Missing Art failed: ${String(payload.error ?? 'Bulk artwork refresh failed.')}`, 'error', {
+          category: 'reanalyze-art-bulk',
+          debug: payload,
+        });
+        showToast(String(payload.error ?? 'Bulk artwork refresh failed.'), 'error');
+        return;
+      }
+      const results = Array.isArray(payload.results) ? payload.results as Record<string, unknown>[] : [];
+      for (const item of results) {
+        appendScanLog(`Art refresh track ${item.id}: ${String(item.message ?? '')}`, item.ok ? 'info' : 'error', {
+          category: 'reanalyze-art-bulk',
+          trackId: Number(item.id ?? 0),
+          debug: item.debug && typeof item.debug === 'object' ? item.debug as Record<string, unknown> : undefined,
+        });
+      }
+      await loadTracks(searchEl.value.trim());
+      await loadLibraryOverview();
+      if (selectedDetailTrackId != null) {
+        await loadTrackDetail(String(selectedDetailTrackId), false);
+      }
+      const succeeded = Number(payload.succeeded ?? 0);
+      const failed = Number(payload.failed ?? 0);
+      showToast(`Fill Missing Art finished: ${succeeded} succeeded, ${failed} failed.`, failed ? 'warning' : 'success');
+    }
+
+    async function readFileAsDataUrl(file: File): Promise<string> {
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result;
+          if (typeof result === 'string' && result.startsWith('data:image/')) {
+            resolve(result);
+            return;
+          }
+          reject(new Error('Selected file is not a supported image.'));
+        };
+        reader.onerror = () => reject(reader.error ?? new Error('Could not read image file.'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function saveManualCoverArt(trackId: number, dataUrl: string, source: 'manual_upload' | 'manual_paste') {
+      appendScanLog(`Manual cover art save started for track ${trackId}`, 'info', {
+        category: 'manual-cover-art',
+        trackId,
+        source,
+        size: dataUrl.length,
+      });
+      const payload = await saveTrackMetadata(
+        trackId,
+        {
+          album_art_url: dataUrl,
+          album_art_source: source,
+          album_art_confidence: 100,
+          album_art_review_status: 'approved',
+          album_art_review_notes: source === 'manual_paste' ? 'manual image pasted from clipboard' : 'manual image uploaded from file',
+        },
+        { reloadDetail: true },
+      );
+      if (!payload?.track) {
+        appendScanLog(`Manual cover art save failed for track ${trackId}`, 'error', {
+          category: 'manual-cover-art',
+          trackId,
+          source,
+        });
+        throw new Error('Could not save cover art.');
+      }
+      appendScanLog(`Manual cover art saved for track ${trackId}`, 'success', {
+        category: 'manual-cover-art',
+        trackId,
+        source,
+      });
+      return payload.track as Record<string, unknown>;
     }
 
     async function drawWaveform(
@@ -2574,6 +2919,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <div class="buttons">
             <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
             <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
+            <button class="btn" id="reanalyze-art-btn" type="button">Reanalyze Art</button>
             ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
             <button class="btn" id="open-tunebat-btn" type="button" title="Open this track on Tunebat">Tunebat</button>
             ${track.youtube_url ? '<button class="btn" id="open-youtube-btn" type="button">YouTube</button>' : ''}
@@ -2703,6 +3049,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
               <div class="chips">
                 ${track.album_art_url ? '<button class="btn" id="approve-cover-btn" type="button">Approve Cover</button>' : ''}
+                <button class="btn" id="upload-cover-btn" type="button">Upload Image</button>
+                <button class="btn" id="paste-cover-btn" type="button">Paste Image</button>
+                <input id="upload-cover-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
                 <button class="btn" id="mark-cover-review-btn" type="button">Needs Review</button>
               </div>
               ${coverReviewNotes ? `<div class="scan-preflight">${esc(coverReviewNotes)}</div>` : ''}
@@ -2874,6 +3223,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       // Audio player
       const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
       const reanalyzeBpmBtn = document.getElementById('reanalyze-bpm-btn') as HTMLButtonElement | null;
+      const reanalyzeArtBtn = document.getElementById('reanalyze-art-btn') as HTMLButtonElement | null;
       const coverBtn = document.getElementById('cover-btn') as HTMLButtonElement | null;
       const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
       const resumeKey = `dj-assist-resume-${track.id}`;
@@ -2972,10 +3322,29 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const previousLabel = reanalyzeBpmBtn.textContent ?? 'Reanalyze BPM';
         reanalyzeBpmBtn.disabled = true;
         reanalyzeBpmBtn.textContent = 'Analyzing…';
+        appendScanLog(`Reanalyze BPM started for track ${trackId}: ${track.artist ?? 'Unknown Artist'} - ${track.title ?? 'Untitled'}`, 'info', {
+          category: 'reanalyze-bpm',
+          trackId,
+          artist: String(track.artist ?? ''),
+          title: String(track.title ?? ''),
+          path: String(track.path ?? ''),
+        });
         try {
           const response = await fetch(`/api/tracks/${trackId}/reanalyze-bpm`, { method: 'POST' });
           const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+          const debugInfo = payload.debug && typeof payload.debug === 'object' ? payload.debug as Record<string, unknown> : undefined;
+          appendSpotifyDebugLog('Reanalyze BPM', debugInfo, { trackId, category: 'reanalyze-bpm' });
+          appendSpotifyStderrLog('Reanalyze BPM', debugInfo?.stderr, { trackId, category: 'reanalyze-bpm' });
           if (!response.ok) {
+            const stderr = String(debugInfo?.stderr ?? '').trim();
+            const stdout = String(debugInfo?.stdout ?? '').trim();
+            appendScanLog(`Reanalyze BPM failed for track ${trackId}: ${String(payload.error ?? 'BPM reanalysis failed.')}`, 'error', {
+              category: 'reanalyze-bpm',
+              trackId,
+              debug: debugInfo,
+            });
+            if (stderr) appendScanLog(`Reanalyze BPM stderr for track ${trackId}: ${stderr.slice(0, 1200)}`, 'error', { category: 'reanalyze-bpm', trackId });
+            if (stdout) appendScanLog(`Reanalyze BPM stdout for track ${trackId}: ${stdout.slice(0, 1200)}`, 'info', { category: 'reanalyze-bpm', trackId });
             showToast(String(payload.error ?? 'BPM reanalysis failed.'), 'error');
             return;
           }
@@ -2988,6 +3357,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             renderList(tracks);
           }
           await loadTrackDetail(String(trackId), false);
+          appendScanLog(`Reanalyze BPM finished for track ${trackId}`, 'success', {
+            category: 'reanalyze-bpm',
+            trackId,
+            bpm: Number(refreshed?.effective_bpm ?? refreshed?.bpm ?? 0),
+            bpmConfidence: Number(refreshed?.bpm_confidence ?? 0),
+            albumArtSource: String(refreshed?.album_art_source ?? ''),
+            albumArtUrl: String(refreshed?.album_art_url ?? ''),
+            debug: debugInfo,
+          });
           const bpmValue = Number(refreshed?.effective_bpm ?? refreshed?.bpm ?? 0);
           const bpmConfidence = Number(refreshed?.bpm_confidence ?? 0);
           const confidenceLabel = bpmConfidence > 0 ? analyzerConfidenceLabel(bpmConfidence) : '';
@@ -2998,10 +3376,31 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             bpmValue > 0 ? (confidenceLabel === 'Low' ? 'warning' : 'success') : 'warning',
           );
         } catch (error) {
+          appendScanLog(`Reanalyze BPM failed for track ${trackId}: ${error instanceof Error ? error.message : 'BPM reanalysis failed.'}`, 'error', {
+            category: 'reanalyze-bpm',
+            trackId,
+          });
           showToast(error instanceof Error ? error.message : 'BPM reanalysis failed.', 'error');
         } finally {
           reanalyzeBpmBtn.disabled = false;
           reanalyzeBpmBtn.textContent = previousLabel;
+        }
+      });
+      reanalyzeArtBtn?.addEventListener('click', async () => {
+        const previousLabel = reanalyzeArtBtn.textContent ?? 'Reanalyze Art';
+        reanalyzeArtBtn.disabled = true;
+        reanalyzeArtBtn.textContent = 'Analyzing…';
+        try {
+          const { payload, refreshed } = await reanalyzeArtForTrack(trackId, { force: false, reloadDetail: true });
+          showToast(
+            String(payload.message ?? (refreshed?.album_art_url ? 'Artwork updated.' : 'No art found.')),
+            refreshed?.album_art_url ? 'success' : 'warning',
+          );
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'Artwork analysis failed.', 'error');
+        } finally {
+          reanalyzeArtBtn.disabled = false;
+          reanalyzeArtBtn.textContent = previousLabel;
         }
       });
       document.getElementById('approve-cover-btn')?.addEventListener('click', async () => {
@@ -3009,6 +3408,53 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           album_art_review_status: 'approved',
           album_art_review_notes: 'manual approval from track detail',
         });
+      });
+      const uploadCoverBtn = document.getElementById('upload-cover-btn') as HTMLButtonElement | null;
+      const uploadCoverInput = document.getElementById('upload-cover-input') as HTMLInputElement | null;
+      uploadCoverBtn?.addEventListener('click', () => {
+        uploadCoverInput?.click();
+      });
+      if (uploadCoverBtn && uploadCoverInput) {
+        uploadCoverInput.addEventListener('change', async () => {
+          const file = uploadCoverInput.files?.[0];
+          uploadCoverInput.value = '';
+          if (!file) return;
+          uploadCoverBtn.disabled = true;
+          try {
+            const dataUrl = await readFileAsDataUrl(file);
+            await saveManualCoverArt(trackId, dataUrl, 'manual_upload');
+            showToast('Cover image uploaded.', 'success');
+          } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Could not upload cover image.', 'error');
+          } finally {
+            uploadCoverBtn.disabled = false;
+          }
+        });
+      }
+      const pasteCoverBtn = document.getElementById('paste-cover-btn') as HTMLButtonElement | null;
+      pasteCoverBtn?.addEventListener('click', async () => {
+        pasteCoverBtn.disabled = true;
+        try {
+          const clipboard = navigator.clipboard as Clipboard & { read?: () => Promise<ClipboardItem[]> };
+          if (!clipboard?.read) throw new Error('Clipboard image paste is not supported here.');
+          const items = await clipboard.read();
+          let imageFile: File | null = null;
+          for (const item of items) {
+            const imageType = item.types.find((type) => type.startsWith('image/'));
+            if (!imageType) continue;
+            const blob = await item.getType(imageType);
+            imageFile = new File([blob], `clipboard.${imageType.split('/')[1] || 'png'}`, { type: imageType });
+            break;
+          }
+          if (!imageFile) throw new Error('Clipboard does not contain an image.');
+          const dataUrl = await readFileAsDataUrl(imageFile);
+          await saveManualCoverArt(trackId, dataUrl, 'manual_paste');
+          showToast('Cover image pasted from clipboard.', 'success');
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'Could not paste cover image.', 'error');
+        } finally {
+          pasteCoverBtn.disabled = false;
+        }
       });
       document.getElementById('mark-cover-review-btn')?.addEventListener('click', async () => {
         await saveTrackMetadata(trackId, {
@@ -3307,6 +3753,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="decode">Unreadable</button>
             </div>
             <div class="scan-preflight">Jump directly to the next track that needs manual cleanup.</div>
+            <div class="buttons">
+              <button type="button" class="btn" id="fill-visible-missing-art-btn">Fill Missing Art For Visible</button>
+            </div>
           </section>
           <section class="library-card">
             <div class="scan-log-head"><strong>Preferences</strong></div>
@@ -3314,6 +3763,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <label class="preference-row"><input id="pref-default-full-rescan" type="checkbox" ${preferences.defaultFullRescan ? 'checked' : ''} /><span>Default to full rescan</span></label>
               <label class="preference-row"><input id="pref-default-fast-scan" type="checkbox" ${preferences.defaultFastScan ? 'checked' : ''} /><span>Default to fast scan</span></label>
               <label class="preference-row"><input id="pref-autoplay-on-select" type="checkbox" ${preferences.autoplayOnSelect ? 'checked' : ''} /><span>Autoplay when selecting tracks</span></label>
+              <label class="preference-row"><input id="pref-load-library-on-startup" type="checkbox" ${preferences.loadLibraryOnStartup ? 'checked' : ''} /><span>Load existing library on startup</span></label>
               <label class="preference-row"><input id="pref-collapse-scan-log" type="checkbox" ${preferences.collapseScanLog ? 'checked' : ''} /><span>Keep scan log collapsed by default</span></label>
               <label class="preference-field">
                 <span>Default list density</span>
@@ -3432,6 +3882,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           startReviewMode(((button as HTMLElement).dataset.reviewKind as 'art' | 'key' | 'decode' | 'attention') ?? 'attention');
         });
       });
+      document.getElementById('fill-visible-missing-art-btn')?.addEventListener('click', () => {
+        const ids = visibleTracksOrdered()
+          .filter((track) => !track.album_art_url)
+          .map((track) => Number(track.id))
+          .filter((id) => Number.isFinite(id));
+        void reanalyzeArtBulk(ids, { label: 'visible filtered tracks' });
+      });
       libraryPanel.querySelectorAll('.tag-filter-btn[data-tag]').forEach((button) => {
         button.addEventListener('click', () => {
           searchEl.value = String((button as HTMLElement).dataset.tag ?? '');
@@ -3486,6 +3943,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       document.getElementById('pref-autoplay-on-select')?.addEventListener('change', (event) => {
         preferences.autoplayOnSelect = (event.currentTarget as HTMLInputElement).checked;
+        savePreferences();
+      });
+      document.getElementById('pref-load-library-on-startup')?.addEventListener('change', (event) => {
+        preferences.loadLibraryOnStartup = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
       });
       document.getElementById('pref-collapse-scan-log')?.addEventListener('change', (event) => {
@@ -3614,14 +4075,57 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           </section>
           <section class="library-card library-span">
             <div class="scan-log-head"><strong>Scan Activity</strong></div>
-            <div class="scan-preflight">Live scan log stays available at the bottom of the app. Use this panel for runtime diagnostics and watched folders.</div>
+            <div class="scan-preflight">Live scan log refreshes here automatically. Use this panel for runtime diagnostics and watched folders.</div>
             <div class="chips">
-              <button type="button" class="chip nav-chip" id="activity-open-log-btn">Open Scan Log</button>
+              <button type="button" class="chip nav-chip" id="refresh-activity-log-btn">Refresh Scan Log</button>
               <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Collection</button>
+            </div>
+            <div class="scan-progress-file bottom" id="scan-progress-file">No scan in progress</div>
+            <div class="scan-log" id="activity-log-list">
+              <div class="scan-log-entry info">No scan activity.</div>
+            </div>
+          </section>
+          <section class="library-card library-span">
+            <div class="scan-log-head"><strong>Frontend Logs</strong></div>
+            <div class="scan-preflight" id="frontend-log-path">Loading renderer diagnostics…</div>
+            <div class="chips">
+              <button type="button" class="chip nav-chip" id="refresh-frontend-logs-btn">Refresh Frontend Logs</button>
+              <button type="button" class="chip nav-chip" id="copy-frontend-logs-btn">Copy (C)</button>
+            </div>
+            <div class="scan-log" id="frontend-log-list">
+              <div class="scan-log-entry info">Loading frontend logs…</div>
             </div>
           </section>
         </div>
       `;
+      const loadClientLogFeed = async () => {
+        const listEl = document.getElementById('frontend-log-list');
+        const pathEl = document.getElementById('frontend-log-path');
+        if (!listEl || !pathEl) return;
+        listEl.innerHTML = '<div class="scan-log-entry info">Loading frontend logs…</div>';
+        const response = await fetch('/api/logs/client?limit=300');
+        if (!response.ok) {
+          listEl.innerHTML = '<div class="scan-log-entry error">Could not load frontend logs.</div>';
+          pathEl.textContent = 'Renderer diagnostics unavailable.';
+          return;
+        }
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const pathText = String(payload.path ?? '').trim();
+        pathEl.textContent = pathText ? `Renderer diagnostics file: ${pathText}` : 'Renderer diagnostics file unavailable.';
+        const entries = Array.isArray(payload.entries) ? payload.entries as Record<string, unknown>[] : [];
+        if (!entries.length) {
+          listEl.innerHTML = '<div class="scan-log-entry info">No frontend logs recorded yet.</div>';
+          return;
+        }
+        listEl.innerHTML = entries.map((entry) => {
+          const level = ['warning', 'error', 'success'].includes(String(entry.level ?? '')) ? String(entry.level) : 'info';
+          const timestamp = String(entry.timestamp ?? '');
+          const timeLabel = timestamp ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
+          const category = String(entry.category ?? '').trim();
+          const categoryLabel = category ? `[${category}] ` : '';
+          return `<div class="scan-log-entry ${esc(level)}"><time class="scan-log-timestamp" datetime="${esc(timestamp)}">${esc(timeLabel)}</time>${esc(`${categoryLabel}${String(entry.message ?? '')}`)}</div>`;
+        }).join('');
+      };
       document.getElementById('add-watch-btn')?.addEventListener('click', async () => {
         const input = document.getElementById('watch-directory-input') as HTMLInputElement;
         const res = await fetch('/api/watch', {
@@ -3641,17 +4145,25 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           await loadWatchFolders();
         });
       });
-      document.getElementById('activity-open-log-btn')?.addEventListener('click', () => {
-        if (bottomScanLogEl && scanLogBodyEl && scanLogToggleBtn) {
-          bottomScanLogEl.classList.remove('collapsed');
-          scanLogBodyEl.hidden = false;
-          scanLogToggleBtn.textContent = 'Collapse';
-          scanLogToggleBtn.setAttribute('aria-expanded', 'true');
-        }
+      document.getElementById('refresh-activity-log-btn')?.addEventListener('click', () => {
+        flushPendingScanLogs();
       });
       document.getElementById('activity-open-collection-btn')?.addEventListener('click', () => {
         openPanel('library');
       });
+      document.getElementById('refresh-frontend-logs-btn')?.addEventListener('click', () => {
+        void loadClientLogFeed();
+      });
+      document.getElementById('copy-frontend-logs-btn')?.addEventListener('click', () => {
+        void copyFrontendLogs();
+      });
+      if (activityLogAutoRefreshTimer) clearInterval(activityLogAutoRefreshTimer);
+      activityLogAutoRefreshTimer = setInterval(() => {
+        flushPendingScanLogs();
+        if (currentPanel === 'activity') void loadClientLogFeed();
+      }, 1500);
+      flushPendingScanLogs();
+      void loadClientLogFeed();
     }
 
     async function loadScanHistory() {
@@ -3724,9 +4236,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
 
         if (type === 'log') {
+          if (Boolean(event.replay)) return;
           const rawLevel = String(event.level ?? 'info');
           const level = (rawLevel === 'error' || rawLevel === 'warning' || rawLevel === 'success' ? rawLevel : 'info') as 'info' | 'warning' | 'error' | 'success';
-          appendScanLog(String(event.message ?? ''), level);
+          appendScanLog(String(event.message ?? ''), level, undefined, {
+            timestamp: typeof event.created_at === 'string' ? event.created_at : undefined,
+          });
           return;
         }
 
@@ -3809,7 +4324,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       resetScanLog();
       for (const log of ((job.logs ?? []) as Record<string, unknown>[]).slice().reverse()) {
         const level = String(log.level ?? 'info') as 'info' | 'warning' | 'error' | 'success';
-        appendScanLog(String(log.message ?? ''), level);
+        appendScanLog(String(log.message ?? ''), level, undefined, {
+          timestamp: typeof log.created_at === 'string'
+            ? log.created_at
+            : typeof log.createdAt === 'string'
+              ? log.createdAt
+              : undefined,
+        });
       }
       renderScanHistory();
       if (reconnect && ['queued', 'running'].includes(String(job.status ?? ''))) {
@@ -4094,22 +4615,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           closeModal(coverModal);
           return;
         }
-        if (scanLogFullscreen && bottomScanLogEl) {
-          scanLogFullscreen = false;
-          bottomScanLogEl.classList.remove('fullscreen');
-          scanLogFullscreenBtn?.setAttribute('aria-pressed', 'false');
-          if (scanLogFullscreenBtn) scanLogFullscreenBtn.textContent = 'Full Screen';
-          return;
-        }
-        if (bottomScanLogEl && !bottomScanLogEl.classList.contains('collapsed')) {
-          bottomScanLogEl.classList.add('collapsed');
-          if (scanLogBodyEl) scanLogBodyEl.hidden = true;
-          if (scanLogToggleBtn) {
-            scanLogToggleBtn.textContent = 'Expand';
-            scanLogToggleBtn.setAttribute('aria-expanded', 'false');
-          }
-          return;
-        }
         if (hasActiveCollectionFilters()) {
           clearCollectionFiltersAndScope();
           return;
@@ -4173,6 +4678,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
       }
       if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'c') {
+        if (currentPanel === 'activity') {
+          event.preventDefault();
+          void copyFrontendLogs();
+          return;
+        }
         event.preventDefault();
         void copyActiveTrackPath();
         return;
@@ -4540,44 +5050,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     listEl.addEventListener('focus', () => setKeyboardPane('list'));
     detailEl.addEventListener('focus', () => setKeyboardPane('detail'));
     setKeyboardPane('list');
-    scanLogClearBtn?.addEventListener('click', () => {
-      resetScanLog();
-    });
-    const applyScanLogCollapsedState = (collapsed: boolean) => {
-      if (!bottomScanLogEl || !scanLogBodyEl || !scanLogToggleBtn) return;
-      bottomScanLogEl.classList.toggle('collapsed', collapsed);
-      scanLogBodyEl.hidden = collapsed;
-      scanLogToggleBtn.textContent = collapsed ? 'Expand' : 'Collapse';
-      scanLogToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    };
-    let scanLogCollapsed = preferences.collapseScanLog;
-    applyScanLogCollapsedState(scanLogCollapsed);
-    scanLogToggleBtn?.addEventListener('click', (event) => {
-      event.stopPropagation();
-      scanLogCollapsed = !scanLogCollapsed;
-      preferences.collapseScanLog = scanLogCollapsed;
-      savePreferences();
-      applyScanLogCollapsedState(scanLogCollapsed);
-    });
-    bottomScanLogHeadEl?.addEventListener('click', (event) => {
-      if ((event.target as HTMLElement).closest('button')) return;
-      scanLogCollapsed = !scanLogCollapsed;
-      preferences.collapseScanLog = scanLogCollapsed;
-      savePreferences();
-      applyScanLogCollapsedState(scanLogCollapsed);
-    });
-    scanLogFullscreenBtn?.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (!bottomScanLogEl) return;
-      scanLogFullscreen = !scanLogFullscreen;
-      bottomScanLogEl.classList.toggle('fullscreen', scanLogFullscreen);
-      if (scanLogCollapsed) {
-        scanLogCollapsed = false;
-        applyScanLogCollapsedState(false);
-      }
-      scanLogFullscreenBtn.setAttribute('aria-pressed', scanLogFullscreen ? 'true' : 'false');
-      scanLogFullscreenBtn.textContent = scanLogFullscreen ? 'Exit Full Screen' : 'Full Screen';
-    });
     quickFilterBarEl?.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement).closest<HTMLElement>('.quick-filter-btn[data-filter]');
       if (!button) return;
@@ -4631,7 +5103,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     void preflightDirectory(scanDirectoryEl.value);
     loadSets().then(() => {
       renderBulkToolbar();
-      return loadTracks();
+      if (preferences.loadLibraryOnStartup) {
+        return loadTracks();
+      }
+      tracks = [];
+      renderList(tracks);
+      detailEl.innerHTML = `
+        <div class="empty empty-state">
+          <strong>Library autoload is turned off.</strong>
+          <span>Your saved tracks are still in the app database, but they will stay hidden until you start a scan or load the library manually.</span>
+          <div class="empty-actions">
+            <button type="button" class="btn" id="startup-empty-load-library-btn">Load Library</button>
+            <button type="button" class="btn" id="startup-empty-start-scan-btn">Start Scan</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('startup-empty-load-library-btn')?.addEventListener('click', () => {
+        void loadTracks(searchEl.value.trim());
+      });
+      document.getElementById('startup-empty-start-scan-btn')?.addEventListener('click', () => {
+        void triggerScan();
+      });
+      return Promise.resolve();
     });
     void loadLibraryOverview();
     void loadRuntimeHealth();
@@ -4648,6 +5141,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     return () => {
       stopStreamingScanJob();
       if (backgroundRefreshTimer) clearInterval(backgroundRefreshTimer);
+      if (activityLogAutoRefreshTimer) clearInterval(activityLogAutoRefreshTimer);
       if (queuedDbRefreshTimer) clearTimeout(queuedDbRefreshTimer);
       if (scanLogFlushTimer) clearTimeout(scanLogFlushTimer);
       if (listScrollRaf) cancelAnimationFrame(listScrollRaf);

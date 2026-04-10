@@ -251,23 +251,6 @@ export default function AppShell({
       <datalist id="artist-suggestions" />
       <datalist id="album-suggestions" />
 
-      <div className="bottom-scan-log collapsed" id="bottom-scan-log">
-        <div className="bottom-scan-log-head" id="bottom-scan-log-head">
-          <strong>Scan Log</strong>
-          <div className="scan-panel-actions">
-            <button type="button" className="icon-btn" id="scan-log-clear-btn">Clear</button>
-            <button type="button" className="icon-btn" id="scan-log-fullscreen-btn" aria-pressed="false">Full Screen</button>
-            <button type="button" className="icon-btn" id="scan-log-toggle-btn" aria-expanded="false" aria-controls="scan-log-body">Expand</button>
-          </div>
-        </div>
-        <div className="bottom-scan-log-body" id="scan-log-body" hidden>
-          <div className="scan-progress-file bottom" id="scan-progress-file">No scan in progress</div>
-          <div className="scan-log" id="scan-log">
-            <div className="scan-log-entry info">No scan activity.</div>
-          </div>
-        </div>
-      </div>
-
       {clientInit}
     </>
   );

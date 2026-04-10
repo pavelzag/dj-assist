@@ -237,10 +237,29 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   color: var(--text);
   font-size: 11px;
   line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.scan-log-timestamp {
+  display: inline-block;
+  min-width: 72px;
+  margin-right: 8px;
+  color: var(--muted);
+  opacity: 0.95;
 }
 .scan-log-entry.info { border-color: rgba(124,92,255,0.18); }
-.scan-log-entry.warning { border-color: rgba(255,173,51,0.35); color: #ffd48a; }
-.scan-log-entry.error { border-color: rgba(255,89,89,0.35); color: #ffd1d1; }
+.scan-log-entry.warning {
+  border-color: rgba(255,173,51,0.35);
+  background: rgba(255,173,51,0.08);
+  color: #ffd48a;
+}
+.scan-log-entry.error {
+  border-color: rgba(255,89,89,0.5);
+  background: rgba(255,89,89,0.12);
+  color: #ffd1d1;
+}
+.scan-log-entry.error .scan-log-timestamp {
+  color: #ffb2b2;
+}
 .scan-log-entry.success { border-color: rgba(54,197,126,0.35); color: #9cf4c7; }
 .scan-summary {
   display: grid;
@@ -269,62 +288,22 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   color: var(--muted);
   font-size: 11px;
 }
-.bottom-scan-log {
-  position: fixed;
-  left: 16px;
-  right: 16px;
-  bottom: 14px;
-  z-index: 70;
-  display: grid;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line2);
-  background: linear-gradient(180deg, rgba(10,14,24,0.96) 0%, rgba(7,10,18,0.98) 100%);
-  backdrop-filter: blur(12px);
-}
-.bottom-scan-log.fullscreen {
-  left: 18px;
-  right: 18px;
-  top: 18px;
-  bottom: 18px;
-  z-index: 140;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-.bottom-scan-log.collapsed {
-  gap: 0;
-}
-.bottom-scan-log-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-}
-.bottom-scan-log-head strong {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.bottom-scan-log-body[hidden] {
-  display: none !important;
-}
 .scan-log {
   max-height: 160px;
   overflow: auto;
   display: grid;
   gap: 5px;
 }
-.bottom-scan-log.fullscreen .scan-log {
-  max-height: none;
-  height: 100%;
+#activity-log-list,
+#frontend-log-list {
+  min-height: 360px;
+  max-height: 60vh;
+  padding-right: 4px;
 }
-.bottom-scan-log.fullscreen .bottom-scan-log-body {
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
+#activity-log-list .scan-log-entry,
+#frontend-log-list .scan-log-entry {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .scan-progress-file.bottom {
   max-width: 100%;

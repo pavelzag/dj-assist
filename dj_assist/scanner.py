@@ -21,9 +21,10 @@ SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aiff", ".aif"
 _EMPTY_PREVIEWS: dict = {
     "youtube_url": "", "spotify_url": "", "spotify_preview_url": "",
     "spotify_uri": "", "spotify_id": "", "spotify_tempo": 0.0,
-    "spotify_key": "", "spotify_mode": "", "album_art_url": "",
+    "spotify_key": "", "spotify_mode": "", "album_art_url": "", "artist_image_url": "",
+    "album_art_provider": "", "artist_image_provider": "",
     "spotify_album_name": "", "spotify_match_score": 0.0,
-    "spotify_high_confidence": False, "spotify_debug": "",
+    "spotify_high_confidence": False, "spotify_debug": "", "theaudiodb_debug": "", "musicbrainz_debug": "", "discogs_debug": "",
     "spotify_track_number": 0, "spotify_release_year": 0,
     "acoustid_artist": "", "acoustid_title": "", "acoustid_album": "",
     "acoustid_match_score": 0.0, "acoustid_id": "", "acoustid_recording_id": "",
@@ -184,6 +185,10 @@ def _folder_context_key(filepath: str, metadata: dict) -> str:
     if album:
         return f"{Path(filepath).parent}|album:{album}"
     return str(Path(filepath).parent)
+
+
+def _artist_cache_key(artist: Optional[str]) -> str:
+    return _normalize_text(artist)
 
 
 def _context_median(values: list[float]) -> float:
@@ -457,6 +462,16 @@ def _art_debug_reason(previews: dict, fetch_album_art: bool) -> str:
     """Return a human-readable explanation for why album art is or isn't present."""
     if not fetch_album_art:
         return "disabled"
+    if previews.get("album_art_provider") == "theaudiodb_album":
+        return "TheAudioDB album artwork matched"
+    if previews.get("album_art_provider") == "theaudiodb_track":
+        return "TheAudioDB track artwork matched"
+    if previews.get("album_art_provider") in {"musicbrainz_release_group", "musicbrainz_release"}:
+        return "MusicBrainz/Cover Art Archive artwork matched"
+    if previews.get("album_art_provider") == "discogs_release":
+        return "Discogs artwork matched"
+    if previews.get("artist_image_provider") == "theaudiodb_artist":
+        return "TheAudioDB artist image fallback matched"
     if not previews.get("spotify_id"):
         debug_raw = previews.get("spotify_debug") or ""
         try:
@@ -483,14 +498,19 @@ def _resolve_album_art(
     previews: dict,
     fetch_album_art: bool,
     album_art_cache: dict[str, dict],
+    artist_art_cache: dict[str, dict],
 ) -> dict:
     spotify_album_name = str(previews.get("spotify_album_name") or "")
     album_group_key = _album_group_key(metadata.get("artist"), metadata.get("album") or spotify_album_name)
+    artist_cache_key = _artist_cache_key(metadata.get("artist"))
     embedded_url = str(metadata.get("embedded_album_art_url") or "")
     spotify_url = str(previews.get("album_art_url") or "")
     artist_image_url = str(previews.get("artist_image_url") or "")
+    album_art_provider = str(previews.get("album_art_provider") or "")
+    artist_image_provider = str(previews.get("artist_image_provider") or "")
     spotify_score = float(previews.get("spotify_match_score") or 0.0)
     cached = album_art_cache.get(album_group_key, {}) if album_group_key else {}
+    cached_artist = artist_art_cache.get(artist_cache_key, {}) if artist_cache_key else {}
 
     result = {
         "album_art_url": "",
@@ -526,23 +546,68 @@ def _resolve_album_art(
         )
     elif fetch_album_art and spotify_url:
         high_confidence = bool(previews.get("spotify_high_confidence"))
+        provider = album_art_provider or "spotify"
+        review_notes = "spotify album match accepted" if high_confidence else "spotify match below auto-approve threshold"
+        confidence = spotify_score if provider == "spotify" else max(16.0, spotify_score)
+        review_status = "approved" if high_confidence and provider == "spotify" else "needs_review"
+        if provider == "theaudiodb_album":
+            review_notes = "TheAudioDB album artwork used as fallback"
+        elif provider == "theaudiodb_track":
+            review_notes = "TheAudioDB track artwork used as fallback"
+        elif provider in {"musicbrainz_release_group", "musicbrainz_release"}:
+            review_notes = "MusicBrainz/Cover Art Archive artwork used as fallback"
+            confidence = max(24.0, spotify_score)
+            review_status = "approved"
+        elif provider == "discogs_release":
+            review_notes = "Discogs artwork used as fallback"
+            confidence = max(18.0, spotify_score)
+            review_status = "needs_review"
         result.update(
             {
                 "album_art_url": spotify_url,
-                "album_art_source": "spotify",
-                "album_art_confidence": spotify_score,
-                "album_art_review_status": "approved" if high_confidence else "needs_review",
-                "album_art_review_notes": "spotify album match accepted" if high_confidence else "spotify match below auto-approve threshold",
+                "album_art_source": provider,
+                "album_art_confidence": confidence,
+                "album_art_review_status": review_status,
+                "album_art_review_notes": review_notes,
             }
         )
     elif fetch_album_art and artist_image_url:
+        provider = artist_image_provider or "artist"
+        review_notes = "spotify artist image used as fallback because no album cover was available"
+        if provider == "theaudiodb_artist":
+            review_notes = "TheAudioDB artist image used as fallback because no album cover was available"
         result.update(
             {
                 "album_art_url": artist_image_url,
-                "album_art_source": "artist",
+                "album_art_source": provider,
                 "album_art_confidence": max(10.0, min(spotify_score, 17.9)),
                 "album_art_review_status": "needs_review",
-                "album_art_review_notes": "spotify artist image used as fallback because no album cover was available",
+                "album_art_review_notes": review_notes,
+            }
+        )
+    elif fetch_album_art and cached_artist.get("album_art_url"):
+        cached_confidence = float(cached_artist.get("album_art_confidence") or 0.0)
+        result.update(
+            {
+                "album_art_url": str(cached_artist.get("album_art_url") or ""),
+                "album_art_source": "artist_cache",
+                "album_art_confidence": cached_confidence,
+                "album_art_review_status": "needs_review",
+                "album_art_review_notes": f"reused fallback artist image for {metadata.get('artist') or 'artist'}",
+            }
+        )
+    elif fetch_album_art and artist_image_url:
+        provider = artist_image_provider or "artist"
+        review_notes = "artist image used as final fallback because no album cover was available"
+        if provider == "theaudiodb_artist":
+            review_notes = "TheAudioDB artist image used as final fallback because no album cover was available"
+        result.update(
+            {
+                "album_art_url": artist_image_url,
+                "album_art_source": provider,
+                "album_art_confidence": 12.0,
+                "album_art_review_status": "needs_review",
+                "album_art_review_notes": review_notes,
             }
         )
     elif fetch_album_art and previews.get("spotify_id"):
@@ -559,6 +624,15 @@ def _resolve_album_art(
             album_art_cache[album_group_key] = {
                 "album_art_url": result["album_art_url"],
                 "album_art_source": result["album_art_source"],
+                "album_art_confidence": result["album_art_confidence"],
+            }
+
+    if artist_cache_key and result["album_art_url"] and result["album_art_source"] in {"artist", "artist_cache"}:
+        existing_artist = artist_art_cache.get(artist_cache_key)
+        if not existing_artist or float(result["album_art_confidence"]) >= float(existing_artist.get("album_art_confidence") or 0.0):
+            artist_art_cache[artist_cache_key] = {
+                "album_art_url": result["album_art_url"],
+                "album_art_source": "artist",
                 "album_art_confidence": result["album_art_confidence"],
             }
 
@@ -611,10 +685,11 @@ def scan_directory(
             tqdm.write(f"  [{label}] {Path(filepath).name}")
 
     album_art_cache: dict[str, dict] = {}
+    artist_art_cache: dict[str, dict] = {}
     folder_bpm_context: dict[str, list[float]] = {}
 
     spotify_scan_enabled = spotify_enabled
-    enrichment_enabled = not fast_scan
+    enrichment_enabled = bool(fetch_album_art) or not fast_scan
     spotify_timeout_streak = 0
 
     with ThreadPoolExecutor(max_workers=1) as spotify_pool:
@@ -703,7 +778,7 @@ def scan_directory(
                 # concurrently with BPM/key detection in the main thread.
                 spotify_future: Future | None = None
                 if enrichment_enabled:
-                    needs_acoustid = not bool(metadata["artist"] and metadata["title"])
+                    needs_acoustid = (not fast_scan) and (not bool(metadata["artist"] and metadata["title"]))
                     _step("metadata lookup (async)", filepath)
                     spotify_future = spotify_pool.submit(
                         build_media_links,
@@ -715,10 +790,15 @@ def scan_directory(
                         metadata["release_year"],
                         fetch_album_art,
                         filepath,
-                        spotify_scan_enabled,
+                        spotify_scan_enabled if not fast_scan else False,
                         needs_acoustid,
                     )
-                    debug_parts.append("acoustid=enabled_missing_metadata" if needs_acoustid else "acoustid=skipped_metadata_present")
+                    if fast_scan:
+                        debug_parts.append("art_fallbacks=enabled_fast_scan")
+                        debug_parts.append("spotify_scan=disabled_fast_scan")
+                        debug_parts.append("acoustid=disabled_fast_scan")
+                    else:
+                        debug_parts.append("acoustid=enabled_missing_metadata" if needs_acoustid else "acoustid=skipped_metadata_present")
 
                 if can_local or can_tag:
                     _step("isolated-analysis", filepath)
@@ -832,6 +912,12 @@ def scan_directory(
                     debug_parts.append("spotify_scan=disabled_after_timeouts")
                 if previews.get("spotify_debug"):
                     debug_parts.append(f"spotify_debug={previews.get('spotify_debug')}")
+                if previews.get("theaudiodb_debug"):
+                    debug_parts.append(f"theaudiodb_debug={previews.get('theaudiodb_debug')}")
+                if previews.get("musicbrainz_debug"):
+                    debug_parts.append(f"musicbrainz_debug={previews.get('musicbrainz_debug')}")
+                if previews.get("discogs_debug"):
+                    debug_parts.append(f"discogs_debug={previews.get('discogs_debug')}")
                 if previews.get("acoustid_debug"):
                     debug_parts.append(f"acoustid_debug={previews.get('acoustid_debug')}")
 
@@ -840,7 +926,7 @@ def scan_directory(
                 if not key:
                     debug_parts.append("key=missing")
 
-                album_art = _resolve_album_art(metadata, previews, fetch_album_art, album_art_cache)
+                album_art = _resolve_album_art(metadata, previews, fetch_album_art, album_art_cache, artist_art_cache)
                 album_art_url = str(album_art["album_art_url"] or "")
                 debug_parts.append(f"album_art_source={album_art['album_art_source'] or 'none'}")
                 debug_parts.append(f"album_art_confidence={float(album_art['album_art_confidence'] or 0.0):.1f}")

@@ -7,10 +7,10 @@ import { resolveWorkingPython } from '@/lib/scan';
 export const runtime = 'nodejs';
 
 const execFileAsync = promisify(execFile);
-const REANALYZE_TIMEOUT_MS = 45000;
+const REANALYZE_ART_TIMEOUT_MS = 45000;
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -20,12 +20,15 @@ export async function POST(
   const currentTrack = await getTrackById(trackId);
   if (!currentTrack) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const force = Boolean(body.force);
+
   try {
     const python = await resolveWorkingPython();
     const startedAt = Date.now();
     const { stdout, stderr } = await execFileAsync(
       python,
-      ['-m', 'dj_assist.cli', 'reanalyze-bpm', String(trackId), '--json-output'],
+      ['-m', 'dj_assist.cli', 'reanalyze-art', String(trackId), ...(force ? ['--force'] : []), '--json-output'],
       {
         cwd: process.cwd(),
         env: {
@@ -33,48 +36,43 @@ export async function POST(
           DJ_ASSIST_LIVE_SPOTIFY_DEBUG: '1',
           DJ_ASSIST_FAIL_FAST_ON_SPOTIFY_429: '1',
         },
-        timeout: REANALYZE_TIMEOUT_MS,
+        timeout: REANALYZE_ART_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
       },
     );
     const durationMs = Date.now() - startedAt;
+    let debug: Record<string, unknown> | string = String(stdout || '').trim();
     try {
-      const parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
-      if (parsed && typeof parsed === 'object') {
-        return NextResponse.json({
-          track: serializeTrack((await getTrackById(trackId)) ?? currentTrack),
-          debug: {
-            durationMs,
-            stdout: parsed,
-            stderr: String(stderr || '').trim(),
-          },
-        });
-      }
+      debug = JSON.parse(stdout || '{}') as Record<string, unknown>;
     } catch {
-      return NextResponse.json({
-        track: serializeTrack((await getTrackById(trackId)) ?? currentTrack),
-        debug: {
-          durationMs,
-          stdout: String(stdout || '').trim(),
-          stderr: String(stderr || '').trim(),
-        },
-      });
+      // keep stdout as string
     }
+    const refreshed = await getTrackById(trackId);
+    if (!refreshed) return NextResponse.json({ error: 'not found' }, { status: 404 });
+    return NextResponse.json({
+      track: serializeTrack(refreshed),
+      message: typeof debug === 'object' ? String(debug.message ?? 'Artwork refresh complete.') : 'Artwork refresh complete.',
+      debug: {
+        durationMs,
+        stdout: debug,
+        stderr: String(stderr || '').trim(),
+      },
+    });
   } catch (error) {
     const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
     const timedOut = execError?.signal === 'SIGTERM' && !execError?.code;
-    const message = timedOut
-      ? `BPM reanalysis timed out after ${Math.round(REANALYZE_TIMEOUT_MS / 1000)}s.`
-      : (error instanceof Error ? error.message : 'Unable to reanalyze BPM.');
     return NextResponse.json(
       {
-        error: message,
+        error: timedOut
+          ? `Artwork reanalysis timed out after ${Math.round(REANALYZE_ART_TIMEOUT_MS / 1000)}s.`
+          : (execError.message || 'Unable to reanalyze artwork.'),
         debug: {
-          timeoutMs: REANALYZE_TIMEOUT_MS,
+          timeoutMs: REANALYZE_ART_TIMEOUT_MS,
           timedOut,
           code: execError?.code ?? null,
           signal: execError?.signal ?? null,
           trackId,
+          force,
           stdout: String(execError?.stdout ?? '').trim(),
           stderr: String(execError?.stderr ?? '').trim(),
         },

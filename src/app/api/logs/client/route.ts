@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { appendClientDiagnosticLog, getClientLogPath } from '@/lib/app-log';
+import { appendClientDiagnosticLog, getClientDiagnosticLogs, getClientLogPath } from '@/lib/app-log';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const rawLimit = Number(request.nextUrl.searchParams.get('limit') ?? '100');
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, Math.round(rawLimit))) : 100;
   return NextResponse.json({
     ok: true,
     path: getClientLogPath(),
+    entries: await getClientDiagnosticLogs(limit),
   });
 }
 
