@@ -19,6 +19,15 @@ let quitPromptOpen = false;
 let quitRequestPending = false;
 let splashShownAt = 0;
 
+function appIconDataUrl() {
+  try {
+    const buffer = fs.readFileSync(APP_ICON_PATH);
+    return `data:image/png;base64,${buffer.toString('base64')}`;
+  } catch {
+    return '';
+  }
+}
+
 function shouldManageServer() {
   if (process.env.DJ_ASSIST_ELECTRON_MANAGE_SERVER) {
     return process.env.DJ_ASSIST_ELECTRON_MANAGE_SERVER === '1';
@@ -246,12 +255,13 @@ Backend Error: ${logs.err}</pre>
 }
 
 function renderSplashHtml(message = 'Loading your collection tools…') {
+  const iconDataUrl = appIconDataUrl();
   return `data:text/html;charset=utf-8,${encodeURIComponent(`
     <html>
       <body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:radial-gradient(circle at top,#1c1c1c 0%,#090909 58%,#000 100%);color:#f5f5f5;display:flex;align-items:center;justify-content:center;min-height:100vh;">
         <div style="display:flex;flex-direction:column;align-items:center;gap:22px;text-align:center;padding:32px;">
           <div style="width:196px;height:196px;border-radius:44px;background:rgba(255,255,255,0.04);box-shadow:0 26px 80px rgba(0,0,0,0.48), inset 0 0 0 1px rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;overflow:hidden;">
-            <div style="font-size:42px;font-weight:700;letter-spacing:0.18em;">DJ</div>
+            ${iconDataUrl ? `<img src="${iconDataUrl}" alt="DJ Assist" style="width:100%;height:100%;object-fit:contain;" />` : `<div style="font-size:42px;font-weight:700;letter-spacing:0.18em;">DJ</div>`}
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;">
             <div style="font-size:28px;font-weight:800;letter-spacing:0.14em;">DJ ASSIST</div>
