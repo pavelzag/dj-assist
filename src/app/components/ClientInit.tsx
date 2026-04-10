@@ -184,6 +184,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let quitAppInFlight = false;
     let pendingDeleteTrackIds: number[] = [];
     let pendingDeleteSource: 'single' | 'bulk' = 'single';
+    let lastDeleteShortcutAt = 0;
+    const deleteShortcutDoubleTapMs = 500;
     let includeUnknownArtistsInNextTracks = false;
     let nextTracksIntent: 'safe' | 'up' | 'down' | 'same' = 'safe';
     const trackMultipliers: Record<number, number> = {};
@@ -310,8 +312,42 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
-    function showInputSuggestions(input: HTMLInputElement | null) {
+    function metadataSuggestionKeyForInput(input: HTMLInputElement | null): 'artist' | 'album' | null {
+      if (!input) return null;
+      if (input.id === 'edit-meta-artist' || input.id === 'meta-artist') return 'artist';
+      if (input.id === 'edit-meta-album' || input.id === 'meta-album') return 'album';
+      return null;
+    }
+
+    function filteredSuggestionValues(key: 'artist' | 'album', query: string): string[] {
+      const normalized = normalizeText(query);
+      return uniqueSortedTrackValues(key)
+        .filter((value) => !normalized || normalizeText(value).includes(normalized))
+        .slice(0, 100);
+    }
+
+    function syncMetadataSuggestions(input: HTMLInputElement | null, options: { openPicker?: boolean; closeOnExactMatch?: boolean } = {}) {
       if (!input) return;
+      const key = metadataSuggestionKeyForInput(input);
+      if (!key) return;
+      const listId = key === 'artist' ? 'artist-suggestions' : 'album-suggestions';
+      const list = document.getElementById(listId) as HTMLDataListElement | null;
+      const matches = filteredSuggestionValues(key, input.value);
+      const normalizedValue = normalizeText(input.value);
+      const exactMatch = Boolean(normalizedValue) && matches.some((value) => normalizeText(value) === normalizedValue);
+
+      if (list) {
+        list.innerHTML = matches.map((value) => `<option value="${esc(value)}"></option>`).join('');
+      }
+
+      if (!matches.length || exactMatch) {
+        input.removeAttribute('list');
+        if (exactMatch && options.closeOnExactMatch) input.blur();
+        return;
+      }
+
+      input.setAttribute('list', listId);
+      if (!options.openPicker) return;
       const pickerCapable = input as HTMLInputElement & { showPicker?: () => void };
       if (typeof pickerCapable.showPicker === 'function') {
         try {
@@ -322,6 +358,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
       }
       input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    function showInputSuggestions(input: HTMLInputElement | null) {
+      syncMetadataSuggestions(input, { openPicker: true });
     }
 
     function relatedArtistTracks(track: Record<string, unknown>): Record<string, unknown>[] {
@@ -824,12 +864,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         .slice(0, 12);
       commandPaletteResults = results;
       commandPaletteActiveIndex = Math.min(commandPaletteActiveIndex, Math.max(0, results.length - 1));
+      commandPaletteList.hidden = results.length === 0;
       commandPaletteList.innerHTML = results.map((item, index) => `
         <button type="button" class="command-palette-item ${index === commandPaletteActiveIndex ? 'active' : ''}" data-command-index="${index}">
           <strong>${esc(item.label)}</strong>
           <span>${esc(item.meta)}</span>
         </button>
-      `).join('') || '<div class="scan-log-entry info">No matches.</div>';
+      `).join('');
       commandPaletteList.querySelectorAll<HTMLElement>('.command-palette-item[data-command-index]').forEach((button) => {
         button.addEventListener('click', () => {
           const item = commandPaletteResults[Number(button.dataset.commandIndex ?? -1)];
@@ -1790,9 +1831,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         closeModal(editMetadataModal);
         openPanel('track');
         requestAnimationFrame(() => {
-          applyTrackSelection(String(savedTrackId), true);
-          syncActiveTrackRowHighlight();
-          setKeyboardPane('list', { focus: true });
+          preserveHighlightedTrack(savedTrackId, { ensureVisible: true, focusList: true });
         });
       } finally {
         saveEditMetadataInFlight = false;
@@ -1828,6 +1867,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function closeDeleteTracksModal() {
       pendingDeleteTrackIds = [];
       pendingDeleteSource = 'single';
+      lastDeleteShortcutAt = 0;
       if (deleteTrackRemoveFileEl) deleteTrackRemoveFileEl.checked = false;
       closeModal(deleteTrackModal);
     }
@@ -2071,6 +2111,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         else tracks = [updatedTrack, ...tracks];
         refreshMetadataSuggestionLists();
         renderList(tracks);
+        if (activeTrackId === trackId) preserveHighlightedTrack(trackId, { ensureVisible: true });
         if (selectedDetailTrackId === trackId || activeTrackId === trackId) {
           updateRenderedTrackDetail(updatedTrack);
           updateNowPlayingBar(document.getElementById('local-audio') as HTMLAudioElement | null);
@@ -4518,6 +4559,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
+    function preserveHighlightedTrack(trackId: number, options: { ensureVisible?: boolean; focusList?: boolean } = {}) {
+      const { ensureVisible = true, focusList = false } = options;
+      if (!tracks.some((track) => Number(track.id) === trackId)) return;
+      applyTrackSelection(String(trackId), ensureVisible);
+      syncActiveTrackRowHighlight();
+      if (focusList) setKeyboardPane('list', { focus: true });
+    }
+
     async function loadTrackDetail(id: string, autoPlay = false) {
       const requestedTrackId = Number(id);
       const requestToken = ++trackDetailRequestToken;
@@ -4629,6 +4678,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
         return;
       }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'd' && deleteTrackModal?.classList.contains('open')) {
+        const now = Date.now();
+        const isQuickRepeat = now - lastDeleteShortcutAt <= deleteShortcutDoubleTapMs;
+        if (isQuickRepeat && pendingDeleteTrackIds.length) {
+          event.preventDefault();
+          if (deleteTrackRemoveFileEl) deleteTrackRemoveFileEl.checked = true;
+          void confirmDeleteTracks();
+        }
+        lastDeleteShortcutAt = 0;
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         commandPaletteActiveIndex = 0;
@@ -4687,7 +4747,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         void copyActiveTrackPath();
         return;
       }
-      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 's') {
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && ['s', 'i'].includes(event.key.toLowerCase())) {
         if (activeTrackId != null) {
           event.preventDefault();
           toggleTrackSelection(activeTrackId);
@@ -4709,9 +4769,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'd') {
-        if (deleteTrackModal?.classList.contains('open')) return;
-        if (activeTrackId != null) {
+        const now = Date.now();
+        const isQuickRepeat = now - lastDeleteShortcutAt <= deleteShortcutDoubleTapMs;
+        const selectedIds = [...selectedTrackIds].filter((id) => Number.isFinite(id));
+        if (selectedIds.length) {
           event.preventDefault();
+          lastDeleteShortcutAt = now;
+          openDeleteTracksModal(selectedIds, 'bulk');
+        } else if (activeTrackId != null) {
+          event.preventDefault();
+          lastDeleteShortcutAt = now;
           openDeleteTracksModal([activeTrackId], 'single');
         }
         return;
@@ -4993,9 +5060,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         void saveEditMetadataModal();
       });
     });
-    document.getElementById('edit-meta-artist')?.addEventListener('focus', () => {
-      const input = document.getElementById('edit-meta-artist') as HTMLInputElement | null;
+    document.addEventListener('focusin', (event) => {
+      const input = event.target as HTMLInputElement | null;
+      if (!metadataSuggestionKeyForInput(input)) return;
       requestAnimationFrame(() => showInputSuggestions(input));
+    });
+    document.addEventListener('input', (event) => {
+      const input = event.target as HTMLInputElement | null;
+      if (!metadataSuggestionKeyForInput(input)) return;
+      syncMetadataSuggestions(input);
+    });
+    document.addEventListener('change', (event) => {
+      const input = event.target as HTMLInputElement | null;
+      if (!metadataSuggestionKeyForInput(input)) return;
+      syncMetadataSuggestions(input, { closeOnExactMatch: true });
     });
     editMetadataModal?.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;

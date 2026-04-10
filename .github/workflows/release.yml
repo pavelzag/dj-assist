@@ -78,6 +78,7 @@ jobs:
 
       - name: Build desktop app
         run: |
+          node scripts/prepare-app-icon.cjs
           npm run build
           npm run prepare:standalone-assets
           npm run prepare:python-bundle

@@ -31,7 +31,7 @@ The GitHub release workflow already treats tags containing `-` as prereleases.
 
 Use only tags like:
 
-- `v0.1.0`
+- `v0.2.0`
 - `v0.1.1`
 - `v0.2.0`
 
@@ -48,7 +48,7 @@ Cons:
 
 Use:
 
-- stable: `v0.1.0`
+- stable: `v0.2.0`
 - beta: `v0.2.0-beta.1`
 - RC: `v0.2.0-rc.1`
 
@@ -66,7 +66,7 @@ Cons:
 
 Use:
 
-- stable: `v0.1.0`
+- stable: `v0.2.0`
 - beta: `v0.2.0-beta.1`
 - nightly: `nightly-2026-04-08`
 

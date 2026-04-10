@@ -157,7 +157,6 @@ function installIntoBundledRuntime(runtimePython) {
   runOrThrow(runtimePython, ['-m', 'pip', '--version'], { cwd: repoRoot });
   runOrThrow(runtimePython, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'], { cwd: repoRoot });
   runOrThrow(runtimePython, ['-m', 'pip', 'install', '-r', 'requirements.txt'], { cwd: repoRoot });
-  runOrThrow(runtimePython, ['-m', 'pip', 'install', '.'], { cwd: repoRoot });
 }
 
 function verifyBundledEnvironment(runtimePython) {

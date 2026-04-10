@@ -151,8 +151,9 @@ export default function AppShell({
             <div><strong>Enter</strong><span>Play selected track</span></div>
             <div><strong>C</strong><span>Copy selected track path</span></div>
             <div><strong>S</strong><span>Select or unselect the highlighted track</span></div>
+            <div><strong>I</strong><span>Add or remove the highlighted track from the delete selection</span></div>
             <div><strong>B</strong><span>Open tap BPM counter</span></div>
-            <div><strong>D</strong><span>Delete selected track</span></div>
+            <div><strong>D</strong><span>Delete selected tracks, or double-tap quickly to also delete the files from disk</span></div>
             <div><strong>E</strong><span>Edit selected track metadata</span></div>
             <div><strong>M</strong><span>Mute or unmute playback</span></div>
             <div><strong>A</strong><span>Browse current artist</span></div>
