@@ -167,7 +167,7 @@ async function handleStructuredEvent(job: InMemoryJob, event: ScanProgressEvent 
       break;
     case 'track_complete': {
       const status = String(event.status ?? '');
-      if (status === 'analyzed') {
+      if (status === 'analyzed' || status === 'server_match') {
         if (event.bpm && Number(event.bpm) > 0) job.state.summary.with_bpm += 1;
         if (event.key) job.state.summary.with_key += 1;
         if (event.spotify_id) job.state.summary.with_spotify += 1;

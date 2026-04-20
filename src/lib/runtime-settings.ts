@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 export type SpotifyCredentials = {
   clientId: string;
@@ -10,6 +11,36 @@ type RuntimeSettings = {
   spotify?: SpotifyCredentials & {
     updatedAt?: string;
   };
+  server?: ServerSettings;
+  auth?: AuthSettings;
+  clientId?: string;
+};
+
+export type ServerSettings = {
+  enabled: boolean;
+  localDebug: boolean;
+  serverUrl: string;
+  localServerUrl: string;
+  updatedAt?: string;
+};
+
+export type AuthSettings = {
+  provider: 'google';
+  id: string;
+  email?: string;
+  name?: string;
+  picture?: string;
+  idToken: string;
+  updatedAt?: string;
+};
+
+export type UserData = {
+  type: 'google' | 'anonymous';
+  id: string;
+  email?: string;
+  name?: string;
+  picture?: string;
+  google_id_token?: string;
 };
 
 export type SpotifySettingsSummary = {
@@ -40,6 +71,111 @@ export async function loadRuntimeSettings(): Promise<RuntimeSettings> {
   } catch {
     return {};
   }
+}
+
+async function saveRuntimeSettings(next: RuntimeSettings): Promise<void> {
+  await ensureSettingsDirectory();
+  await fs.writeFile(runtimeSettingsPath(), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+}
+
+export async function getClientId(): Promise<string> {
+  const current = await loadRuntimeSettings();
+  const existing = String(current.clientId ?? '').trim();
+  if (existing) return existing;
+  const clientId = `client_${randomUUID()}`;
+  await saveRuntimeSettings({ ...current, clientId });
+  return clientId;
+}
+
+export function defaultServerSettings(): ServerSettings {
+  return {
+    enabled: true,
+    localDebug: false,
+    serverUrl: process.env.DJ_ASSIST_SERVER_URL?.trim() || 'https://dj-assist-server.vercel.app',
+    localServerUrl: process.env.DJ_ASSIST_LOCAL_SERVER_URL?.trim() || 'http://localhost:3001',
+  };
+}
+
+export async function effectiveServerSettings(): Promise<ServerSettings> {
+  const settings = await loadRuntimeSettings();
+  return {
+    ...defaultServerSettings(),
+    ...settings.server,
+  };
+}
+
+export async function saveServerSettings(input: Partial<ServerSettings>): Promise<ServerSettings> {
+  const current = await loadRuntimeSettings();
+  const existing = await effectiveServerSettings();
+  const next: ServerSettings = {
+    ...existing,
+    enabled: input.enabled ?? existing.enabled,
+    localDebug: input.localDebug ?? existing.localDebug,
+    serverUrl: String(input.serverUrl ?? existing.serverUrl).trim() || existing.serverUrl,
+    localServerUrl: String(input.localServerUrl ?? existing.localServerUrl).trim() || existing.localServerUrl,
+    updatedAt: new Date().toISOString(),
+  };
+  await saveRuntimeSettings({ ...current, server: next });
+  return next;
+}
+
+export async function saveGoogleAuth(auth: Omit<AuthSettings, 'provider' | 'updatedAt'>): Promise<AuthSettings> {
+  const current = await loadRuntimeSettings();
+  const next: AuthSettings = {
+    provider: 'google',
+    ...auth,
+    updatedAt: new Date().toISOString(),
+  };
+  await saveRuntimeSettings({ ...current, auth: next });
+  return next;
+}
+
+export async function clearAuthSettings(): Promise<void> {
+  const current = await loadRuntimeSettings();
+  const next = { ...current };
+  delete next.auth;
+  await saveRuntimeSettings(next);
+}
+
+export async function effectiveUserData(): Promise<UserData> {
+  const settings = await loadRuntimeSettings();
+  const auth = settings.auth;
+  if (auth?.provider === 'google' && auth.id && auth.idToken) {
+    return {
+      type: 'google',
+      id: auth.id,
+      email: auth.email,
+      name: auth.name,
+      picture: auth.picture,
+      google_id_token: auth.idToken,
+    };
+  }
+  return {
+    type: 'anonymous',
+    id: await getClientId(),
+  };
+}
+
+export function publicUserSummary(user: UserData) {
+  return {
+    type: user.type,
+    id: user.id,
+    email: user.email ?? null,
+    name: user.name ?? null,
+    picture: user.picture ?? null,
+    canFetchServerData: user.type === 'google',
+  };
+}
+
+export async function serverRuntimeSummary() {
+  const server = await effectiveServerSettings();
+  const user = await effectiveUserData();
+  return {
+    ...server,
+    activeUrl: server.localDebug ? server.localServerUrl : server.serverUrl,
+    user: publicUserSummary(user),
+    googleAuthConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+  };
 }
 
 export async function saveSpotifySettings(credentials: SpotifyCredentials): Promise<void> {

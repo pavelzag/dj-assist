@@ -7,6 +7,9 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Callable, Optional
@@ -35,6 +38,7 @@ _EMPTY_PREVIEWS: dict = {
 _SPOTIFY_TIMEOUT = float(os.getenv("SPOTIFY_TIMEOUT", "3"))
 _SPOTIFY_TIMEOUT_STREAK_LIMIT = int(os.getenv("SPOTIFY_TIMEOUT_STREAK_LIMIT", "3"))
 _ANALYSIS_SUBPROCESS_TIMEOUT = float(os.getenv("ANALYSIS_SUBPROCESS_TIMEOUT", "180"))
+_SERVER_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "4"))
 
 _UNKNOWN_ARTIST_VALUES = {"unknown", "unknown artist", "various artists"}
 _UPPERCASE_TOKENS = {"DJ", "MC", "UK", "USA", "EDM", "RNB", "EP", "LP", "VIP", "ID"}
@@ -50,6 +54,162 @@ def get_file_hash(filepath: str) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
+
+
+def _server_enabled() -> bool:
+    return os.getenv("DJ_ASSIST_SERVER_ENABLED", "false").lower() == "true" and bool(os.getenv("DJ_ASSIST_SERVER_URL", "").strip())
+
+
+def _client_id() -> str:
+    return os.getenv("DJ_ASSIST_CLIENT_ID", "anonymous-client").strip() or "anonymous-client"
+
+
+def _user_data() -> dict:
+    raw = os.getenv("DJ_ASSIST_USER_DATA", "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict) and parsed.get("type") and parsed.get("id"):
+                return parsed
+        except Exception:
+            pass
+    return {"type": "anonymous", "id": _client_id()}
+
+
+def _server_url(path: str) -> str:
+    base = os.getenv("DJ_ASSIST_SERVER_URL", "").strip().rstrip("/")
+    return f"{base}{path}"
+
+
+def _server_post(path: str, payload: dict) -> tuple[int, dict]:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        _server_url(path),
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "dj-assist-client",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=_SERVER_TIMEOUT) as response:
+        raw = response.read().decode("utf-8")
+        return int(response.status), json.loads(raw or "{}")
+
+
+def _lookup_server_track(file_hash: str, metadata: dict) -> dict | None:
+    user = _user_data()
+    if not _server_enabled() or user.get("type") != "google":
+        return None
+    try:
+        _status, payload = _server_post(
+            "/api/v1/tracks/lookup",
+            {
+                "client_id": _client_id(),
+                "user_data": user,
+                "file_hash": file_hash,
+                "title": metadata.get("title"),
+                "artist": metadata.get("artist"),
+                "duration": metadata.get("duration"),
+            },
+        )
+        if payload.get("matched") and isinstance(payload.get("track"), dict):
+            return payload["track"]
+    except Exception:
+        return None
+    return None
+
+
+def _server_track_to_local(server_track: dict, filepath: str, file_hash: str, file_size: int, file_mtime: float) -> dict:
+    return {
+        "path": filepath,
+        "title": server_track.get("title"),
+        "artist": server_track.get("artist"),
+        "album": server_track.get("album"),
+        "duration": server_track.get("duration"),
+        "bitrate": server_track.get("bitrate"),
+        "bpm": server_track.get("bpm"),
+        "key": server_track.get("musical_key") or server_track.get("key"),
+        "key_numeric": server_track.get("key_numeric"),
+        "spotify_id": server_track.get("spotify_id"),
+        "spotify_uri": server_track.get("spotify_uri"),
+        "spotify_url": server_track.get("spotify_url"),
+        "spotify_preview_url": server_track.get("spotify_preview_url"),
+        "spotify_tempo": server_track.get("spotify_tempo"),
+        "spotify_key": server_track.get("spotify_key"),
+        "spotify_mode": server_track.get("spotify_mode"),
+        "album_art_url": server_track.get("album_art_url"),
+        "spotify_album_name": server_track.get("spotify_album_name"),
+        "spotify_match_score": server_track.get("spotify_match_score"),
+        "spotify_high_confidence": str(server_track.get("spotify_high_confidence") or False).lower(),
+        "album_art_source": server_track.get("album_art_source"),
+        "album_art_confidence": server_track.get("album_art_confidence"),
+        "album_art_review_status": server_track.get("album_art_review_status"),
+        "album_art_review_notes": server_track.get("album_art_review_notes"),
+        "album_group_key": server_track.get("album_group_key"),
+        "embedded_album_art": bool(server_track.get("embedded_album_art")),
+        "album_art_match_debug": server_track.get("album_art_match_debug"),
+        "youtube_url": server_track.get("youtube_url"),
+        "analysis_status": "server_match",
+        "analysis_error": "",
+        "decode_failed": server_track.get("decode_failed"),
+        "analysis_stage": "server_match",
+        "analysis_debug": "source=dj-assist-server",
+        "bpm_source": server_track.get("bpm_source") or "server",
+        "bpm_confidence": server_track.get("bpm_confidence"),
+        "file_hash": file_hash,
+        "file_size": file_size,
+        "file_mtime": file_mtime,
+    }
+
+
+def _serialize_track_for_server(track_data: dict, client_track_id: str) -> dict:
+    return {
+        "client_track_id": client_track_id,
+        "title": track_data.get("title"),
+        "artist": track_data.get("artist"),
+        "album": track_data.get("album"),
+        "duration": track_data.get("duration"),
+        "bitrate": track_data.get("bitrate"),
+        "bpm": track_data.get("bpm"),
+        "bpm_confidence": track_data.get("bpm_confidence"),
+        "key": track_data.get("key"),
+        "key_numeric": track_data.get("key_numeric"),
+        "spotify_id": track_data.get("spotify_id"),
+        "spotify_uri": track_data.get("spotify_uri"),
+        "spotify_url": track_data.get("spotify_url"),
+        "spotify_tempo": track_data.get("spotify_tempo"),
+        "spotify_key": track_data.get("spotify_key"),
+        "spotify_mode": track_data.get("spotify_mode"),
+        "bpm_source": track_data.get("bpm_source"),
+        "analysis_status": track_data.get("analysis_status"),
+        "analysis_error": track_data.get("analysis_error"),
+        "decode_failed": track_data.get("decode_failed"),
+        "file_hash": track_data.get("file_hash"),
+        "file_size": track_data.get("file_size"),
+        "file_mtime": track_data.get("file_mtime"),
+        "effective_bpm": track_data.get("bpm") or track_data.get("spotify_tempo"),
+        "effective_key": track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric"),
+    }
+
+
+def _upload_track_to_server(track_data: dict, client_track_id: str) -> bool:
+    if not _server_enabled():
+        return False
+    try:
+        _server_post(
+            "/api/v1/ingest",
+            {
+                "client_id": _client_id(),
+                "user_data": _user_data(),
+                "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "tracks": [_serialize_track_for_server(track_data, client_track_id)],
+                "usage_events": [],
+            },
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _file_signature(filepath: str) -> tuple[int, float]:
@@ -757,6 +917,45 @@ def scan_directory(
                         }
                     )
 
+                server_track = _lookup_server_track(file_hash, metadata)
+                if server_track:
+                    track_data = _server_track_to_local(server_track, filepath, file_hash, file_size, file_mtime)
+                    db.add_track(track_data)
+                    bpm = float(track_data.get("bpm") or track_data.get("spotify_tempo") or 0.0)
+                    key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
+                    results["analyzed"] += 1
+                    processed += 1
+                    _emit(
+                        {
+                            "event": "track_complete",
+                            "path": filepath,
+                            "file": Path(filepath).name,
+                            "status": "server_match",
+                            "artist": track_data.get("artist"),
+                            "title": track_data.get("title"),
+                            "bpm": bpm,
+                            "bpm_source": track_data.get("bpm_source") or "server",
+                            "key": key,
+                            "spotify_id": track_data.get("spotify_id"),
+                            "album_art_url": track_data.get("album_art_url"),
+                            "album_art_source": track_data.get("album_art_source"),
+                            "album_art_confidence": float(track_data.get("album_art_confidence") or 0.0),
+                            "album_art_review_status": track_data.get("album_art_review_status"),
+                            "decode_failed": track_data.get("decode_failed"),
+                        }
+                    )
+                    _emit(
+                        {
+                            "event": "log",
+                            "level": "success",
+                            "message": (
+                                f"{Path(filepath).name}: server match bpm={bpm or 0:.1f} "
+                                f"key={key or 'none'}"
+                            ),
+                        }
+                    )
+                    continue
+
                 bpm = 0.0
                 bpm_source = ""
                 bpm_error = ""
@@ -934,8 +1133,7 @@ def scan_directory(
                 if album_art.get("album_group_key"):
                     debug_parts.append(f"album_group={album_art['album_group_key']}")
 
-                db.add_track(
-                    {
+                track_data = {
                         "path": filepath,
                         "title": metadata["title"],
                         "artist": metadata["artist"],
@@ -987,7 +1185,8 @@ def scan_directory(
                         "file_size": file_size,
                         "file_mtime": file_mtime,
                     }
-                )
+                db.add_track(track_data)
+                uploaded = _upload_track_to_server(track_data, file_hash or filepath)
                 if bpm > 0 and (bpm_confidence >= 0.45 or "sanity" in bpm_source or bpm_source == "spotify"):
                     folder_tempos.append(float(bpm))
                     if len(folder_tempos) > 24:
@@ -1011,6 +1210,7 @@ def scan_directory(
                         "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
                         "album_art_review_status": album_art["album_art_review_status"],
                         "decode_failed": decode_failed,
+                        "server_uploaded": uploaded,
                     }
                 )
                 _emit(

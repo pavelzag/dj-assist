@@ -146,6 +146,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let watchFolders: Record<string, unknown>[] = [];
     let runtimeHealth: Record<string, unknown> | null = null;
     let spotifySettingsBusy = false;
+    let serverSettingsBusy = false;
     let activeSetId: number | null = null;
     let activeQuickFilter = '';
     let preScanTrackIds = new Set<number>();
@@ -646,6 +647,82 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!statusEl) return;
       statusEl.textContent = message;
       statusEl.dataset.state = state;
+    }
+
+    function serverRuntimeSummary() {
+      const server = runtimeHealth?.server;
+      return server && typeof server === 'object' ? server as Record<string, unknown> : null;
+    }
+
+    function serverRuntimeLabel() {
+      const server = serverRuntimeSummary();
+      if (!server) return 'Not configured';
+      const user = server.user && typeof server.user === 'object' ? server.user as Record<string, unknown> : null;
+      const signedIn = user?.type === 'google';
+      const url = String(server.activeUrl ?? '').trim();
+      const mode = server.localDebug ? 'Local debug' : 'Production';
+      return `${mode}${url ? ` · ${url}` : ''} · ${signedIn ? `Google: ${String(user?.email ?? user?.name ?? 'connected')}` : 'Anonymous uploads only'}`;
+    }
+
+    function setServerUiStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const statusEl = document.getElementById('server-sync-status') as HTMLElement | null;
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.state = state;
+    }
+
+    async function submitServerSettings() {
+      if (serverSettingsBusy) return;
+      serverSettingsBusy = true;
+      const saveBtn = document.getElementById('server-settings-save-btn') as HTMLButtonElement | null;
+      const enabledInput = document.getElementById('server-sync-enabled') as HTMLInputElement | null;
+      const localDebugInput = document.getElementById('server-local-debug') as HTMLInputElement | null;
+      const serverUrlInput = document.getElementById('server-url') as HTMLInputElement | null;
+      const localServerUrlInput = document.getElementById('server-local-url') as HTMLInputElement | null;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+      }
+      setServerUiStatus('Saving server settings...', 'saving');
+      try {
+        const response = await fetch('/api/settings/server', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: Boolean(enabledInput?.checked),
+            localDebug: Boolean(localDebugInput?.checked),
+            serverUrl: serverUrlInput?.value.trim() ?? '',
+            localServerUrl: localServerUrlInput?.value.trim() ?? '',
+          }),
+        });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          setServerUiStatus(String(payload.error ?? 'Could not save server settings.'), 'error');
+          return;
+        }
+        await loadRuntimeHealth();
+        setServerUiStatus(serverRuntimeLabel(), 'success');
+        showToast('Server sync settings updated.', 'success');
+      } catch (error) {
+        setServerUiStatus(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        serverSettingsBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save Server Settings';
+        }
+      }
+    }
+
+    async function logoutGoogleAuth() {
+      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok) {
+        showToast('Could not sign out.', 'error');
+        return;
+      }
+      await loadRuntimeHealth();
+      renderLibraryPanel();
+      showToast('Signed out of Google.', 'success');
     }
 
     async function submitSpotifyCredentials(mode: 'save' | 'test-current') {
@@ -3826,6 +3903,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
           <section class="library-card">
+            <div class="scan-log-head"><strong>Fast Scan Server</strong></div>
+            <div class="preferences-list">
+              <label class="preference-row"><input id="server-sync-enabled" type="checkbox" ${serverRuntimeSummary()?.enabled !== false ? 'checked' : ''} /><span>Send scan results to DJ Assist Server</span></label>
+              <label class="preference-row"><input id="server-local-debug" type="checkbox" ${serverRuntimeSummary()?.localDebug ? 'checked' : ''} /><span>Local debug server</span></label>
+              <label class="preference-field">
+                <span>Server URL</span>
+                <input id="server-url" value="${esc(String(serverRuntimeSummary()?.serverUrl ?? ''))}" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="preference-field">
+                <span>Local server URL</span>
+                <input id="server-local-url" value="${esc(String(serverRuntimeSummary()?.localServerUrl ?? 'http://localhost:3001'))}" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="scan-preflight" id="server-sync-status" data-state="idle">${esc(serverRuntimeLabel())}</div>
+              <div class="scan-preflight">Google sign-in is optional. Signed-in users can fetch exact matches before local analysis; anonymous users only upload scan results.</div>
+              <div class="buttons">
+                <button type="button" class="btn" id="server-settings-save-btn">Save Server Settings</button>
+                <button type="button" class="btn" id="google-sign-in-btn">Sign in with Google</button>
+                <button type="button" class="btn secondary" id="google-sign-out-btn">Sign out</button>
+              </div>
+            </div>
+          </section>
+          <section class="library-card">
             <div class="scan-log-head"><strong>Spotify Credentials</strong></div>
             <div class="preferences-list">
               <label class="preference-field">
@@ -4027,6 +4126,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (event.key !== 'Enter') return;
         event.preventDefault();
         void submitSpotifyCredentials('save');
+      });
+      document.getElementById('server-settings-save-btn')?.addEventListener('click', () => {
+        void submitServerSettings();
+      });
+      document.getElementById('server-local-url')?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void submitServerSettings();
+      });
+      document.getElementById('google-sign-in-btn')?.addEventListener('click', () => {
+        window.location.href = '/api/auth/google/start';
+      });
+      document.getElementById('google-sign-out-btn')?.addEventListener('click', () => {
+        void logoutGoogleAuth();
       });
       document.getElementById('reset-library-data-btn')?.addEventListener('click', async () => {
         const confirmed = window.confirm('Reset the current DJ Assist library data? This clears tracks, playlists, scan history, and watched folders from the app database.');

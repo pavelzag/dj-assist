@@ -4,6 +4,7 @@ import { resolveWorkingPython } from '@/lib/scan';
 import {
   applySpotifyCredentialsToEnv,
   effectiveSpotifyCredentials,
+  serverRuntimeSummary,
 } from '@/lib/runtime-settings';
 import { getClientLogPath } from '@/lib/app-log';
 
@@ -21,6 +22,7 @@ export async function GET() {
   const databasePath = getDatabasePath();
   const spotify = await effectiveSpotifyCredentials();
   if (spotify.credentials) applySpotifyCredentialsToEnv(spotify.credentials);
+  const server = await serverRuntimeSummary();
 
   return NextResponse.json({
     ok: true,
@@ -36,6 +38,7 @@ export async function GET() {
       database_driver: 'sqlite',
       spotify_missing: spotify.summary.missing,
       spotify: spotify.summary,
+      server,
       client_log_path: getClientLogPath(),
       cwd: process.cwd(),
     },

@@ -2,6 +2,11 @@ import { existsSync } from 'node:fs';
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { join } from 'node:path';
+import {
+  effectiveServerSettings,
+  effectiveUserData,
+  getClientId,
+} from '@/lib/runtime-settings';
 
 export interface ScanRequest {
   directory: string;
@@ -145,10 +150,21 @@ export async function spawnScanProcess(request: ScanRequest): Promise<ScanProces
   }
 
   const python = await resolveWorkingPython();
+  const server = await effectiveServerSettings();
+  const userData = await effectiveUserData();
+  const clientId = await getClientId();
+  const serverUrl = server.localDebug ? server.localServerUrl : server.serverUrl;
   const command = [python, ...buildScanArgs(request)];
   const child = spawn(command[0], command.slice(1), {
     cwd: repoRoot(),
-    env: process.env,
+    env: {
+      ...process.env,
+      DJ_ASSIST_CLIENT_ID: clientId,
+      DJ_ASSIST_SERVER_ENABLED: server.enabled ? 'true' : 'false',
+      DJ_ASSIST_SERVER_URL: serverUrl,
+      DJ_ASSIST_SERVER_LOCAL_DEBUG: server.localDebug ? 'true' : 'false',
+      DJ_ASSIST_USER_DATA: JSON.stringify(userData),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
