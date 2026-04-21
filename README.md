@@ -213,11 +213,14 @@ All configuration is via environment variables (`.env.local` for local dev).
 | `DJ_ASSIST_DB_PATH` | `~/.dj_assist/dj_assist.db` | Path to the SQLite database |
 | `DJ_ASSIST_DATABASE_URL` | — | PostgreSQL connection string; overrides SQLite |
 | `PYTHON_EXECUTABLE` | `python3` | Path to the Python interpreter used for scans |
+| `GOOGLE_CLIENT_ID` | — | Google OAuth Desktop App client ID used for PKCE sign-in |
 | `SPOTIFY_CLIENT_ID` | — | Spotify API client ID for metadata enrichment |
 | `SPOTIFY_CLIENT_SECRET` | — | Spotify API client secret |
 | `ACOUSTID_API_KEY` | — | AcoustID API key for fingerprint-based metadata |
 | `DJ_ASSIST_ELECTRON_PORT` | `3000` | Port the Next.js server listens on |
 | `DJ_ASSIST_ELECTRON_HOST` | `127.0.0.1` | Host the Next.js server binds to |
+
+Google sign-in expects a Google OAuth client of type `Desktop app`. Only `GOOGLE_CLIENT_ID` is required; DJ Assist uses PKCE and does not rely on a distributed client secret.
 
 Spotify credentials can also be saved from within the app under **Settings → Spotify**.
 

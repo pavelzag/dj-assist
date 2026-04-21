@@ -725,6 +725,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       showToast('Signed out of Google.', 'success');
     }
 
+    async function signInWithGoogle() {
+      const targetUrl = new URL('/api/auth/google/start', window.location.href).toString();
+      const desktopApi = (window as Window & {
+        djAssistDesktop?: {
+          openExternal?: (url: string) => Promise<boolean>;
+        };
+      }).djAssistDesktop;
+      if (desktopApi?.openExternal) {
+        const result = await desktopApi.openExternal(targetUrl);
+        if (result === false) {
+          showToast('Could not open the browser for Google sign-in.', 'error');
+        }
+        return;
+      }
+      window.location.href = targetUrl;
+    }
+
     async function submitSpotifyCredentials(mode: 'save' | 'test-current') {
       if (spotifySettingsBusy) return;
       spotifySettingsBusy = true;
@@ -4136,7 +4153,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         void submitServerSettings();
       });
       document.getElementById('google-sign-in-btn')?.addEventListener('click', () => {
-        window.location.href = '/api/auth/google/start';
+        void signInWithGoogle();
       });
       document.getElementById('google-sign-out-btn')?.addEventListener('click', () => {
         void logoutGoogleAuth();
@@ -5320,6 +5337,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     void loadLibraryOverview();
     void loadRuntimeHealth();
     void loadWatchFolders();
+    const handleWindowFocus = () => {
+      void loadRuntimeHealth();
+    };
+    window.addEventListener('focus', handleWindowFocus);
     void loadScanHistory().then(async () => {
       const running = scanHistory.find((job) => ['queued', 'running'].includes(String(job.status ?? '')));
       if (running?.id) {
@@ -5338,6 +5359,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (listScrollRaf) cancelAnimationFrame(listScrollRaf);
       if (searchTimer) clearTimeout(searchTimer);
       trackDetailAbortController?.abort();
+      window.removeEventListener('focus', handleWindowFocus);
       unsubscribeQuitRequest();
     };
   }, [adapter]);

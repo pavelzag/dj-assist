@@ -24,6 +24,7 @@
     "electron:start": "node scripts/check-node.cjs && node scripts/electron-start.cjs"
   },
   "dependencies": {
+    "jose": "^6.2.2",
     "next": "^15.3.0",
     "postgres": "^3.4.5",
     "react": "^19.0.0",

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { googleAuthConfigured } from '@/lib/google-auth';
 
 export type SpotifyCredentials = {
   clientId: string;
@@ -28,9 +29,9 @@ export type AuthSettings = {
   provider: 'google';
   id: string;
   email?: string;
+  emailVerified?: boolean;
   name?: string;
   picture?: string;
-  idToken: string;
   updatedAt?: string;
 };
 
@@ -38,9 +39,9 @@ export type UserData = {
   type: 'google' | 'anonymous';
   id: string;
   email?: string;
+  emailVerified?: boolean;
   name?: string;
   picture?: string;
-  google_id_token?: string;
 };
 
 export type SpotifySettingsSummary = {
@@ -140,14 +141,14 @@ export async function clearAuthSettings(): Promise<void> {
 export async function effectiveUserData(): Promise<UserData> {
   const settings = await loadRuntimeSettings();
   const auth = settings.auth;
-  if (auth?.provider === 'google' && auth.id && auth.idToken) {
+  if (auth?.provider === 'google' && auth.id) {
     return {
       type: 'google',
       id: auth.id,
       email: auth.email,
+      emailVerified: auth.emailVerified,
       name: auth.name,
       picture: auth.picture,
-      google_id_token: auth.idToken,
     };
   }
   return {
@@ -161,6 +162,7 @@ export function publicUserSummary(user: UserData) {
     type: user.type,
     id: user.id,
     email: user.email ?? null,
+    emailVerified: user.emailVerified ?? null,
     name: user.name ?? null,
     picture: user.picture ?? null,
     canFetchServerData: user.type === 'google',
@@ -174,7 +176,7 @@ export async function serverRuntimeSummary() {
     ...server,
     activeUrl: server.localDebug ? server.localServerUrl : server.serverUrl,
     user: publicUserSummary(user),
-    googleAuthConfigured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    googleAuthConfigured: googleAuthConfigured(),
   };
 }
 
