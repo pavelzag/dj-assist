@@ -1,10 +1,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { loadProjectEnv } = require('./load-env.cjs');
 
 const repoRoot = path.join(__dirname, '..');
 const destRoot = path.join(repoRoot, 'python');
 const runtimeRoot = path.join(destRoot, 'runtime');
+
+loadProjectEnv();
 
 function resolveStandaloneRoots() {
   const explicitRoot = process.env.DJ_ASSIST_PYTHON_STANDALONE?.trim();

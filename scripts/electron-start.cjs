@@ -1,11 +1,13 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const { loadProjectEnv } = require('./load-env.cjs');
 
 function resolveElectronBinary() {
   return require('electron');
 }
 
 function main() {
+  loadProjectEnv();
   const electron = spawn(resolveElectronBinary(), ['electron/main.cjs'], {
     cwd: path.join(__dirname, '..'),
     env: {
