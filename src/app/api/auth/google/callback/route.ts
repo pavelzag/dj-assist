@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  applyGoogleOauthCredentialsToEnv,
   clearPendingGoogleAuthSession,
+  effectiveGoogleOauthCredentials,
   loadPendingGoogleAuthSession,
   saveGoogleAuth,
 } from '@/lib/runtime-settings';
 import {
-  googleClientId,
-  googleClientSecret,
   stringOrUndefined,
   verifyGoogleIdToken,
 } from '@/lib/google-auth';
@@ -14,8 +14,10 @@ import {
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
-  const clientId = googleClientId();
-  const clientSecret = googleClientSecret();
+  const googleOauth = await effectiveGoogleOauthCredentials();
+  if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
+  const clientId = String(googleOauth.credentials?.clientId ?? '').trim();
+  const clientSecret = String(googleOauth.credentials?.clientSecret ?? '').trim();
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code') ?? '';
   const state = searchParams.get('state') ?? '';

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getDatabasePath } from '@/lib/db';
 import { resolveWorkingPython } from '@/lib/scan';
 import {
+  applyGoogleOauthCredentialsToEnv,
+  effectiveGoogleOauthCredentials,
   applySpotifyCredentialsToEnv,
   effectiveSpotifyCredentials,
   serverRuntimeSummary,
@@ -22,6 +24,8 @@ export async function GET() {
   const databasePath = getDatabasePath();
   const spotify = await effectiveSpotifyCredentials();
   if (spotify.credentials) applySpotifyCredentialsToEnv(spotify.credentials);
+  const googleOauth = await effectiveGoogleOauthCredentials();
+  if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
   const server = await serverRuntimeSummary();
 
   return NextResponse.json({
@@ -38,6 +42,7 @@ export async function GET() {
       database_driver: 'sqlite',
       spotify_missing: spotify.summary.missing,
       spotify: spotify.summary,
+      google_oauth: googleOauth.summary,
       server,
       client_log_path: getClientLogPath(),
       cwd: process.cwd(),

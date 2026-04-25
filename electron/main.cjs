@@ -131,6 +131,19 @@ function readManagedSpotifySettings() {
   }
 }
 
+function readManagedGoogleOauthSettings() {
+  try {
+    const raw = fs.readFileSync(managedSettingsPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    const clientId = String(parsed?.googleOauth?.clientId ?? '').trim();
+    const clientSecret = String(parsed?.googleOauth?.clientSecret ?? '').trim();
+    if (!clientId) return null;
+    return { clientId, clientSecret: clientSecret || '' };
+  } catch {
+    return null;
+  }
+}
+
 function resolveBundledPythonPath() {
   if (process.env.PYTHON_EXECUTABLE) return process.env.PYTHON_EXECUTABLE;
   const candidates = [
@@ -207,6 +220,12 @@ function applyManagedRuntimeEnv() {
   if (spotifySettings) {
     process.env.SPOTIFY_CLIENT_ID = spotifySettings.clientId;
     process.env.SPOTIFY_CLIENT_SECRET = spotifySettings.clientSecret;
+  }
+  const googleOauthSettings = readManagedGoogleOauthSettings();
+  if (googleOauthSettings) {
+    process.env.GOOGLE_CLIENT_ID = googleOauthSettings.clientId;
+    if (googleOauthSettings.clientSecret) process.env.GOOGLE_CLIENT_SECRET = googleOauthSettings.clientSecret;
+    else delete process.env.GOOGLE_CLIENT_SECRET;
   }
   const bundledPython = resolveBundledPythonPath();
   delete process.env.DJ_ASSIST_BUNDLED_PYTHON_ERROR;

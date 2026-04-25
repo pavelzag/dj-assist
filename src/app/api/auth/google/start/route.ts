@@ -4,14 +4,19 @@ import {
   createOauthState,
   createPkceChallenge,
   createPkceVerifier,
-  googleClientId,
 } from '@/lib/google-auth';
-import { savePendingGoogleAuthSession } from '@/lib/runtime-settings';
+import {
+  applyGoogleOauthCredentialsToEnv,
+  effectiveGoogleOauthCredentials,
+  savePendingGoogleAuthSession,
+} from '@/lib/runtime-settings';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
-  const clientId = googleClientId();
+  const googleOauth = await effectiveGoogleOauthCredentials();
+  if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
+  const clientId = String(googleOauth.credentials?.clientId ?? '').trim();
   if (!clientId) {
     return redirectWithMessage(request, 'Google sign-in is not configured.');
   }

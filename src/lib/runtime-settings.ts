@@ -8,8 +8,16 @@ export type SpotifyCredentials = {
   clientSecret: string;
 };
 
+export type GoogleOauthCredentials = {
+  clientId: string;
+  clientSecret?: string;
+};
+
 type RuntimeSettings = {
   spotify?: SpotifyCredentials & {
+    updatedAt?: string;
+  };
+  googleOauth?: GoogleOauthCredentials & {
     updatedAt?: string;
   };
   server?: ServerSettings;
@@ -55,6 +63,14 @@ export type UserData = {
 };
 
 export type SpotifySettingsSummary = {
+  configured: boolean;
+  source: 'saved' | 'env' | 'none';
+  client_id_masked: string | null;
+  has_secret: boolean;
+  missing: string[];
+};
+
+export type GoogleOauthSettingsSummary = {
   configured: boolean;
   source: 'saved' | 'env' | 'none';
   client_id_masked: string | null;
@@ -243,11 +259,13 @@ export function publicUserSummary(user: UserData) {
 export async function serverRuntimeSummary() {
   const server = await effectiveServerSettings();
   const user = await effectiveUserData();
+  const googleOauth = await effectiveGoogleOauthCredentials();
   return {
     ...server,
     activeUrl: server.localDebug ? server.localServerUrl : server.serverUrl,
     user: publicUserSummary(user),
-    googleAuthConfigured: googleAuthConfigured(),
+    googleAuthConfigured: googleOauth.summary.configured || googleAuthConfigured(),
+    googleOauth: googleOauth.summary,
   };
 }
 
@@ -259,6 +277,20 @@ export async function saveSpotifySettings(credentials: SpotifyCredentials): Prom
     spotify: {
       clientId: credentials.clientId.trim(),
       clientSecret: credentials.clientSecret.trim(),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  await fs.writeFile(runtimeSettingsPath(), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+}
+
+export async function saveGoogleOauthSettings(credentials: GoogleOauthCredentials): Promise<void> {
+  await ensureSettingsDirectory();
+  const current = await loadRuntimeSettings();
+  const next: RuntimeSettings = {
+    ...current,
+    googleOauth: {
+      clientId: credentials.clientId.trim(),
+      clientSecret: credentials.clientSecret?.trim() || undefined,
       updatedAt: new Date().toISOString(),
     },
   };
@@ -282,6 +314,15 @@ export function applySpotifyCredentialsToEnv(credentials: Partial<SpotifyCredent
   }
   delete process.env.SPOTIFY_CLIENT_ID;
   delete process.env.SPOTIFY_CLIENT_SECRET;
+}
+
+export function applyGoogleOauthCredentialsToEnv(credentials: Partial<GoogleOauthCredentials> | null | undefined) {
+  const clientId = String(credentials?.clientId ?? '').trim();
+  const clientSecret = String(credentials?.clientSecret ?? '').trim();
+  if (clientId) process.env.GOOGLE_CLIENT_ID = clientId;
+  else delete process.env.GOOGLE_CLIENT_ID;
+  if (clientSecret) process.env.GOOGLE_CLIENT_SECRET = clientSecret;
+  else delete process.env.GOOGLE_CLIENT_SECRET;
 }
 
 export async function effectiveSpotifyCredentials(): Promise<{
@@ -312,6 +353,41 @@ export async function effectiveSpotifyCredentials(): Promise<{
   ];
   return {
     credentials: envId && envSecret ? { clientId: envId, clientSecret: envSecret } : null,
+    summary: {
+      configured: missing.length === 0,
+      source: missing.length === 0 ? 'env' : 'none',
+      client_id_masked: maskClientId(envId),
+      has_secret: Boolean(envSecret),
+      missing,
+    },
+  };
+}
+
+export async function effectiveGoogleOauthCredentials(): Promise<{
+  credentials: GoogleOauthCredentials | null;
+  summary: GoogleOauthSettingsSummary;
+}> {
+  const settings = await loadRuntimeSettings();
+  const savedId = String(settings.googleOauth?.clientId ?? '').trim();
+  const savedSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
+  if (savedId) {
+    return {
+      credentials: { clientId: savedId, ...(savedSecret ? { clientSecret: savedSecret } : {}) },
+      summary: {
+        configured: true,
+        source: 'saved',
+        client_id_masked: maskClientId(savedId),
+        has_secret: Boolean(savedSecret),
+        missing: [],
+      },
+    };
+  }
+
+  const envId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
+  const envSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
+  const missing = envId ? [] : ['GOOGLE_CLIENT_ID'];
+  return {
+    credentials: envId ? { clientId: envId, ...(envSecret ? { clientSecret: envSecret } : {}) } : null,
     summary: {
       configured: missing.length === 0,
       source: missing.length === 0 ? 'env' : 'none',

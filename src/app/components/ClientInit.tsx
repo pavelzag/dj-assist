@@ -145,6 +145,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let watchFolders: Record<string, unknown>[] = [];
     let runtimeHealth: Record<string, unknown> | null = null;
     let spotifySettingsBusy = false;
+    let googleOauthSettingsBusy = false;
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
     let activeQuickFilter = '';
@@ -658,6 +659,32 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       statusEl.dataset.state = state;
     }
 
+    function googleOauthRuntimeSummary() {
+      const googleOauth = runtimeHealth?.google_oauth;
+      return googleOauth && typeof googleOauth === 'object' ? googleOauth as Record<string, unknown> : null;
+    }
+
+    function googleOauthRuntimeLabel() {
+      const googleOauth = googleOauthRuntimeSummary();
+      if (!googleOauth) return 'Not configured';
+      if (googleOauth.configured) {
+        const source = String(googleOauth.source ?? 'saved');
+        const clientId = String(googleOauth.client_id_masked ?? '').trim();
+        return clientId ? `Configured from ${source} (${clientId})` : `Configured from ${source}`;
+      }
+      const missing = Array.isArray(googleOauth.missing)
+        ? googleOauth.missing.filter((value): value is string => typeof value === 'string')
+        : [];
+      return missing.length ? `Missing ${missing.join(', ')}` : 'Not configured';
+    }
+
+    function setGoogleOauthUiStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const statusEl = document.getElementById('google-oauth-status') as HTMLElement | null;
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.state = state;
+    }
+
     function serverRuntimeSummary() {
       const server = runtimeHealth?.server;
       return server && typeof server === 'object' ? server as Record<string, unknown> : null;
@@ -770,6 +797,46 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       await loadRuntimeHealth();
       renderLibraryPanel();
       showToast('Signed out of Google.', 'success');
+    }
+
+    async function submitGoogleOauthCredentials() {
+      if (googleOauthSettingsBusy) return;
+      googleOauthSettingsBusy = true;
+      const saveBtn = document.getElementById('google-oauth-save-btn') as HTMLButtonElement | null;
+      const clientIdInput = document.getElementById('google-client-id') as HTMLInputElement | null;
+      const clientSecretInput = document.getElementById('google-client-secret') as HTMLInputElement | null;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+      }
+      setGoogleOauthUiStatus('Saving Google OAuth settings…', 'saving');
+      try {
+        const response = await fetch('/api/settings/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: clientIdInput?.value.trim() ?? '',
+            clientSecret: clientSecretInput?.value.trim() ?? '',
+          }),
+        });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          setGoogleOauthUiStatus(String(payload.error ?? 'Could not save Google OAuth settings.'), 'error');
+          return;
+        }
+        if (clientSecretInput) clientSecretInput.value = '';
+        await loadRuntimeHealth();
+        setGoogleOauthUiStatus(googleOauthRuntimeLabel(), 'success');
+        showToast('Google OAuth settings updated.', 'success');
+      } catch (error) {
+        setGoogleOauthUiStatus(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        googleOauthSettingsBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save Google Settings';
+        }
+      }
     }
 
     async function signInWithGoogle() {
@@ -4094,8 +4161,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </label>
               <div class="scan-preflight" id="server-sync-status" data-state="idle">${esc(serverRuntimeLabel())}</div>
               <div class="scan-preflight">Google sign-in is optional. Signed-in users can fetch exact matches before local analysis; anonymous users only upload scan results.</div>
+              <label class="preference-field">
+                <span>Google Client ID</span>
+                <input id="google-client-id" placeholder="${esc(String(googleOauthRuntimeSummary()?.client_id_masked ?? 'Paste Google OAuth Client ID'))}" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="preference-field">
+                <span>Google Client Secret (optional)</span>
+                <input id="google-client-secret" type="password" placeholder="${googleOauthRuntimeSummary()?.has_secret ? 'Saved secret on file' : 'Paste Google OAuth Client Secret'}" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="scan-preflight" id="google-oauth-status" data-state="idle">${esc(googleOauthRuntimeLabel())}</div>
               <div class="buttons">
                 <button type="button" class="btn" id="server-settings-save-btn">Save Server Settings</button>
+                <button type="button" class="btn" id="google-oauth-save-btn">Save Google Settings</button>
                 <button type="button" class="btn" id="google-sign-in-btn">Sign in with Google</button>
                 <button type="button" class="btn secondary" id="google-sign-out-btn">Sign out</button>
               </div>
@@ -4245,6 +4322,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (event.key !== 'Enter') return;
         event.preventDefault();
         void submitSpotifyCredentials('save');
+      });
+      document.getElementById('google-oauth-save-btn')?.addEventListener('click', () => {
+        void submitGoogleOauthCredentials();
+      });
+      document.getElementById('google-client-id')?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void submitGoogleOauthCredentials();
+      });
+      document.getElementById('google-client-secret')?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void submitGoogleOauthCredentials();
       });
       document.getElementById('server-settings-save-btn')?.addEventListener('click', () => {
         void submitServerSettings();
