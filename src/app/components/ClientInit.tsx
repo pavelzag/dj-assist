@@ -826,6 +826,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
         if (clientSecretInput) clientSecretInput.value = '';
         await loadRuntimeHealth();
+        renderLibraryPanel();
         setGoogleOauthUiStatus(googleOauthRuntimeLabel(), 'success');
         showToast('Google OAuth settings updated.', 'success');
       } catch (error) {

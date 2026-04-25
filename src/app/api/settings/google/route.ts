@@ -18,8 +18,11 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const clientId = String(body.clientId ?? '').trim();
-  const clientSecret = String(body.clientSecret ?? '').trim();
+  const incomingClientId = String(body.clientId ?? '').trim();
+  const incomingClientSecret = String(body.clientSecret ?? '').trim();
+  const existingCredentials = (await effectiveGoogleOauthCredentials()).credentials;
+  const clientId = incomingClientId || String(existingCredentials?.clientId ?? '').trim();
+  const clientSecret = incomingClientSecret || String(existingCredentials?.clientSecret ?? '').trim();
 
   if (!clientId) {
     return NextResponse.json({
