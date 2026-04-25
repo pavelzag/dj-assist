@@ -62,6 +62,9 @@ export type SpotifySettingsSummary = {
   missing: string[];
 };
 
+const DEFAULT_PRODUCTION_SERVER_URL = 'https://dj-assist-server.vercel.app';
+const DEFAULT_LOCAL_SERVER_URL = 'http://localhost:3001';
+
 function envBoolean(name: string): boolean | undefined {
   const raw = process.env[name]?.trim().toLowerCase();
   if (!raw) return undefined;
@@ -110,8 +113,8 @@ export function defaultServerSettings(): ServerSettings {
   return {
     enabled: envBoolean('DJ_ASSIST_SERVER_ENABLED') ?? true,
     localDebug: envBoolean('DJ_ASSIST_SERVER_LOCAL_DEBUG') ?? false,
-    serverUrl: process.env.DJ_ASSIST_SERVER_URL?.trim() || 'https://dj-assist-server.vercel.app',
-    localServerUrl: process.env.DJ_ASSIST_LOCAL_SERVER_URL?.trim() || 'http://localhost:3001',
+    serverUrl: process.env.DJ_ASSIST_SERVER_URL?.trim() || DEFAULT_PRODUCTION_SERVER_URL,
+    localServerUrl: process.env.DJ_ASSIST_LOCAL_SERVER_URL?.trim() || DEFAULT_LOCAL_SERVER_URL,
   };
 }
 
@@ -123,10 +126,26 @@ export async function effectiveServerSettings(): Promise<ServerSettings> {
   };
   const envEnabled = envBoolean('DJ_ASSIST_SERVER_ENABLED');
   const envLocalDebug = envBoolean('DJ_ASSIST_SERVER_LOCAL_DEBUG');
+  const envServerUrl = process.env.DJ_ASSIST_SERVER_URL?.trim();
+  const envLocalServerUrl = process.env.DJ_ASSIST_LOCAL_SERVER_URL?.trim();
   if (envEnabled !== undefined) resolved.enabled = envEnabled;
   if (envLocalDebug !== undefined) resolved.localDebug = envLocalDebug;
-  if (process.env.DJ_ASSIST_SERVER_URL?.trim()) resolved.serverUrl = process.env.DJ_ASSIST_SERVER_URL.trim();
-  if (process.env.DJ_ASSIST_LOCAL_SERVER_URL?.trim()) resolved.localServerUrl = process.env.DJ_ASSIST_LOCAL_SERVER_URL.trim();
+  if (envServerUrl) resolved.serverUrl = envServerUrl;
+  if (envLocalServerUrl) resolved.localServerUrl = envLocalServerUrl;
+
+  const savedServerUrl = String(settings.server?.serverUrl ?? '').trim();
+  const savedLocalServerUrl = String(settings.server?.localServerUrl ?? '').trim();
+  const looksLikeLegacyLocalSelection =
+    settings.server?.localDebug === true &&
+    (!savedServerUrl || savedServerUrl === DEFAULT_PRODUCTION_SERVER_URL) &&
+    (!savedLocalServerUrl || savedLocalServerUrl === DEFAULT_LOCAL_SERVER_URL);
+
+  if (!envServerUrl && !envLocalServerUrl && envLocalDebug === undefined && looksLikeLegacyLocalSelection) {
+    resolved.localDebug = false;
+    resolved.serverUrl = DEFAULT_PRODUCTION_SERVER_URL;
+    resolved.localServerUrl = DEFAULT_LOCAL_SERVER_URL;
+  }
+
   return resolved;
 }
 
