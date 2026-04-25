@@ -79,6 +79,10 @@ function mediaUrlForPath(rawPath) {
   return `${MEDIA_PROTOCOL}://track?path=${encodeURIComponent(filePath)}`;
 }
 
+function currentAppUrl() {
+  return process.env.DJ_ASSIST_ELECTRON_URL || DEFAULT_URL;
+}
+
 function shouldManageServer() {
   if (process.env.DJ_ASSIST_ELECTRON_MANAGE_SERVER) {
     return process.env.DJ_ASSIST_ELECTRON_MANAGE_SERVER === '1';
@@ -622,6 +626,10 @@ ipcMain.handle('desktop:open-external', async (_event, targetUrl) => {
   } catch {
     return false;
   }
+});
+
+ipcMain.handle('desktop:get-app-url', async () => {
+  return currentAppUrl();
 });
 
 ipcMain.handle('desktop:confirm-quit', async () => {

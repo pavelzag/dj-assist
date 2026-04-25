@@ -781,10 +781,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const desktopApi = (window as Window & {
         djAssistDesktop?: {
           appUrl?: string | null;
+          getAppUrl?: () => Promise<string | null>;
           openExternal?: (url: string) => Promise<boolean>;
         };
       }).djAssistDesktop;
-      const appBaseUrl = String(desktopApi?.appUrl ?? '').trim() || window.location.origin;
+      const dynamicAppUrl = desktopApi?.getAppUrl ? await desktopApi.getAppUrl().catch(() => null) : null;
+      const appBaseUrl =
+        String(dynamicAppUrl ?? '').trim() ||
+        String(desktopApi?.appUrl ?? '').trim() ||
+        window.location.origin;
       const targetUrl = new URL('/api/auth/google/start', appBaseUrl).toString();
       if (desktopApi?.openExternal) {
         const result = await desktopApi.openExternal(targetUrl);

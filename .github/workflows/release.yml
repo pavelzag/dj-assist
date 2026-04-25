@@ -1,4 +1,7 @@
 name: Release Desktop App
+run-name: >-
+  Release Desktop App
+  (${{ github.event_name == 'workflow_dispatch' && (inputs.tag || 'manual') || github.ref_name }})
 
 on:
   push:
@@ -21,6 +24,8 @@ jobs:
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       USE_HARD_LINKS: 'false'
+      ELECTRON_CACHE: ~/Library/Caches/electron
+      ELECTRON_BUILDER_CACHE: ~/Library/Caches/electron-builder
     steps:
       - name: Checkout current ref
         uses: actions/checkout@v4
@@ -41,8 +46,31 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Restore Electron caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Install dependencies
-        run: npm ci
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "npm ci attempt ${attempt}/3"
+            if npm ci; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "npm ci failed, likely due to a transient package or Electron download error. Retrying..."
+            rm -rf node_modules
+            sleep 10
+          done
 
       - name: Install Chromaprint
         run: brew install chromaprint
