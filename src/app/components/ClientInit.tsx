@@ -3143,6 +3143,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const coverUrl = (track.album_art_url as string) || '';
       const coverLabel = (track.album ?? track.title ?? 'Unknown') as string;
       const trackId = track.id as number;
+      const streamProbeUrl = `/api/tracks/${trackId}/stream`;
+      const playbackUrl = adapter.mediaUrlForPath?.(String(track.path ?? '')) || streamProbeUrl;
       nextTracksByTrackId[trackId] = Array.isArray(payload.next_tracks) ? payload.next_tracks as Record<string, unknown>[] : [];
       const mult = getMult(trackId);
       const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
@@ -3231,7 +3233,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             `}
           </div>
-          <audio id="local-audio" class="local-audio-hidden" preload="metadata" src="${esc(`/api/tracks/${track.id}/stream`)}"></audio>
+          <audio id="local-audio" class="local-audio-hidden" preload="auto" data-track-id="${trackId}" data-probe-url="${esc(streamProbeUrl)}" src="${esc(playbackUrl)}"></audio>
           <div class="waveform-panel detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview">
             <canvas class="waveform-canvas" id="waveform-${track.id}"></canvas>
           </div>
@@ -3557,6 +3559,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           localAudio.muted = audioMuted;
           updateNowPlayingBar(localAudio);
         });
+        localAudio.addEventListener('waiting', () => {
+          appendScanLog(`Playback buffer waiting for track ${trackId}`, 'warning', {
+            category: 'playback',
+            trackId,
+            currentTime: Number(localAudio.currentTime ?? 0),
+            readyState: Number(localAudio.readyState ?? 0),
+            networkState: Number(localAudio.networkState ?? 0),
+          });
+        });
+        localAudio.addEventListener('stalled', () => {
+          appendScanLog(`Playback stalled for track ${trackId}`, 'warning', {
+            category: 'playback',
+            trackId,
+            currentTime: Number(localAudio.currentTime ?? 0),
+            readyState: Number(localAudio.readyState ?? 0),
+            networkState: Number(localAudio.networkState ?? 0),
+          });
+        });
         localAudio.addEventListener('error', () => {
           const mediaError = localAudio.error;
           const code = mediaError?.code;
@@ -3568,7 +3588,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             'Audio failed to load';
           showToast(label, 'error');
           updateNowPlayingBar(localAudio);
-          fetch(`/api/tracks/${trackId}/stream`, { headers: { Range: 'bytes=0-0' } })
+          const probeUrl = localAudio.dataset.probeUrl || streamProbeUrl;
+          fetch(probeUrl, { headers: { Range: 'bytes=0-0' } })
             .then(async (response) => {
               if (response.status !== 404) return;
               const payload = await response.json().catch(() => ({}));
@@ -3609,7 +3630,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       syncMuteButton(localAudio);
       if (localAudio) {
-        void drawWaveform(trackId, `/api/tracks/${track.id}/stream`, [], localAudio);
+        void drawWaveform(trackId, playbackUrl, [], localAudio);
       }
       reanalyzeBpmBtn?.addEventListener('click', async () => {
         const previousLabel = reanalyzeBpmBtn.textContent ?? 'Reanalyze BPM';
@@ -4860,8 +4881,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (activeTrackId == null) return;
       const activeId = String(activeTrackId);
       const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
-      const expectedStreamPath = `/api/tracks/${activeId}/stream`;
-      const audioMatchesSelection = Boolean(audio?.getAttribute('src')?.includes(expectedStreamPath));
+      const audioMatchesSelection = String(audio?.dataset.trackId ?? '') === activeId;
       if (selectedDetailTrackId !== activeTrackId || !audio || !audioMatchesSelection) {
         void selectTrack(activeId, true, true, 0);
         return;

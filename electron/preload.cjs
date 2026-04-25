@@ -3,6 +3,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('djAssistDesktop', {
   platform: process.platform,
   appUrl: process.env.DJ_ASSIST_ELECTRON_URL || null,
+  mediaUrlForPath: (targetPath) => {
+    const value = String(targetPath ?? '').trim();
+    if (!value) return null;
+    return `djassist-media://track?path=${encodeURIComponent(value)}`;
+  },
   pickDirectory: () => ipcRenderer.invoke('desktop:pick-directory'),
   showItemInFolder: (targetPath) => ipcRenderer.invoke('desktop:show-item-in-folder', targetPath),
   openExternal: (targetUrl) => ipcRenderer.invoke('desktop:open-external', targetUrl),

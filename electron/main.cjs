@@ -2,9 +2,23 @@ const path = require('node:path');
 const net = require('node:net');
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } = require('electron');
+const { pathToFileURL } = require('node:url');
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, shell } = require('electron');
 
 const APP_ROOT = path.join(__dirname, '..');
+const MEDIA_PROTOCOL = 'djassist-media';
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: MEDIA_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+]);
 
 function loadManagedProjectEnv() {
   try {
@@ -48,6 +62,21 @@ function appIconDataUrl() {
   } catch {
     return '';
   }
+}
+
+function resolveMediaPath(rawPath) {
+  const targetPath = String(rawPath ?? '').trim();
+  if (!targetPath) return null;
+  const expanded = targetPath.startsWith('~')
+    ? path.join(process.env.HOME ?? '', targetPath.slice(1))
+    : targetPath;
+  return path.resolve(expanded);
+}
+
+function mediaUrlForPath(rawPath) {
+  const filePath = resolveMediaPath(rawPath);
+  if (!filePath) return null;
+  return `${MEDIA_PROTOCOL}://track?path=${encodeURIComponent(filePath)}`;
 }
 
 function shouldManageServer() {
@@ -419,6 +448,28 @@ function stopManagedServer() {
   }
 }
 
+function registerMediaProtocol() {
+  protocol.handle(MEDIA_PROTOCOL, async (request) => {
+    try {
+      const parsed = new URL(request.url);
+      const filePath = resolveMediaPath(parsed.searchParams.get('path'));
+      if (!filePath) {
+        return new Response('missing media path', { status: 400 });
+      }
+      if (!fs.existsSync(filePath)) {
+        return new Response('media file not found', { status: 404 });
+      }
+      return fetch(pathToFileURL(filePath).toString(), {
+        headers: request.headers,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      appendMainLog(`media protocol error: ${message}`);
+      return new Response('media load failed', { status: 500 });
+    }
+  });
+}
+
 function confirmQuit() {
   if (quitConfirmed || quitPromptOpen) return quitConfirmed;
   quitPromptOpen = true;
@@ -587,6 +638,7 @@ ipcMain.handle('desktop:cancel-quit', async () => {
 
 app.whenReady().then(() => {
   app.setName('DJ Assist');
+  registerMediaProtocol();
   appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
   applyManagedRuntimeEnv();
   appendMainLog(
