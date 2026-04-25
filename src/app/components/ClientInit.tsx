@@ -778,12 +778,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       } catch {
         // ignore local storage failures
       }
-      const targetUrl = new URL('/api/auth/google/start', window.location.href).toString();
       const desktopApi = (window as Window & {
         djAssistDesktop?: {
+          appUrl?: string | null;
           openExternal?: (url: string) => Promise<boolean>;
         };
       }).djAssistDesktop;
+      const appBaseUrl = String(desktopApi?.appUrl ?? '').trim() || window.location.origin;
+      const targetUrl = new URL('/api/auth/google/start', appBaseUrl).toString();
       if (desktopApi?.openExternal) {
         const result = await desktopApi.openExternal(targetUrl);
         if (result === false) {
