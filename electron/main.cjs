@@ -1,5 +1,4 @@
 const path = require('node:path');
-const http = require('node:http');
 const net = require('node:net');
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
@@ -30,7 +29,7 @@ function loadManagedProjectEnv() {
 loadManagedProjectEnv();
 
 const DEFAULT_URL = 'http://127.0.0.1:3000/';
-const DEFAULT_HOST = process.env.DJ_ASSIST_ELECTRON_HOST || '127.0.0.1';
+const DEFAULT_HOST = normalizeLoopbackHost(process.env.DJ_ASSIST_ELECTRON_HOST || '127.0.0.1');
 const DEFAULT_PORT = process.env.DJ_ASSIST_ELECTRON_PORT || '3000';
 const MIN_SPLASH_MS = 3000;
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'app-icon.png');
@@ -190,27 +189,6 @@ function applyManagedRuntimeEnv() {
   process.env.PYTHONNOUSERSITE = '1';
 }
 
-function waitForServer(url, attempts = 120) {
-  return new Promise((resolve, reject) => {
-    let remaining = attempts;
-    const probe = () => {
-      const request = http.get(url, (response) => {
-        response.resume();
-        resolve();
-      });
-      request.on('error', () => {
-        remaining -= 1;
-        if (remaining <= 0) {
-          reject(new Error(`Timed out waiting for ${url}`));
-          return;
-        }
-        setTimeout(probe, 500);
-      });
-    };
-    probe();
-  });
-}
-
 function findAvailablePort(preferredPort) {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -314,18 +292,62 @@ function showDiagnosticWindow(title, intro, details = '') {
   target.show();
 }
 
-function isServerReachable(url) {
+function normalizeLoopbackHost(value) {
+  const host = String(value || '').trim().toLowerCase();
+  if (!host) return '127.0.0.1';
+  if (host === 'localhost' || host === '::1' || host === '[::1]') return '127.0.0.1';
+  return host;
+}
+
+function parseHostPort(targetUrl) {
+  const parsed = new URL(targetUrl);
+  const protocol = parsed.protocol || 'http:';
+  const fallbackPort = protocol === 'https:' ? 443 : 80;
+  return {
+    host: normalizeLoopbackHost(parsed.hostname),
+    port: Number(parsed.port || fallbackPort),
+  };
+}
+
+function probeTcpPort(host, port, timeoutMs = 750) {
   return new Promise((resolve) => {
-    const request = http.get(url, (response) => {
-      response.resume();
-      resolve(true);
-    });
-    request.on('error', () => resolve(false));
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ok);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
   });
+}
+
+async function isServerReachable(url) {
+  const { host, port } = parseHostPort(url);
+  return probeTcpPort(host, port);
 }
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForServer(url, attempts = 120) {
+  const { host, port } = parseHostPort(url);
+  let remaining = attempts;
+  while (remaining > 0) {
+    if (await probeTcpPort(host, port)) return;
+    remaining -= 1;
+    if (remaining <= 0) break;
+    await delay(500);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
 }
 
 async function ensureManagedServer() {
