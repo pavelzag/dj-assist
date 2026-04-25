@@ -64,13 +64,34 @@ function resolvePythonCandidates(): string[] {
   const candidates: string[] = [];
   const localVenvPython = join(repoRoot(), '.venv', 'bin', 'python');
   const explicit = process.env.PYTHON_EXECUTABLE?.trim();
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const bundledCandidates = [
+    resourcesPath ? join(resourcesPath, 'python', 'runtime', 'bin', 'python3.11') : '',
+    resourcesPath ? join(resourcesPath, 'python', 'runtime', 'bin', 'python3') : '',
+    resourcesPath ? join(resourcesPath, 'python', 'runtime', 'bin', 'python') : '',
+    join(repoRoot(), '..', '..', 'python', 'runtime', 'bin', 'python3.11'),
+    join(repoRoot(), '..', '..', 'python', 'runtime', 'bin', 'python3'),
+    join(repoRoot(), '..', '..', 'python', 'runtime', 'bin', 'python'),
+    join(repoRoot(), 'python', 'runtime', 'bin', 'python3.11'),
+    join(repoRoot(), 'python', 'runtime', 'bin', 'python3'),
+    join(repoRoot(), 'python', 'runtime', 'bin', 'python'),
+  ].filter(Boolean);
 
   if (explicit) candidates.push(explicit);
+  for (const candidate of bundledCandidates) {
+    if (existsSync(candidate)) candidates.push(candidate);
+  }
   candidates.push('python3');
   candidates.push('python');
   if (existsSync(localVenvPython)) candidates.push(localVenvPython);
 
   return [...new Set(candidates)];
+}
+
+function isBundledPythonCandidate(python: string): boolean {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (resourcesPath && python.startsWith(join(resourcesPath, 'python'))) return true;
+  return python.includes('/python/runtime/bin/python');
 }
 
 function buildScanArgs(request: ScanRequest): string[] {
@@ -128,7 +149,7 @@ export async function resolveWorkingPython(): Promise<string> {
     lastError = trimmedOutput || lastError;
     lastDetails = { python, output: result.output.trim() };
 
-    if (explicit && python === explicit) {
+    if ((explicit && python === explicit) || isBundledPythonCandidate(python)) {
       throw new ScanSetupError(lastError, lastDetails);
     }
 

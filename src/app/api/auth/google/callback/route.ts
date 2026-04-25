@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { saveGoogleAuth } from '@/lib/runtime-settings';
 import {
-  GOOGLE_OAUTH_NONCE_COOKIE,
-  GOOGLE_OAUTH_STATE_COOKIE,
-  GOOGLE_OAUTH_VERIFIER_COOKIE,
+  clearPendingGoogleAuthSession,
+  loadPendingGoogleAuthSession,
+  saveGoogleAuth,
+} from '@/lib/runtime-settings';
+import {
   googleClientId,
+  googleClientSecret,
   stringOrUndefined,
   verifyGoogleIdToken,
 } from '@/lib/google-auth';
@@ -13,23 +15,27 @@ export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   const clientId = googleClientId();
+  const clientSecret = googleClientSecret();
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code') ?? '';
   const state = searchParams.get('state') ?? '';
   const oauthError = searchParams.get('error') ?? '';
-  const expectedState = request.cookies.get(GOOGLE_OAUTH_STATE_COOKIE)?.value ?? '';
-  const verifier = request.cookies.get(GOOGLE_OAUTH_VERIFIER_COOKIE)?.value ?? '';
-  const expectedNonce = request.cookies.get(GOOGLE_OAUTH_NONCE_COOKIE)?.value ?? '';
+  const pendingAuth = await loadPendingGoogleAuthSession();
+  const expectedState = pendingAuth?.state ?? '';
+  const verifier = pendingAuth?.verifier ?? '';
+  const expectedNonce = pendingAuth?.nonce ?? '';
 
   if (!clientId) {
     return authResultResponse(request, 'error', 'Google sign-in is not configured.');
   }
 
   if (oauthError) {
+    await clearPendingGoogleAuthSession();
     return authResultResponse(request, 'error', googleErrorMessage(oauthError));
   }
 
   if (!code || !state || !expectedState || state !== expectedState || !verifier || !expectedNonce) {
+    await clearPendingGoogleAuthSession();
     return authResultResponse(request, 'error', 'Google sign-in could not be verified.');
   }
 
@@ -39,6 +45,7 @@ export async function GET(request: NextRequest) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: clientId,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
       code,
       code_verifier: verifier,
       grant_type: 'authorization_code',
@@ -48,12 +55,14 @@ export async function GET(request: NextRequest) {
   });
 
   if (!tokenResponse.ok) {
+    await clearPendingGoogleAuthSession();
     return authResultResponse(request, 'error', await tokenFailureMessage(tokenResponse));
   }
 
   const tokens = await tokenResponse.json() as Record<string, unknown>;
   const idToken = String(tokens.id_token ?? '').trim();
   if (!idToken) {
+    await clearPendingGoogleAuthSession();
     return authResultResponse(request, 'error', 'Google sign-in returned no user identity.');
   }
 
@@ -70,8 +79,11 @@ export async function GET(request: NextRequest) {
       emailVerified: identity.emailVerified,
       name: stringOrUndefined(identity.name),
       picture: stringOrUndefined(identity.picture),
+      idToken,
     });
+    await clearPendingGoogleAuthSession();
   } catch (error) {
+    await clearPendingGoogleAuthSession();
     return authResultResponse(
       request,
       'error',
@@ -118,9 +130,6 @@ function authResultResponse(request: NextRequest, kind: 'success' | 'error', mes
       },
     },
   );
-  response.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
-  response.cookies.delete(GOOGLE_OAUTH_VERIFIER_COOKIE);
-  response.cookies.delete(GOOGLE_OAUTH_NONCE_COOKIE);
   return response;
 }
 

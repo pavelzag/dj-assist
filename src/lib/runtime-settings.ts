@@ -14,6 +14,7 @@ type RuntimeSettings = {
   };
   server?: ServerSettings;
   auth?: AuthSettings;
+  pendingGoogleAuth?: PendingGoogleAuthSession;
   clientId?: string;
 };
 
@@ -32,7 +33,15 @@ export type AuthSettings = {
   emailVerified?: boolean;
   name?: string;
   picture?: string;
+  idToken: string;
   updatedAt?: string;
+};
+
+export type PendingGoogleAuthSession = {
+  state: string;
+  verifier: string;
+  nonce: string;
+  createdAt: string;
 };
 
 export type UserData = {
@@ -42,6 +51,7 @@ export type UserData = {
   emailVerified?: boolean;
   name?: string;
   picture?: string;
+  google_id_token?: string;
 };
 
 export type SpotifySettingsSummary = {
@@ -51,6 +61,14 @@ export type SpotifySettingsSummary = {
   has_secret: boolean;
   missing: string[];
 };
+
+function envBoolean(name: string): boolean | undefined {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return undefined;
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return undefined;
+}
 
 function settingsDirectory(): string {
   return process.env.DJ_ASSIST_CONFIG_DIR?.trim() || process.cwd();
@@ -90,8 +108,8 @@ export async function getClientId(): Promise<string> {
 
 export function defaultServerSettings(): ServerSettings {
   return {
-    enabled: true,
-    localDebug: false,
+    enabled: envBoolean('DJ_ASSIST_SERVER_ENABLED') ?? true,
+    localDebug: envBoolean('DJ_ASSIST_SERVER_LOCAL_DEBUG') ?? false,
     serverUrl: process.env.DJ_ASSIST_SERVER_URL?.trim() || 'https://dj-assist-server.vercel.app',
     localServerUrl: process.env.DJ_ASSIST_LOCAL_SERVER_URL?.trim() || 'http://localhost:3001',
   };
@@ -99,10 +117,17 @@ export function defaultServerSettings(): ServerSettings {
 
 export async function effectiveServerSettings(): Promise<ServerSettings> {
   const settings = await loadRuntimeSettings();
-  return {
+  const resolved = {
     ...defaultServerSettings(),
     ...settings.server,
   };
+  const envEnabled = envBoolean('DJ_ASSIST_SERVER_ENABLED');
+  const envLocalDebug = envBoolean('DJ_ASSIST_SERVER_LOCAL_DEBUG');
+  if (envEnabled !== undefined) resolved.enabled = envEnabled;
+  if (envLocalDebug !== undefined) resolved.localDebug = envLocalDebug;
+  if (process.env.DJ_ASSIST_SERVER_URL?.trim()) resolved.serverUrl = process.env.DJ_ASSIST_SERVER_URL.trim();
+  if (process.env.DJ_ASSIST_LOCAL_SERVER_URL?.trim()) resolved.localServerUrl = process.env.DJ_ASSIST_LOCAL_SERVER_URL.trim();
+  return resolved;
 }
 
 export async function saveServerSettings(input: Partial<ServerSettings>): Promise<ServerSettings> {
@@ -138,6 +163,32 @@ export async function clearAuthSettings(): Promise<void> {
   await saveRuntimeSettings(next);
 }
 
+export async function savePendingGoogleAuthSession(session: Omit<PendingGoogleAuthSession, 'createdAt'>): Promise<void> {
+  const current = await loadRuntimeSettings();
+  await saveRuntimeSettings({
+    ...current,
+    pendingGoogleAuth: {
+      ...session,
+      createdAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function loadPendingGoogleAuthSession(): Promise<PendingGoogleAuthSession | null> {
+  const current = await loadRuntimeSettings();
+  const session = current.pendingGoogleAuth;
+  if (!session?.state || !session.verifier || !session.nonce) return null;
+  return session;
+}
+
+export async function clearPendingGoogleAuthSession(): Promise<void> {
+  const current = await loadRuntimeSettings();
+  if (!current.pendingGoogleAuth) return;
+  const next = { ...current };
+  delete next.pendingGoogleAuth;
+  await saveRuntimeSettings(next);
+}
+
 export async function effectiveUserData(): Promise<UserData> {
   const settings = await loadRuntimeSettings();
   const auth = settings.auth;
@@ -149,6 +200,7 @@ export async function effectiveUserData(): Promise<UserData> {
       emailVerified: auth.emailVerified,
       name: auth.name,
       picture: auth.picture,
+      google_id_token: auth.idToken,
     };
   }
   return {

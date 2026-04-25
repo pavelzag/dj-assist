@@ -68,7 +68,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const cancelQuitAppBtn = document.getElementById('cancel-quit-app-btn') as HTMLButtonElement | null;
     const confirmQuitAppBtn = document.getElementById('confirm-quit-app-btn') as HTMLButtonElement | null;
     const tapBpmModal = document.getElementById('tap-bpm-modal') as HTMLElement | null;
+    const googleAuthUpsellModal = document.getElementById('google-auth-upsell-modal') as HTMLElement | null;
     const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
+    const closeGoogleAuthUpsellBtn = document.getElementById('close-google-auth-upsell') as HTMLButtonElement | null;
     const tapBpmTrackLabelEl = document.getElementById('tap-bpm-track-label') as HTMLElement | null;
     const tapBpmValueEl = document.getElementById('tap-bpm-value') as HTMLElement | null;
     const tapBpmCountEl = document.getElementById('tap-bpm-count') as HTMLElement | null;
@@ -89,8 +91,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const toastStack = document.getElementById('toast-stack') as HTMLElement;
     const quickChooseFolderBtn = document.getElementById('quick-choose-folder-btn') as HTMLButtonElement | null;
     const quickStartScanBtn = document.getElementById('quick-start-scan-btn') as HTMLButtonElement | null;
-    const quickFastScanEl = document.getElementById('quick-fast-scan') as HTMLInputElement | null;
-    const quickFullRescanEl = document.getElementById('quick-full-rescan') as HTMLInputElement | null;
 
     // ── State ─────────────────────────────────────────────────────────────────
     const activeTrackKey = 'dj-assist-active-track-id';
@@ -98,9 +98,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const listDensityKey = 'dj-assist-list-density';
     const preferencesKey = 'dj-assist-preferences';
     const recentNewTrackIdsKey = 'dj-assist-recent-new-track-ids';
+    const googleAuthUpsellDismissedKey = 'dj-assist-google-auth-upsell-dismissed';
+    const activityScanLogCollapsedKey = 'dj-assist-activity-scan-log-collapsed';
+    const frontendLogCollapsedKey = 'dj-assist-frontend-log-collapsed';
     type Preferences = {
-      defaultFullRescan: boolean;
-      defaultFastScan: boolean;
       autoplayOnSelect: boolean;
       loadLibraryOnStartup: boolean;
       defaultListDensity: 'comfortable' | 'compact';
@@ -114,8 +115,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       listShowRecent: boolean;
     };
     const defaultPreferences: Preferences = {
-      defaultFullRescan: false,
-      defaultFastScan: false,
       autoplayOnSelect: true,
       loadLibraryOnStartup: true,
       defaultListDensity: 'comfortable',
@@ -161,12 +160,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let playbackQueue: number[] = [];
     let scanLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let activityLogAutoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+    let googleAuthUpsellEvaluated = false;
     let pendingScanLogEntries: Array<{
       message: string;
       level: 'info' | 'warning' | 'error' | 'success';
       timestamp: string;
       timestampLabel: string;
     }> = [];
+    let recentServerCallEntries: Array<{
+      message: string;
+      level: 'info' | 'warning' | 'error' | 'success';
+      timestamp: string;
+      timestampLabel: string;
+      trackLabel: string;
+      detail: string;
+    }> = [];
+    let frontendLogSignature = '';
+    let frontendLogPathLabel = '';
+    let frontendLogRefreshInFlight = false;
     const recentScanLogSignatures = new Map<string, number>();
     let queuedRefreshMode: 'light' | 'full' | null = null;
     let commandPaletteResults: Array<{ label: string; meta: string; kind: 'command' | 'track' | 'artist'; run: () => void }> = [];
@@ -232,8 +243,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       try {
         const parsed = JSON.parse(value) as Partial<Preferences>;
         return {
-          defaultFullRescan: Boolean(parsed.defaultFullRescan),
-          defaultFastScan: Boolean(parsed.defaultFastScan),
           autoplayOnSelect: parsed.autoplayOnSelect !== false,
           loadLibraryOnStartup: parsed.loadLibraryOnStartup !== false,
           defaultListDensity: parsed.defaultListDensity === 'compact' ? 'compact' : 'comfortable',
@@ -671,6 +680,44 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       statusEl.dataset.state = state;
     }
 
+    function hasDismissedGoogleAuthUpsell() {
+      try {
+        return localStorage.getItem(googleAuthUpsellDismissedKey) === '1';
+      } catch {
+        return true;
+      }
+    }
+
+    function dismissGoogleAuthUpsell() {
+      try {
+        localStorage.setItem(googleAuthUpsellDismissedKey, '1');
+      } catch {
+        // ignore local storage failures
+      }
+      closeModal(googleAuthUpsellModal);
+    }
+
+    function maybeOpenGoogleAuthUpsell() {
+      if (googleAuthUpsellEvaluated) return;
+      const server = serverRuntimeSummary();
+      const user = server?.user && typeof server.user === 'object' ? server.user as Record<string, unknown> : null;
+      if (!server || server.googleAuthConfigured !== true) return;
+      if (user?.type === 'google') {
+        googleAuthUpsellEvaluated = true;
+        return;
+      }
+      if (hasDismissedGoogleAuthUpsell()) {
+        googleAuthUpsellEvaluated = true;
+        return;
+      }
+      googleAuthUpsellEvaluated = true;
+      const statusEl = document.getElementById('google-auth-upsell-status') as HTMLElement | null;
+      if (statusEl) {
+        statusEl.textContent = 'Continue without signing in if you want, but backend-powered quick scan will stay unavailable.';
+      }
+      openModal(googleAuthUpsellModal);
+    }
+
     async function submitServerSettings() {
       if (serverSettingsBusy) return;
       serverSettingsBusy = true;
@@ -726,6 +773,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     async function signInWithGoogle() {
+      try {
+        localStorage.setItem(googleAuthUpsellDismissedKey, '1');
+      } catch {
+        // ignore local storage failures
+      }
       const targetUrl = new URL('/api/auth/google/start', window.location.href).toString();
       const desktopApi = (window as Window & {
         djAssistDesktop?: {
@@ -809,8 +861,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       const name = directory.split(/[\\/]/).filter(Boolean).pop() ?? directory;
-      const mode = quickFastScanEl?.checked ? ' · Fast scan mode' : '';
-      scanPreflightEl.textContent = `Music folder: ${name}${mode}`;
+      scanPreflightEl.textContent = `Music folder: ${name}`;
     }
 
     function setListDensity(density: string) {
@@ -892,7 +943,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const commands: Array<{ label: string; meta: string; run: () => void }> = [
         { label: 'Choose Folder', meta: 'Scan', run: () => void pickDirectoryAndPrefill() },
         { label: 'Start Scan', meta: 'Scan', run: () => void triggerScan() },
-        { label: 'Toggle Full Rescan', meta: 'Scan', run: () => { if (quickFullRescanEl) quickFullRescanEl.checked = !quickFullRescanEl.checked; } },
         { label: 'View New Tracks', meta: 'Filter', run: () => setActiveQuickFilter('new') },
         { label: 'Needs Attention', meta: 'Review', run: () => startReviewMode('attention') },
         { label: 'Review Missing Art', meta: 'Review', run: () => startReviewMode('art') },
@@ -1467,6 +1517,56 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
+    function readCollapsedState(key: string, fallback: boolean): boolean {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw == null) return fallback;
+        return raw === '1';
+      } catch {
+        return fallback;
+      }
+    }
+
+    function writeCollapsedState(key: string, collapsed: boolean) {
+      try {
+        localStorage.setItem(key, collapsed ? '1' : '0');
+      } catch {
+        // ignore local storage failures
+      }
+    }
+
+    function syncCollapsibleLogSection(options: {
+      bodyId: string;
+      buttonId: string;
+      storageKey: string;
+      fallbackCollapsed?: boolean;
+      expandedLabel: string;
+      collapsedLabel: string;
+    }) {
+      const bodyEl = document.getElementById(options.bodyId) as HTMLElement | null;
+      const buttonEl = document.getElementById(options.buttonId) as HTMLButtonElement | null;
+      if (!bodyEl || !buttonEl) return;
+      const collapsed = readCollapsedState(options.storageKey, options.fallbackCollapsed === true);
+      bodyEl.dataset.collapsed = collapsed ? 'true' : 'false';
+      buttonEl.textContent = collapsed ? options.collapsedLabel : options.expandedLabel;
+      buttonEl.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+
+    function renderFrontendLogEntries(listEl: HTMLElement, entries: Record<string, unknown>[]) {
+      if (!entries.length) {
+        listEl.innerHTML = '<div class="scan-log-entry info">No frontend logs recorded yet.</div>';
+        return;
+      }
+      listEl.innerHTML = entries.map((entry) => {
+        const level = ['warning', 'error', 'success'].includes(String(entry.level ?? '')) ? String(entry.level) : 'info';
+        const timestamp = String(entry.timestamp ?? '');
+        const timeLabel = timestamp ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
+        const category = String(entry.category ?? '').trim();
+        const categoryLabel = category ? `[${category}] ` : '';
+        return `<div class="scan-log-entry ${esc(level)}"><time class="scan-log-timestamp" datetime="${esc(timestamp)}">${esc(timeLabel)}</time>${esc(`${categoryLabel}${String(entry.message ?? '')}`)}</div>`;
+      }).join('');
+    }
+
     function selectRelativeTrack(offset: -1 | 1) {
       if (offset === 1 && playbackQueue.length) {
         const nextQueued = playbackQueue.shift();
@@ -1530,10 +1630,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function flushPendingScanLogs() {
-      if (!scanLogEl || !pendingScanLogEntries.length) return;
+      const targetLogEl = document.getElementById('activity-log-list') as HTMLElement | null;
+      if (!targetLogEl || !pendingScanLogEntries.length) return;
       const fragment = document.createDocumentFragment();
-      if (scanLogEl.children.length === 1 && scanLogEl.textContent?.includes('No scan activity.')) {
-        scanLogEl.innerHTML = '';
+      if (targetLogEl.children.length === 1 && targetLogEl.textContent?.includes('No scan activity.')) {
+        targetLogEl.innerHTML = '';
       }
       const entries = pendingScanLogEntries.splice(0);
       for (const item of entries.reverse()) {
@@ -1547,11 +1648,46 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         entry.append(document.createTextNode(item.message));
         fragment.appendChild(entry);
       }
-      scanLogEl.prepend(fragment);
-      while (scanLogEl.children.length > 80) {
-        scanLogEl.removeChild(scanLogEl.lastElementChild!);
+      targetLogEl.prepend(fragment);
+      while (targetLogEl.children.length > 80) {
+        targetLogEl.removeChild(targetLogEl.lastElementChild!);
       }
       scanLogFlushTimer = null;
+    }
+
+    function isServerCallLog(message: string) {
+      return message.includes('dj-assist-server') || message.includes('server match ');
+    }
+
+    function renderServerCallSummary() {
+      const listEl = document.getElementById('activity-server-list') as HTMLElement | null;
+      if (!listEl) return;
+      if (!recentServerCallEntries.length) {
+        listEl.innerHTML = '<div class="scan-log-entry info">No server calls yet.</div>';
+        return;
+      }
+      listEl.innerHTML = recentServerCallEntries.map((entry) => (
+        `<div class="scan-history-item scan-server-call-item">`
+          + `<strong>${esc(entry.trackLabel)}</strong>`
+          + `<span>${esc(entry.detail)}</span>`
+          + `<time class="scan-log-timestamp" datetime="${esc(entry.timestamp)}">${esc(entry.timestampLabel)}</time>`
+        + `</div>`
+      )).join('');
+    }
+
+    function updateServerCallSummary(
+      message: string,
+      level: 'info' | 'warning' | 'error' | 'success',
+      timestamp: string,
+      timestampLabel: string,
+    ) {
+      if (!isServerCallLog(message)) return;
+      const separator = message.indexOf(': ');
+      const trackLabel = separator === -1 ? 'Server activity' : message.slice(0, separator).trim();
+      const detail = separator === -1 ? message.trim() : message.slice(separator + 2).trim();
+      recentServerCallEntries.unshift({ message, level, timestamp, timestampLabel, trackLabel, detail });
+      if (recentServerCallEntries.length > 12) recentServerCallEntries = recentServerCallEntries.slice(0, 12);
+      renderServerCallSummary();
     }
 
     function persistClientDiagnosticLog(
@@ -1596,6 +1732,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         timestamp: now.toISOString(),
         timestampLabel: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       });
+      updateServerCallSummary(
+        message,
+        level,
+        now.toISOString(),
+        now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      );
       persistClientDiagnosticLog(message, level, 'scan-log', context);
       if (scanLogFlushTimer) return;
       scanLogFlushTimer = setTimeout(() => {
@@ -1762,12 +1904,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function resetScanLog() {
       pendingScanLogEntries = [];
+      recentServerCallEntries = [];
       recentScanLogSignatures.clear();
       if (scanLogFlushTimer) {
         clearTimeout(scanLogFlushTimer);
         scanLogFlushTimer = null;
       }
-      if (scanLogEl) scanLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity.</div>';
+      renderServerCallSummary();
+      const targetLogEl = document.getElementById('activity-log-list') as HTMLElement | null;
+      if (targetLogEl) targetLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity.</div>';
     }
 
     function isScanRunning(): boolean {
@@ -1983,6 +2128,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (quitAppInFlight) return;
       quitAppInFlight = true;
       try {
+        if (activeScanStatus === 'queued' || activeScanStatus === 'running') {
+          try {
+            await fetch('/api/scan', { method: 'DELETE' });
+            activeScanStatus = 'cancelled';
+            stopStreamingScanJob();
+            setScanStatus('Scan cancelled', 'error');
+            appendScanLog('Scan cancelled because the app is quitting.', 'warning');
+          } catch {
+            // Best effort: continue quitting even if cancellation fails.
+          }
+        }
         await adapter.confirmQuit();
       } finally {
         quitAppInFlight = false;
@@ -3787,6 +3943,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       renderLibraryPanel();
       renderActivityPanel();
+      maybeOpenGoogleAuthUpsell();
     }
 
     async function loadWatchFolders() {
@@ -3856,22 +4013,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
 
-      const health = (libraryOverview.health as Record<string, unknown>) ?? {};
       const smartCrates = (libraryOverview.smart_crates as Record<string, unknown>[]) ?? [];
-      const duplicates = (libraryOverview.duplicates as Record<string, unknown>[]) ?? [];
-      const coverReviewQueue = (libraryOverview.cover_review_queue as Record<string, unknown>[]) ?? [];
       const artists = (libraryOverview.artists as Record<string, unknown>[]) ?? [];
-      const albums = (libraryOverview.albums as Record<string, unknown>[]) ?? [];
       const tags = (libraryOverview.tags as Record<string, unknown>[]) ?? [];
 
       libraryPanel.innerHTML = `
         <div class="library-grid">
-          <section class="library-card">
-            <div class="scan-log-head"><strong>Collection Health</strong></div>
-            <div class="scan-summary">
-              ${Object.entries(health).map(([label, value]) => `<div class="scan-summary-item"><span>${esc(label.replace(/_/g, ' '))}</span><strong>${esc(value)}</strong></div>`).join('')}
-            </div>
-          </section>
           <section class="library-card">
             <div class="scan-log-head"><strong>Library Reset</strong></div>
             <div class="scan-preflight">Clear tracks, playlists, scan history, and watched folders from this app database.</div>
@@ -3880,23 +4027,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
           <section class="library-card">
-            <div class="scan-log-head"><strong>Review Mode</strong></div>
-            <div class="chips">
-              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="attention">Needs attention</button>
-              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="art">Missing art</button>
-              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="key">Missing key</button>
-              <button type="button" class="chip nav-chip review-mode-btn" data-review-kind="decode">Unreadable</button>
-            </div>
-            <div class="scan-preflight">Jump directly to the next track that needs manual cleanup.</div>
-            <div class="buttons">
-              <button type="button" class="btn" id="fill-visible-missing-art-btn">Fill Missing Art For Visible</button>
-            </div>
-          </section>
-          <section class="library-card">
             <div class="scan-log-head"><strong>Preferences</strong></div>
             <div class="preferences-list">
-              <label class="preference-row"><input id="pref-default-full-rescan" type="checkbox" ${preferences.defaultFullRescan ? 'checked' : ''} /><span>Default to full rescan</span></label>
-              <label class="preference-row"><input id="pref-default-fast-scan" type="checkbox" ${preferences.defaultFastScan ? 'checked' : ''} /><span>Default to fast scan</span></label>
               <label class="preference-row"><input id="pref-autoplay-on-select" type="checkbox" ${preferences.autoplayOnSelect ? 'checked' : ''} /><span>Autoplay when selecting tracks</span></label>
               <label class="preference-row"><input id="pref-load-library-on-startup" type="checkbox" ${preferences.loadLibraryOnStartup ? 'checked' : ''} /><span>Load existing library on startup</span></label>
               <label class="preference-row"><input id="pref-collapse-scan-log" type="checkbox" ${preferences.collapseScanLog ? 'checked' : ''} /><span>Keep scan log collapsed by default</span></label>
@@ -3968,40 +4100,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               ${tags.slice(0, 12).map((tag) => `<button type="button" class="chip nav-chip tag-filter-btn" data-tag="${esc(tag.tag)}">${esc(tag.tag)} · ${esc(tag.count)}</button>`).join('') || '<span class="chip subtle">No tags yet</span>'}
             </div>
           </section>
-          <section class="library-card library-span">
-            <div class="scan-log-head"><strong>Cover Review Queue</strong></div>
-            <div class="scan-history">
-              ${coverReviewQueue.map((track) => `
-                <div class="scan-history-item">
-                  <strong><button type="button" class="nav-link inline cover-review-open-btn" data-track-id="${track.id}">${esc(track.artist ?? 'Unknown Artist')} - ${esc(track.title ?? 'Untitled')}</button></strong>
-                  <span>${esc(track.album || 'No album')} · ${esc(track.album_art_source || 'no source')} · score ${esc(Number(track.album_art_confidence ?? 0).toFixed(1))}</span>
-                  <span>${esc(track.album_art_review_status || 'missing')} ${track.album_art_review_notes ? `· ${esc(track.album_art_review_notes)}` : ''}</span>
-                  <div class="chips">
-                    ${track.album_art_url ? `<button type="button" class="chip nav-chip cover-review-approve-btn" data-track-id="${track.id}">Approve</button>` : ''}
-                    <button type="button" class="chip nav-chip subtle cover-review-mark-btn" data-track-id="${track.id}" data-status="needs_review">Needs Review</button>
-                  </div>
-                </div>
-              `).join('') || '<div class="scan-log-entry info">No cover-art reviews waiting.</div>'}
-            </div>
-          </section>
-          <section class="library-card library-span">
-            <div class="scan-log-head"><strong>Duplicate Detection</strong></div>
-            <div class="duplicate-list">
-              ${duplicates.map((group) => `
-                <details class="duplicate-group">
-                  <summary>${esc(group.type)} · ${esc((group.tracks as Record<string, unknown>[]).length)} tracks</summary>
-                  <div class="suggestions compact">
-                    ${((group.tracks as Record<string, unknown>[])).map((track) => `
-                      <div class="suggestion" data-track-id="${track.id}">
-                        <strong>${esc(track.artist ?? 'Unknown')} - ${esc(track.title ?? 'Untitled')}</strong><br>
-                        <small>${esc(track.path ?? '')}</small>
-                      </div>
-                    `).join('')}
-                  </div>
-                </details>
-              `).join('') || '<div class="scan-log-entry info">No duplicates detected.</div>'}
-            </div>
-          </section>
           <section class="library-card">
             <div class="scan-log-head"><strong>Artist Browser</strong></div>
             <div class="scan-history">
@@ -4010,17 +4108,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   <strong><button type="button" class="nav-link inline artist-browser-btn" data-artist="${esc(artist.name)}">${esc(artist.name)}</button></strong>
                   <span>${esc(artist.track_count)} tracks · ${esc(artist.album_count)} albums</span>
                   <span>${esc((artist.albums as string[]).join(', '))}</span>
-                </div>
-              `).join('')}
-            </div>
-          </section>
-          <section class="library-card">
-            <div class="scan-log-head"><strong>Album Browser</strong></div>
-            <div class="scan-history">
-              ${albums.map((album) => `
-                <div class="scan-history-item">
-                  <strong><button type="button" class="nav-link inline album-browser-btn" data-album="${esc(album.name)}" data-artist="${esc(album.artist)}">${esc(album.name)}</button></strong>
-                  <span>${esc(album.artist)} · ${esc(album.track_count)} tracks</span>
                 </div>
               `).join('')}
             </div>
@@ -4088,16 +4175,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           });
         });
       });
-      document.getElementById('pref-default-full-rescan')?.addEventListener('change', (event) => {
-        preferences.defaultFullRescan = (event.currentTarget as HTMLInputElement).checked;
-        if (quickFullRescanEl) quickFullRescanEl.checked = preferences.defaultFullRescan;
-        savePreferences();
-      });
-      document.getElementById('pref-default-fast-scan')?.addEventListener('change', (event) => {
-        preferences.defaultFastScan = (event.currentTarget as HTMLInputElement).checked;
-        if (quickFastScanEl) quickFastScanEl.checked = preferences.defaultFastScan;
-        savePreferences();
-      });
       document.getElementById('pref-autoplay-on-select')?.addEventListener('change', (event) => {
         preferences.autoplayOnSelect = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
@@ -4109,9 +4186,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('pref-collapse-scan-log')?.addEventListener('change', (event) => {
         preferences.collapseScanLog = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
-      });
-      quickFastScanEl?.addEventListener('change', () => {
-        updateScanDirectoryDisplay();
       });
       document.getElementById('pref-default-list-density')?.addEventListener('change', (event) => {
         const value = (event.currentTarget as HTMLSelectElement).value === 'compact' ? 'compact' : 'comfortable';
@@ -4229,101 +4303,114 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
           <section class="library-card library-span">
-            <div class="scan-log-head"><strong>Watch Folders</strong></div>
-            <div class="watch-form">
-              <input id="watch-directory-input" placeholder="Folder to watch…" value="${esc(scanDirectoryEl.value)}" />
-              <button type="button" class="btn" id="add-watch-btn">Add Watch</button>
-            </div>
-            <div class="scan-history">
-              ${watchFolders.map((watch) => `
-                <div class="scan-history-item">
-                  <strong>${esc(watch.directory ?? '')}</strong>
-                  <span>${esc(watch.status ?? 'watching')} ${watch.lastChangedPath ? `· ${esc(watch.lastChangedPath)}` : ''}</span>
-                  <button type="button" class="icon-btn danger remove-watch-btn" data-directory="${esc(watch.directory ?? '')}">Remove</button>
-                </div>
-              `).join('') || '<div class="scan-log-entry info">No folders watched yet.</div>'}
-            </div>
-          </section>
-          <section class="library-card library-span">
-            <div class="scan-log-head"><strong>Scan Activity</strong></div>
-            <div class="scan-preflight">Live scan log refreshes here automatically. Use this panel for runtime diagnostics and watched folders.</div>
+            <div class="scan-log-head"><strong>Backend Logs</strong></div>
+            <div class="scan-preflight">Live backend activity appears here, including scan progress and server calls.</div>
             <div class="chips">
+              <button type="button" class="chip nav-chip" id="toggle-activity-log-btn">Collapse Backend Logs</button>
               <button type="button" class="chip nav-chip" id="refresh-activity-log-btn">Refresh Scan Log</button>
               <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Collection</button>
             </div>
-            <div class="scan-progress-file bottom" id="scan-progress-file">No scan in progress</div>
-            <div class="scan-log" id="activity-log-list">
-              <div class="scan-log-entry info">No scan activity.</div>
+            <div class="collapsible-log-section" id="activity-log-section-body">
+              <div class="scan-progress-file bottom" id="scan-progress-file">No scan in progress</div>
+              <div class="scan-log-head"><strong>Server Calls</strong></div>
+              <div class="scan-history scan-server-call-list" id="activity-server-list">
+                <div class="scan-log-entry info">No server calls yet.</div>
+              </div>
+              <div class="scan-log" id="activity-log-list">
+                <div class="scan-log-entry info">No scan activity.</div>
+              </div>
             </div>
           </section>
           <section class="library-card library-span">
             <div class="scan-log-head"><strong>Frontend Logs</strong></div>
             <div class="scan-preflight" id="frontend-log-path">Loading renderer diagnostics…</div>
             <div class="chips">
+              <button type="button" class="chip nav-chip" id="toggle-frontend-log-btn">Collapse Frontend Logs</button>
               <button type="button" class="chip nav-chip" id="refresh-frontend-logs-btn">Refresh Frontend Logs</button>
               <button type="button" class="chip nav-chip" id="copy-frontend-logs-btn">Copy (C)</button>
             </div>
-            <div class="scan-log" id="frontend-log-list">
-              <div class="scan-log-entry info">Loading frontend logs…</div>
+            <div class="collapsible-log-section" id="frontend-log-section-body">
+              <div class="scan-log" id="frontend-log-list">
+                <div class="scan-log-entry info">Loading frontend logs…</div>
+              </div>
             </div>
           </section>
         </div>
       `;
-      const loadClientLogFeed = async () => {
+      const loadClientLogFeed = async (options: { force?: boolean; silent?: boolean } = {}) => {
         const listEl = document.getElementById('frontend-log-list');
         const pathEl = document.getElementById('frontend-log-path');
         if (!listEl || !pathEl) return;
-        listEl.innerHTML = '<div class="scan-log-entry info">Loading frontend logs…</div>';
+        if (frontendLogRefreshInFlight) return;
+        frontendLogRefreshInFlight = true;
+        const shouldShowLoading = options.silent !== true && !listEl.dataset.loaded;
+        if (shouldShowLoading) {
+          listEl.innerHTML = '<div class="scan-log-entry info">Loading frontend logs…</div>';
+        }
+        try {
         const response = await fetch('/api/logs/client?limit=300');
         if (!response.ok) {
-          listEl.innerHTML = '<div class="scan-log-entry error">Could not load frontend logs.</div>';
+          if (!listEl.dataset.loaded) {
+            listEl.innerHTML = '<div class="scan-log-entry error">Could not load frontend logs.</div>';
+          }
           pathEl.textContent = 'Renderer diagnostics unavailable.';
           return;
         }
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         const pathText = String(payload.path ?? '').trim();
-        pathEl.textContent = pathText ? `Renderer diagnostics file: ${pathText}` : 'Renderer diagnostics file unavailable.';
-        const entries = Array.isArray(payload.entries) ? payload.entries as Record<string, unknown>[] : [];
-        if (!entries.length) {
-          listEl.innerHTML = '<div class="scan-log-entry info">No frontend logs recorded yet.</div>';
-          return;
+        const pathLabel = pathText ? `Renderer diagnostics file: ${pathText}` : 'Renderer diagnostics file unavailable.';
+        if (pathLabel !== frontendLogPathLabel) {
+          frontendLogPathLabel = pathLabel;
+          pathEl.textContent = pathLabel;
         }
-        listEl.innerHTML = entries.map((entry) => {
-          const level = ['warning', 'error', 'success'].includes(String(entry.level ?? '')) ? String(entry.level) : 'info';
-          const timestamp = String(entry.timestamp ?? '');
-          const timeLabel = timestamp ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
-          const category = String(entry.category ?? '').trim();
-          const categoryLabel = category ? `[${category}] ` : '';
-          return `<div class="scan-log-entry ${esc(level)}"><time class="scan-log-timestamp" datetime="${esc(timestamp)}">${esc(timeLabel)}</time>${esc(`${categoryLabel}${String(entry.message ?? '')}`)}</div>`;
-        }).join('');
+        const entries = Array.isArray(payload.entries) ? payload.entries as Record<string, unknown>[] : [];
+        const signature = JSON.stringify(entries.map((entry) => [
+          String(entry.timestamp ?? ''),
+          String(entry.level ?? 'info'),
+          String(entry.category ?? ''),
+          String(entry.message ?? ''),
+        ]));
+        if (options.force || signature !== frontendLogSignature || !listEl.dataset.loaded) {
+          frontendLogSignature = signature;
+          renderFrontendLogEntries(listEl, entries);
+          listEl.dataset.loaded = 'true';
+        }
+        } finally {
+          frontendLogRefreshInFlight = false;
+        }
       };
-      document.getElementById('add-watch-btn')?.addEventListener('click', async () => {
-        const input = document.getElementById('watch-directory-input') as HTMLInputElement;
-        const res = await fetch('/api/watch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ directory: input.value.trim() }),
-        });
-        if (res.ok) await loadWatchFolders();
-      });
-      activityPanel.querySelectorAll('.remove-watch-btn[data-directory]').forEach((button) => {
-        button.addEventListener('click', async () => {
-          await fetch('/api/watch', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ directory: (button as HTMLElement).dataset.directory }),
-          });
-          await loadWatchFolders();
-        });
-      });
       document.getElementById('refresh-activity-log-btn')?.addEventListener('click', () => {
         flushPendingScanLogs();
+      });
+      document.getElementById('toggle-activity-log-btn')?.addEventListener('click', () => {
+        const collapsed = !readCollapsedState(activityScanLogCollapsedKey, preferences.collapseScanLog);
+        writeCollapsedState(activityScanLogCollapsedKey, collapsed);
+        syncCollapsibleLogSection({
+          bodyId: 'activity-log-section-body',
+          buttonId: 'toggle-activity-log-btn',
+          storageKey: activityScanLogCollapsedKey,
+          fallbackCollapsed: preferences.collapseScanLog,
+          expandedLabel: 'Collapse Scan Logs',
+          collapsedLabel: 'Expand Scan Logs',
+        });
       });
       document.getElementById('activity-open-collection-btn')?.addEventListener('click', () => {
         openPanel('library');
       });
+      document.getElementById('toggle-frontend-log-btn')?.addEventListener('click', () => {
+        const collapsed = !readCollapsedState(frontendLogCollapsedKey, false);
+        writeCollapsedState(frontendLogCollapsedKey, collapsed);
+        syncCollapsibleLogSection({
+          bodyId: 'frontend-log-section-body',
+          buttonId: 'toggle-frontend-log-btn',
+          storageKey: frontendLogCollapsedKey,
+          expandedLabel: 'Collapse Frontend Logs',
+          collapsedLabel: 'Expand Frontend Logs',
+        });
+        if (!collapsed) void loadClientLogFeed({ force: true, silent: true });
+      });
       document.getElementById('refresh-frontend-logs-btn')?.addEventListener('click', () => {
-        void loadClientLogFeed();
+        void loadClientLogFeed({ force: true, silent: true });
       });
       document.getElementById('copy-frontend-logs-btn')?.addEventListener('click', () => {
         void copyFrontendLogs();
@@ -4331,10 +4418,30 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (activityLogAutoRefreshTimer) clearInterval(activityLogAutoRefreshTimer);
       activityLogAutoRefreshTimer = setInterval(() => {
         flushPendingScanLogs();
-        if (currentPanel === 'activity') void loadClientLogFeed();
-      }, 1500);
+        if (currentPanel === 'activity' && !readCollapsedState(frontendLogCollapsedKey, false)) {
+          void loadClientLogFeed({ silent: true });
+        }
+      }, 3000);
+      syncCollapsibleLogSection({
+        bodyId: 'activity-log-section-body',
+        buttonId: 'toggle-activity-log-btn',
+        storageKey: activityScanLogCollapsedKey,
+        fallbackCollapsed: preferences.collapseScanLog,
+        expandedLabel: 'Collapse Backend Logs',
+        collapsedLabel: 'Expand Backend Logs',
+      });
+      syncCollapsibleLogSection({
+        bodyId: 'frontend-log-section-body',
+        buttonId: 'toggle-frontend-log-btn',
+        storageKey: frontendLogCollapsedKey,
+        expandedLabel: 'Collapse Frontend Logs',
+        collapsedLabel: 'Expand Frontend Logs',
+      });
+      renderServerCallSummary();
       flushPendingScanLogs();
-      void loadClientLogFeed();
+      if (!readCollapsedState(frontendLogCollapsedKey, false)) {
+        void loadClientLogFeed({ force: true, silent: false });
+      }
     }
 
     async function loadScanHistory() {
@@ -4466,7 +4573,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!res.ok) return;
       const payload = await res.json();
       const job = payload.job as Record<string, unknown>;
-      const jobOptions = (job.options as Record<string, unknown> | null) ?? null;
       activeScanJobId = String(job.id);
       activeScanStatus = String(job.status ?? 'idle');
       if (['queued', 'running'].includes(activeScanStatus) && !frozenTrackIdsDuringScan) {
@@ -4488,9 +4594,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       setScanSummary(job.summary as Record<string, unknown>, job);
       const validation = (job.validation as Record<string, unknown> | null) ?? null;
       if (validation && typeof validation.audio_file_count !== 'undefined') {
-        scanPreflightEl.textContent = `Supported audio files: ${validation.audio_file_count ?? 0}${validation.empty ? ' · directory looks empty' : ''}${jobOptions?.fastScan ? ' · Fast scan mode' : ''}`;
+        scanPreflightEl.textContent = `Supported audio files: ${validation.audio_file_count ?? 0}${validation.empty ? ' · directory looks empty' : ''}`;
       } else {
-        scanPreflightEl.textContent = jobOptions?.fastScan ? 'Music folder ready · Fast scan mode' : 'Music folder ready.';
+        scanPreflightEl.textContent = 'Music folder ready.';
       }
       resetScanLog();
       for (const log of ((job.logs ?? []) as Record<string, unknown>[]).slice().reverse()) {
@@ -4537,7 +4643,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     // ── Scanning ──────────────────────────────────────────────────────────────
     async function triggerScan() {
       const directory = scanDirectoryEl.value.trim();
-      const fastScan = Boolean(quickFastScanEl?.checked);
       if (!directory) {
         setScanStatus('Choose a music folder', 'error');
         setScanProgress(0, 0, 'Choose a music folder');
@@ -4555,11 +4660,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       preScanTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
       hasScanBaseline = tracks.length > 0;
       ensureBackgroundRefreshLoop();
-      setScanStatus(fastScan ? 'Fast scanning collection…' : 'Scanning collection…', 'running');
+      setScanStatus('Scanning collection…', 'running');
       setScanProgress(0, 0, directory);
       warningBanner.style.display = 'none';
       resetScanLog();
-      appendScanLog(`Starting ${fastScan ? 'fast ' : ''}scan for ${directory}`);
+      appendScanLog(`Starting scan for ${directory}`);
 
       try {
       try { localStorage.setItem(scanDirectoryKey, directory); } catch { /* ignore */ }
@@ -4571,10 +4676,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           body: JSON.stringify({
             directory,
             fetchAlbumArt: true,
-            fastScan,
+            fastScan: false,
             autoDoubleBpm: true,
             verbose: false,
-            rescanMode: quickFullRescanEl?.checked ? 'full' : 'smart',
+            rescanMode: 'smart',
           }),
         });
 
@@ -5036,8 +5141,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       preferences = parsePreferences(localStorage.getItem(preferencesKey));
       const savedDirectory = localStorage.getItem(scanDirectoryKey);
       if (savedDirectory) scanDirectoryEl.value = savedDirectory;
-      if (quickFastScanEl) quickFastScanEl.checked = preferences.defaultFastScan;
-      if (quickFullRescanEl) quickFullRescanEl.checked = preferences.defaultFullRescan;
       updateScanDirectoryDisplay();
       const savedNewTrackIds = JSON.parse(localStorage.getItem(recentNewTrackIdsKey) || '[]');
       if (Array.isArray(savedNewTrackIds)) {
@@ -5049,7 +5152,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       preferences = { ...defaultPreferences };
       setListDensity(preferences.defaultListDensity);
     }
-    if (quickFullRescanEl) quickFullRescanEl.checked = preferences.defaultFullRescan;
     document.getElementById('empty-choose-folder-btn')?.addEventListener('click', () => {
       void pickDirectoryAndPrefill();
     });
@@ -5082,6 +5184,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       closeModal(tapBpmModal);
       returnToSongsPane();
     });
+    closeGoogleAuthUpsellBtn?.addEventListener('click', () => {
+      dismissGoogleAuthUpsell();
+    });
     commandPaletteModal?.addEventListener('click', (event) => {
       if (event.target === commandPaletteModal) closeModal(commandPaletteModal);
     });
@@ -5108,6 +5213,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         returnToSongsPane();
       }
     });
+    googleAuthUpsellModal?.addEventListener('click', (event) => {
+      if (event.target === googleAuthUpsellModal) dismissGoogleAuthUpsell();
+    });
     deleteTrackModal?.addEventListener('keydown', (event) => {
       if (event.key !== 'Tab') return;
       const focusables = [deleteTrackRemoveFileEl, confirmDeleteTrackBtn].filter(Boolean) as HTMLElement[];
@@ -5132,6 +5240,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     document.getElementById('save-edit-metadata-btn')?.addEventListener('click', () => {
       void saveEditMetadataModal();
+    });
+    document.getElementById('google-auth-upsell-sign-in-btn')?.addEventListener('click', () => {
+      dismissGoogleAuthUpsell();
+      void signInWithGoogle();
+    });
+    document.getElementById('google-auth-upsell-decline-btn')?.addEventListener('click', () => {
+      dismissGoogleAuthUpsell();
+      showToast('Quick scan stays unavailable until you sign in with Google.', 'info');
     });
     confirmDeleteTrackBtn?.addEventListener('click', () => {
       void confirmDeleteTracks();
@@ -5341,14 +5457,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void loadRuntimeHealth();
     };
     window.addEventListener('focus', handleWindowFocus);
-    void loadScanHistory().then(async () => {
-      const running = scanHistory.find((job) => ['queued', 'running'].includes(String(job.status ?? '')));
-      if (running?.id) {
-        await loadScanJob(String(running.id), true);
-      } else if (scanHistory[0]?.id) {
-        await loadScanJob(String(scanHistory[0].id), false);
-      }
-    });
+    void loadScanHistory();
 
     return () => {
       stopStreamingScanJob();

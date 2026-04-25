@@ -1,7 +1,4 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
-
-const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 
 export const GOOGLE_OAUTH_STATE_COOKIE = 'dj_assist_google_oauth_state';
 export const GOOGLE_OAUTH_VERIFIER_COOKIE = 'dj_assist_google_oauth_verifier';
@@ -17,6 +14,10 @@ export type GoogleIdentity = {
 
 export function googleClientId(): string {
   return process.env.GOOGLE_CLIENT_ID?.trim() ?? '';
+}
+
+export function googleClientSecret(): string {
+  return process.env.GOOGLE_CLIENT_SECRET?.trim() ?? '';
 }
 
 export function googleAuthConfigured(): boolean {
@@ -44,11 +45,24 @@ export async function verifyGoogleIdToken(input: {
   clientId: string;
   nonce: string;
 }): Promise<GoogleIdentity> {
-  const { payload } = await jwtVerify(input.token, GOOGLE_JWKS, {
-    algorithms: ['RS256'],
-    audience: input.clientId,
-    issuer: ['https://accounts.google.com', 'accounts.google.com'],
-  });
+  const url = new URL('https://oauth2.googleapis.com/tokeninfo');
+  url.searchParams.set('id_token', input.token);
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) {
+    const raw = await response.text();
+    throw new Error(raw.trim() || 'Google sign-in could not be verified.');
+  }
+
+  const payload = await response.json() as Record<string, unknown>;
+  const audience = normalizeRequiredString(payload.aud, 'Google sign-in returned no audience.');
+  if (audience !== input.clientId) {
+    throw new Error('Google sign-in returned an unexpected audience.');
+  }
+
+  const issuer = normalizeRequiredString(payload.iss, 'Google sign-in returned no issuer.');
+  if (!['https://accounts.google.com', 'accounts.google.com'].includes(issuer)) {
+    throw new Error('Google sign-in returned an unexpected issuer.');
+  }
 
   if (String(payload.nonce ?? '') !== input.nonce) {
     throw new Error('Google sign-in returned an invalid nonce.');
@@ -58,7 +72,7 @@ export async function verifyGoogleIdToken(input: {
   return {
     sub,
     email: normalizeOptionalString(payload.email),
-    emailVerified: typeof payload.email_verified === 'boolean' ? payload.email_verified : undefined,
+    emailVerified: ['true', '1'].includes(String(payload.email_verified ?? '').toLowerCase()),
     name: normalizeOptionalString(payload.name),
     picture: normalizeOptionalString(payload.picture),
   };

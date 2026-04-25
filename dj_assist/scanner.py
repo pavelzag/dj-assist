@@ -38,7 +38,8 @@ _EMPTY_PREVIEWS: dict = {
 _SPOTIFY_TIMEOUT = float(os.getenv("SPOTIFY_TIMEOUT", "3"))
 _SPOTIFY_TIMEOUT_STREAK_LIMIT = int(os.getenv("SPOTIFY_TIMEOUT_STREAK_LIMIT", "3"))
 _ANALYSIS_SUBPROCESS_TIMEOUT = float(os.getenv("ANALYSIS_SUBPROCESS_TIMEOUT", "180"))
-_SERVER_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "4"))
+_SERVER_LOOKUP_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_LOOKUP_TIMEOUT", os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "4")))
+_SERVER_UPLOAD_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_UPLOAD_TIMEOUT", os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "12")))
 
 _UNKNOWN_ARTIST_VALUES = {"unknown", "unknown artist", "various artists"}
 _UPPERCASE_TOKENS = {"DJ", "MC", "UK", "USA", "EDM", "RNB", "EP", "LP", "VIP", "ID"}
@@ -81,43 +82,77 @@ def _server_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def _server_post(path: str, payload: dict) -> tuple[int, dict]:
+def _server_base_url() -> str:
+    return os.getenv("DJ_ASSIST_SERVER_URL", "").strip().rstrip("/")
+
+
+def _server_is_local_debug() -> bool:
+    base = _server_base_url().lower()
+    return "localhost" in base or "127.0.0.1" in base
+
+
+def _server_post(path: str, payload: dict, timeout: float) -> tuple[int, dict]:
     data = json.dumps(payload).encode("utf-8")
+    user = payload.get("user_data") if isinstance(payload, dict) else None
+    google_id_token = ""
+    if isinstance(user, dict):
+        google_id_token = str(user.get("google_id_token") or "").strip()
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "dj-assist-client",
+    }
+    if google_id_token:
+        headers["Authorization"] = f"Bearer {google_id_token}"
+        headers["X-Google-Id-Token"] = google_id_token
     request = urllib.request.Request(
         _server_url(path),
         data=data,
         method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "dj-assist-client",
-        },
+        headers=headers,
     )
-    with urllib.request.urlopen(request, timeout=_SERVER_TIMEOUT) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         raw = response.read().decode("utf-8")
         return int(response.status), json.loads(raw or "{}")
 
 
-def _lookup_server_track(file_hash: str, metadata: dict) -> dict | None:
+def _lookup_server_allowed() -> tuple[bool, str]:
     user = _user_data()
-    if not _server_enabled() or user.get("type") != "google":
-        return None
+    google_id_token = str(user.get("google_id_token") or "").strip()
+    if not _server_enabled() or user.get("type") != "google" or not google_id_token:
+        reason = "server disabled" if not _server_enabled() else f"user_type={user.get('type')}"
+        if _server_enabled() and user.get("type") == "google" and not google_id_token:
+            reason = "google_token_missing"
+        return False, reason
+    return True, ""
+
+
+def _lookup_server_track(file_hash: str) -> tuple[dict | None, str]:
+    allowed, reason = _lookup_server_allowed()
+    if not allowed:
+        return None, f"lookup skipped ({reason})"
+    user = _user_data()
     try:
-        _status, payload = _server_post(
+        status, payload = _server_post(
             "/api/v1/tracks/lookup",
             {
                 "client_id": _client_id(),
                 "user_data": user,
                 "file_hash": file_hash,
-                "title": metadata.get("title"),
-                "artist": metadata.get("artist"),
-                "duration": metadata.get("duration"),
             },
+            timeout=_SERVER_LOOKUP_TIMEOUT,
         )
         if payload.get("matched") and isinstance(payload.get("track"), dict):
-            return payload["track"]
-    except Exception:
-        return None
-    return None
+            bpm = float(payload["track"].get("bpm") or payload["track"].get("spotify_tempo") or 0.0)
+            key = str(payload["track"].get("musical_key") or payload["track"].get("key") or payload["track"].get("key_numeric") or "")
+            return payload["track"], f"lookup hit status={status} bpm={bpm or 0:.1f} key={key or 'none'}"
+        return None, f"lookup miss status={status}"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        return None, f"lookup error status={exc.code} {detail[:200]}".strip()
+    except TimeoutError:
+        return None, f"lookup timeout after {_SERVER_LOOKUP_TIMEOUT:.1f}s"
+    except Exception as exc:
+        return None, f"lookup error {exc}"
 
 
 def _server_track_to_local(server_track: dict, filepath: str, file_hash: str, file_size: int, file_mtime: float) -> dict:
@@ -193,11 +228,11 @@ def _serialize_track_for_server(track_data: dict, client_track_id: str) -> dict:
     }
 
 
-def _upload_track_to_server(track_data: dict, client_track_id: str) -> bool:
+def _upload_track_to_server(track_data: dict, client_track_id: str) -> tuple[bool, str]:
     if not _server_enabled():
-        return False
+        return False, "upload skipped (server disabled)"
     try:
-        _server_post(
+        status, payload = _server_post(
             "/api/v1/ingest",
             {
                 "client_id": _client_id(),
@@ -206,10 +241,17 @@ def _upload_track_to_server(track_data: dict, client_track_id: str) -> bool:
                 "tracks": [_serialize_track_for_server(track_data, client_track_id)],
                 "usage_events": [],
             },
+            timeout=_SERVER_UPLOAD_TIMEOUT,
         )
-        return True
-    except Exception:
-        return False
+        received_tracks = int(payload.get("tracks_received") or 0)
+        return True, f"upload ok status={status} tracks_received={received_tracks}"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        return False, f"upload error status={exc.code} {detail[:200]}".strip()
+    except TimeoutError:
+        return False, f"upload timeout after {_SERVER_UPLOAD_TIMEOUT:.1f}s"
+    except Exception as exc:
+        return False, f"upload error {exc}"
 
 
 def _file_signature(filepath: str) -> tuple[int, float]:
@@ -851,6 +893,33 @@ def scan_directory(
     spotify_scan_enabled = spotify_enabled
     enrichment_enabled = bool(fetch_album_art) or not fast_scan
     spotify_timeout_streak = 0
+    server_sync_enabled = _server_enabled()
+    server_failure_streak = 0
+    server_failure_limit = 2 if _server_is_local_debug() else 4
+
+    def _record_server_result(log: str) -> None:
+        nonlocal server_sync_enabled, server_failure_streak
+        if not server_sync_enabled:
+            return
+        normalized = (log or "").lower()
+        failed = any(token in normalized for token in [" timeout ", "timed out", "connection refused", "lookup error", "upload error"])
+        if not failed:
+            server_failure_streak = 0
+            return
+        server_failure_streak += 1
+        if server_failure_streak < server_failure_limit:
+            return
+        server_sync_enabled = False
+        _emit(
+            {
+                "event": "log",
+                "level": "warning",
+                "message": (
+                    "dj-assist-server disabled for the rest of this scan after "
+                    f"{server_failure_streak} consecutive failures."
+                ),
+            }
+        )
 
     with ThreadPoolExecutor(max_workers=1) as spotify_pool:
         iterator = audio_files if progress_callback else tqdm(audio_files, desc="Scanning")
@@ -917,7 +986,34 @@ def scan_directory(
                         }
                     )
 
-                server_track = _lookup_server_track(file_hash, metadata)
+                user = _user_data()
+                lookup_allowed, _ = _lookup_server_allowed()
+                if lookup_allowed and server_sync_enabled:
+                    _emit(
+                        {
+                            "event": "log",
+                            "level": "info",
+                            "message": (
+                                f"{Path(filepath).name}: sending lookup to dj-assist-server "
+                                f"url={_server_url('/api/v1/tracks/lookup')} user={user.get('type', 'unknown')}"
+                            ),
+                        }
+                    )
+                server_track = None
+                lookup_log = ""
+                if lookup_allowed and server_sync_enabled:
+                    server_track, lookup_log = _lookup_server_track(file_hash)
+                elif lookup_allowed and not server_sync_enabled:
+                    lookup_log = "lookup skipped (server temporarily disabled)"
+                if lookup_log:
+                    _record_server_result(lookup_log)
+                    _emit(
+                        {
+                            "event": "log",
+                            "level": "success" if server_track else ("warning" if "error" in lookup_log else "info"),
+                            "message": f"{Path(filepath).name}: dj-assist-server {lookup_log}",
+                        }
+                    )
                 if server_track:
                     track_data = _server_track_to_local(server_track, filepath, file_hash, file_size, file_mtime)
                     db.add_track(track_data)
@@ -1186,7 +1282,32 @@ def scan_directory(
                         "file_mtime": file_mtime,
                     }
                 db.add_track(track_data)
-                uploaded = _upload_track_to_server(track_data, file_hash or filepath)
+                if server_sync_enabled:
+                    _emit(
+                        {
+                            "event": "log",
+                            "level": "info",
+                            "message": (
+                                f"{Path(filepath).name}: sending track to dj-assist-server "
+                                f"url={_server_url('/api/v1/ingest')} user={user.get('type', 'unknown')}"
+                            ),
+                        }
+                    )
+                uploaded = False
+                upload_log = ""
+                if server_sync_enabled:
+                    uploaded, upload_log = _upload_track_to_server(track_data, file_hash or filepath)
+                elif _server_enabled():
+                    upload_log = "upload skipped (server temporarily disabled)"
+                if upload_log:
+                    _record_server_result(upload_log)
+                    _emit(
+                        {
+                            "event": "log",
+                            "level": "success" if uploaded else ("warning" if "skipped" in upload_log else "error"),
+                            "message": f"{Path(filepath).name}: dj-assist-server {upload_log}",
+                        }
+                    )
                 if bpm > 0 and (bpm_confidence >= 0.45 or "sanity" in bpm_source or bpm_source == "spotify"):
                     folder_tempos.append(float(bpm))
                     if len(folder_tempos) > 24:
@@ -1211,6 +1332,7 @@ def scan_directory(
                         "album_art_review_status": album_art["album_art_review_status"],
                         "decode_failed": decode_failed,
                         "server_uploaded": uploaded,
+                        "server_upload_log": upload_log,
                     }
                 )
                 _emit(

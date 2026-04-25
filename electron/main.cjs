@@ -5,12 +5,35 @@ const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } = require('electron');
 
+const APP_ROOT = path.join(__dirname, '..');
+
+function loadManagedProjectEnv() {
+  try {
+    const { loadEnvConfig } = require('@next/env');
+    const candidateDirs = [
+      process.cwd(),
+      APP_ROOT,
+      path.join(APP_ROOT, '.next', 'standalone'),
+    ].filter((dir, index, list) => dir && list.indexOf(dir) === index);
+
+    for (const dir of candidateDirs) {
+      if (!fs.existsSync(dir)) continue;
+      const hasEnvFile = ['.env.local', '.env'].some((name) => fs.existsSync(path.join(dir, name)));
+      if (!hasEnvFile) continue;
+      loadEnvConfig(dir, false);
+    }
+  } catch {
+    // ignore env loading failures and fall back to the inherited process env
+  }
+}
+
+loadManagedProjectEnv();
+
 const DEFAULT_URL = 'http://127.0.0.1:3000/';
 const DEFAULT_HOST = process.env.DJ_ASSIST_ELECTRON_HOST || '127.0.0.1';
 const DEFAULT_PORT = process.env.DJ_ASSIST_ELECTRON_PORT || '3000';
 const MIN_SPLASH_MS = 3000;
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'app-icon.png');
-const APP_ROOT = path.join(__dirname, '..');
 let mainWindow = null;
 let managedServerProcess = null;
 let managedServerOwned = false;
@@ -310,15 +333,21 @@ async function ensureManagedServer() {
 
   const host = DEFAULT_HOST;
   const explicitPort = process.env.DJ_ASSIST_ELECTRON_PORT || process.env.PORT;
-  const port = explicitPort ? String(explicitPort) : String(await findAvailablePort(3000));
-  const rootUrl = `http://${host}:${port}`;
+  let port = explicitPort ? String(explicitPort) : String(await findAvailablePort(3000));
+  let rootUrl = `http://${host}:${port}`;
   const mode = serverMode();
 
   if (await isServerReachable(rootUrl)) {
-    appendMainLog(`Reusing existing desktop backend at ${rootUrl}`);
-    process.env.DJ_ASSIST_ELECTRON_URL = `${rootUrl}/`;
-    managedServerOwned = false;
-    return;
+    if (explicitPort) {
+      throw new Error(
+        `Refusing to reuse an existing server on ${rootUrl}. Stop the process already listening on port ${port}, or choose another DJ_ASSIST_ELECTRON_PORT.`,
+      );
+    }
+
+    const nextPort = await findAvailablePort(Number(port) + 1);
+    port = String(nextPort);
+    rootUrl = `http://${host}:${port}`;
+    appendMainLog(`Port ${DEFAULT_PORT} was already occupied; starting managed backend on ${rootUrl} instead of reusing an existing server.`);
   }
 
   const useStandalone = mode === 'start' && hasStandaloneServer();

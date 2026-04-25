@@ -20,12 +20,6 @@ export default function AppShell({
             <button type="button" className="btn" id="quick-choose-folder-btn">Choose Folder</button>
             <span className="scan-status" id="scan-status">Idle</span>
             <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
-            <label className="scan-option compact">
-              <input id="quick-fast-scan" type="checkbox" /> Fast scan
-            </label>
-            <label className="scan-option compact">
-              <input id="quick-full-rescan" type="checkbox" /> Full rescan
-            </label>
             <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
             <div className="scan-progress compact" id="scan-progress">
               <div className="scan-progress-track">
@@ -244,6 +238,31 @@ export default function AppShell({
               <button className="btn" id="tap-bpm-double-btn" type="button">x2</button>
               <button className="btn" id="tap-bpm-reset-btn" type="button">Reset</button>
               <button className="btn" id="tap-bpm-save-btn" type="button">Save BPM</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="modal" id="google-auth-upsell-modal" aria-hidden="true">
+        <div className="modal-card google-auth-upsell-card">
+          <div className="modal-head">
+            <h3>Speed Up Scans</h3>
+            <button className="close" id="close-google-auth-upsell" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="scan-preflight">
+              Sign in with Google to let DJ Assist check the backend for exact file matches before local analysis.
+            </div>
+            <div className="shortcuts-list google-auth-upsell-points">
+              <div><strong>Signed in</strong><span>Exact file-hash matches can be fetched from the server instead of re-analyzed locally.</span></div>
+              <div><strong>Not signed in</strong><span>Scans still run locally and results are still uploaded for other users.</span></div>
+            </div>
+            <div className="scan-preflight" id="google-auth-upsell-status">
+              You can continue without signing in, but backend-powered quick scan will stay unavailable.
+            </div>
+            <div className="buttons">
+              <button className="btn" id="google-auth-upsell-sign-in-btn" type="button">Sign in with Google</button>
+              <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button">Continue Without Sign-In</button>
             </div>
           </div>
         </div>

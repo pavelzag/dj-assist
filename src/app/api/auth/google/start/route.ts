@@ -4,11 +4,9 @@ import {
   createOauthState,
   createPkceChallenge,
   createPkceVerifier,
-  GOOGLE_OAUTH_NONCE_COOKIE,
-  GOOGLE_OAUTH_STATE_COOKIE,
-  GOOGLE_OAUTH_VERIFIER_COOKIE,
   googleClientId,
 } from '@/lib/google-auth';
+import { savePendingGoogleAuthSession } from '@/lib/runtime-settings';
 
 export const runtime = 'nodejs';
 
@@ -23,6 +21,11 @@ export async function GET(request: NextRequest) {
   const challenge = createPkceChallenge(verifier);
   const nonce = createNonce();
   const redirectUri = new URL('/api/auth/google/callback', request.url).toString();
+  await savePendingGoogleAuthSession({
+    state,
+    verifier,
+    nonce,
+  });
 
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.searchParams.set('client_id', clientId);
@@ -35,17 +38,7 @@ export async function GET(request: NextRequest) {
   url.searchParams.set('code_challenge_method', 'S256');
   url.searchParams.set('prompt', 'select_account');
 
-  const response = NextResponse.redirect(url, { headers: { 'Cache-Control': 'no-store' } });
-  const cookieOptions = {
-    httpOnly: true,
-    sameSite: 'lax' as const,
-    path: '/',
-    maxAge: 600,
-  };
-  response.cookies.set(GOOGLE_OAUTH_STATE_COOKIE, state, cookieOptions);
-  response.cookies.set(GOOGLE_OAUTH_VERIFIER_COOKIE, verifier, cookieOptions);
-  response.cookies.set(GOOGLE_OAUTH_NONCE_COOKIE, nonce, cookieOptions);
-  return response;
+  return NextResponse.redirect(url, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 function redirectWithMessage(request: NextRequest, message: string) {

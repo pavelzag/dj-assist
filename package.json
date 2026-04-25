@@ -1,6 +1,6 @@
 {
   "name": "dj-assist",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "main": "electron/main.cjs",
   "engines": {
@@ -35,7 +35,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "electron": "^41.2.0",
+    "electron": "41.1.1",
     "electron-builder": "^26.0.12",
     "typescript": "^5.7.0"
   },

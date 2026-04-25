@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createScanJob, listScanJobHistory, startScanJob } from '@/lib/scan-jobs';
+import { cancelAllScanJobs, createScanJob, listScanJobHistory, startScanJob } from '@/lib/scan-jobs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,4 +40,9 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+export async function DELETE() {
+  await cancelAllScanJobs();
+  return NextResponse.json({ ok: true });
 }

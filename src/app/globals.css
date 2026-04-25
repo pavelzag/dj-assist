@@ -294,6 +294,13 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   display: grid;
   gap: 5px;
 }
+.collapsible-log-section {
+  display: grid;
+  gap: 8px;
+}
+.collapsible-log-section[data-collapsed="true"] {
+  display: none;
+}
 #activity-log-list,
 #frontend-log-list {
   min-height: 360px;
@@ -313,6 +320,17 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   overflow: auto;
   display: grid;
   gap: 6px;
+}
+.scan-server-call-list {
+  margin: 8px 0 10px;
+  max-height: 220px;
+}
+.scan-server-call-item {
+  cursor: default;
+}
+.scan-server-call-item time {
+  color: var(--muted);
+  font-size: 11px;
 }
 .scan-history-item {
   display: grid;
@@ -1129,9 +1147,14 @@ body[data-list-density="compact"] .row span {
 .modal-card { background: var(--panel2); border: 1px solid var(--line2); border-radius: 10px; padding: 18px; max-width: 520px; width: 90%; }
 .edit-metadata-modal-card { max-width: 680px; }
 .command-palette-card,
-.shortcuts-card {
+.shortcuts-card,
+.google-auth-upsell-card {
   display: grid;
   gap: 12px;
+}
+.google-auth-upsell-card { max-width: 560px; }
+.google-auth-upsell-points div {
+  align-items: flex-start;
 }
 .command-palette-card input {
   width: 100%;

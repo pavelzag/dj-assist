@@ -65,6 +65,8 @@ function jobsStore(): Map<string, InMemoryJob> {
   return global.__scanJobs;
 }
 
+let staleRunsCleanupPromise: Promise<void> | null = null;
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -109,6 +111,32 @@ export async function validateScanDirectory(directory: string): Promise<Record<s
 
 function emit(job: InMemoryJob, event: Record<string, unknown>) {
   for (const subscriber of job.subscribers) subscriber(event);
+}
+
+async function cleanupStaleScanRuns(): Promise<void> {
+  const inFlight = staleRunsCleanupPromise;
+  if (inFlight) return inFlight;
+  staleRunsCleanupPromise = (async () => {
+    const runs = await listScanRuns(200);
+    const activeJobIds = new Set(jobsStore().keys());
+    for (const run of runs) {
+      if (!['queued', 'running'].includes(run.status)) continue;
+      if (activeJobIds.has(run.id)) continue;
+      await finalizeScanRun(run.id, {
+        status: 'cancelled',
+        fatal_error: 'Scan stopped when the app backend was restarted or the app quit.',
+      });
+      await addScanLog({
+        scanRunId: run.id,
+        level: 'warning',
+        message: 'Marked cancelled after app restart or quit',
+        eventType: 'cancel',
+      });
+    }
+  })().finally(() => {
+    staleRunsCleanupPromise = null;
+  });
+  return staleRunsCleanupPromise;
 }
 
 async function persistLog(jobId: string, level: string, message: string, eventType = 'log', payload: Record<string, unknown> = {}) {
@@ -446,6 +474,7 @@ export async function cancelAllScanJobs(): Promise<void> {
 }
 
 export async function getScanJobSnapshot(jobId: string) {
+  await cleanupStaleScanRuns();
   const inMemory = jobsStore().get(jobId);
   if (inMemory) {
     return {
@@ -493,6 +522,7 @@ export async function getScanJobSnapshot(jobId: string) {
 }
 
 export async function listScanJobHistory(limit = 20) {
+  await cleanupStaleScanRuns();
   const runs = await listScanRuns(limit);
   return runs.map((run) => ({
     id: run.id,
