@@ -16,10 +16,6 @@ export function googleClientId(): string {
   return process.env.GOOGLE_CLIENT_ID?.trim() ?? '';
 }
 
-export function googleClientSecret(): string {
-  return process.env.GOOGLE_CLIENT_SECRET?.trim() ?? '';
-}
-
 export function googleAuthConfigured(): boolean {
   return Boolean(googleClientId());
 }

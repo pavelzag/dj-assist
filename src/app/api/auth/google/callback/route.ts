@@ -17,7 +17,6 @@ export async function GET(request: NextRequest) {
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
   const clientId = String(googleOauth.credentials?.clientId ?? '').trim();
-  const clientSecret = String(googleOauth.credentials?.clientSecret ?? '').trim();
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code') ?? '';
   const state = searchParams.get('state') ?? '';
@@ -47,7 +46,6 @@ export async function GET(request: NextRequest) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: clientId,
-      ...(clientSecret ? { client_secret: clientSecret } : {}),
       code,
       code_verifier: verifier,
       grant_type: 'authorization_code',

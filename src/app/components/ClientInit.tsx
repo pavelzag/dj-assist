@@ -669,6 +669,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!googleOauth) return 'Not configured';
       if (googleOauth.configured) {
         const source = String(googleOauth.source ?? 'saved');
+        if (source === 'env') return 'Google sign-in ready.';
         const clientId = String(googleOauth.client_id_masked ?? '').trim();
         return clientId ? `Configured from ${source} (${clientId})` : `Configured from ${source}`;
       }
@@ -804,7 +805,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       googleOauthSettingsBusy = true;
       const saveBtn = document.getElementById('google-oauth-save-btn') as HTMLButtonElement | null;
       const clientIdInput = document.getElementById('google-client-id') as HTMLInputElement | null;
-      const clientSecretInput = document.getElementById('google-client-secret') as HTMLInputElement | null;
       if (saveBtn) {
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving…';
@@ -816,7 +816,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             clientId: clientIdInput?.value.trim() ?? '',
-            clientSecret: clientSecretInput?.value.trim() ?? '',
           }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -824,7 +823,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           setGoogleOauthUiStatus(String(payload.error ?? 'Could not save Google OAuth settings.'), 'error');
           return;
         }
-        if (clientSecretInput) clientSecretInput.value = '';
         await loadRuntimeHealth();
         renderLibraryPanel();
         setGoogleOauthUiStatus(googleOauthRuntimeLabel(), 'success');
@@ -1612,19 +1610,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function syncCollapsibleLogSection(options: {
       bodyId: string;
-      buttonId: string;
+      controlId: string;
       storageKey: string;
       fallbackCollapsed?: boolean;
-      expandedLabel: string;
-      collapsedLabel: string;
+      expandedLabel?: string;
+      collapsedLabel?: string;
     }) {
       const bodyEl = document.getElementById(options.bodyId) as HTMLElement | null;
-      const buttonEl = document.getElementById(options.buttonId) as HTMLButtonElement | null;
-      if (!bodyEl || !buttonEl) return;
+      const controlEl = document.getElementById(options.controlId) as HTMLElement | null;
+      if (!bodyEl || !controlEl) return;
       const collapsed = readCollapsedState(options.storageKey, options.fallbackCollapsed === true);
       bodyEl.dataset.collapsed = collapsed ? 'true' : 'false';
-      buttonEl.textContent = collapsed ? options.collapsedLabel : options.expandedLabel;
-      buttonEl.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      controlEl.dataset.collapsed = collapsed ? 'true' : 'false';
+      if (options.expandedLabel && options.collapsedLabel) {
+        controlEl.textContent = collapsed ? options.collapsedLabel : options.expandedLabel;
+      }
+      controlEl.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     }
 
     function renderFrontendLogEntries(listEl: HTMLElement, entries: Record<string, unknown>[]) {
@@ -4112,6 +4113,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const smartCrates = (libraryOverview.smart_crates as Record<string, unknown>[]) ?? [];
       const artists = (libraryOverview.artists as Record<string, unknown>[]) ?? [];
       const tags = (libraryOverview.tags as Record<string, unknown>[]) ?? [];
+      const googleOauth = googleOauthRuntimeSummary();
+      const googleOauthConfigured = googleOauth?.configured === true;
 
       libraryPanel.innerHTML = `
         <div class="library-grid">
@@ -4162,18 +4165,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </label>
               <div class="scan-preflight" id="server-sync-status" data-state="idle">${esc(serverRuntimeLabel())}</div>
               <div class="scan-preflight">Google sign-in is optional. Signed-in users can fetch exact matches before local analysis; anonymous users only upload scan results.</div>
-              <label class="preference-field">
-                <span>Google Client ID</span>
-                <input id="google-client-id" placeholder="${esc(String(googleOauthRuntimeSummary()?.client_id_masked ?? 'Paste Google OAuth Client ID'))}" autocomplete="off" spellcheck="false" />
-              </label>
-              <label class="preference-field">
-                <span>Google Client Secret (optional)</span>
-                <input id="google-client-secret" type="password" placeholder="${googleOauthRuntimeSummary()?.has_secret ? 'Saved secret on file' : 'Paste Google OAuth Client Secret'}" autocomplete="off" spellcheck="false" />
-              </label>
+              ${googleOauthConfigured ? '' : `
+                <label class="preference-field">
+                  <span>Google Client ID</span>
+                  <input id="google-client-id" placeholder="${esc(String(googleOauth?.client_id_masked ?? 'Paste Google OAuth Client ID'))}" autocomplete="off" spellcheck="false" />
+                </label>
+                <div class="scan-preflight">Development setup only. Production builds include the app OAuth client automatically.</div>
+              `}
               <div class="scan-preflight" id="google-oauth-status" data-state="idle">${esc(googleOauthRuntimeLabel())}</div>
               <div class="buttons">
                 <button type="button" class="btn" id="server-settings-save-btn">Save Server Settings</button>
-                <button type="button" class="btn" id="google-oauth-save-btn">Save Google Settings</button>
+                ${googleOauthConfigured ? '' : '<button type="button" class="btn" id="google-oauth-save-btn">Save Google Settings</button>'}
                 <button type="button" class="btn" id="google-sign-in-btn">Sign in with Google</button>
                 <button type="button" class="btn secondary" id="google-sign-out-btn">Sign out</button>
               </div>
@@ -4332,11 +4334,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         event.preventDefault();
         void submitGoogleOauthCredentials();
       });
-      document.getElementById('google-client-secret')?.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        void submitGoogleOauthCredentials();
-      });
       document.getElementById('server-settings-save-btn')?.addEventListener('click', () => {
         void submitServerSettings();
       });
@@ -4422,10 +4419,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
           <section class="library-card library-span">
-            <div class="scan-log-head"><strong>Backend Logs</strong></div>
+            <div class="scan-log-head collapsible-log-title" id="activity-log-title" role="button" tabindex="0" aria-controls="activity-log-section-body"><strong>Backend Logs</strong></div>
             <div class="scan-preflight">Live backend activity appears here, including scan progress and server calls.</div>
             <div class="chips">
-              <button type="button" class="chip nav-chip" id="toggle-activity-log-btn">Collapse Backend Logs</button>
               <button type="button" class="chip nav-chip" id="refresh-activity-log-btn">Refresh Scan Log</button>
               <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Collection</button>
             </div>
@@ -4441,10 +4437,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
           <section class="library-card library-span">
-            <div class="scan-log-head"><strong>Frontend Logs</strong></div>
+            <div class="scan-log-head collapsible-log-title" id="frontend-log-title" role="button" tabindex="0" aria-controls="frontend-log-section-body"><strong>Frontend Logs</strong></div>
             <div class="scan-preflight" id="frontend-log-path">Loading renderer diagnostics…</div>
             <div class="chips">
-              <button type="button" class="chip nav-chip" id="toggle-frontend-log-btn">Collapse Frontend Logs</button>
               <button type="button" class="chip nav-chip" id="refresh-frontend-logs-btn">Refresh Frontend Logs</button>
               <button type="button" class="chip nav-chip" id="copy-frontend-logs-btn">Copy (C)</button>
             </div>
@@ -4501,32 +4496,41 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('refresh-activity-log-btn')?.addEventListener('click', () => {
         flushPendingScanLogs();
       });
-      document.getElementById('toggle-activity-log-btn')?.addEventListener('click', () => {
+      const toggleBackendLogs = () => {
         const collapsed = !readCollapsedState(activityScanLogCollapsedKey, preferences.collapseScanLog);
         writeCollapsedState(activityScanLogCollapsedKey, collapsed);
         syncCollapsibleLogSection({
           bodyId: 'activity-log-section-body',
-          buttonId: 'toggle-activity-log-btn',
+          controlId: 'activity-log-title',
           storageKey: activityScanLogCollapsedKey,
           fallbackCollapsed: preferences.collapseScanLog,
-          expandedLabel: 'Collapse Scan Logs',
-          collapsedLabel: 'Expand Scan Logs',
         });
-      });
-      document.getElementById('activity-open-collection-btn')?.addEventListener('click', () => {
-        openPanel('library');
-      });
-      document.getElementById('toggle-frontend-log-btn')?.addEventListener('click', () => {
+      };
+      const toggleFrontendLogs = () => {
         const collapsed = !readCollapsedState(frontendLogCollapsedKey, false);
         writeCollapsedState(frontendLogCollapsedKey, collapsed);
         syncCollapsibleLogSection({
           bodyId: 'frontend-log-section-body',
-          buttonId: 'toggle-frontend-log-btn',
+          controlId: 'frontend-log-title',
           storageKey: frontendLogCollapsedKey,
-          expandedLabel: 'Collapse Frontend Logs',
-          collapsedLabel: 'Expand Frontend Logs',
         });
         if (!collapsed) void loadClientLogFeed({ force: true, silent: true });
+      };
+      const toggleOnEnterOrSpace = (event: KeyboardEvent, toggle: () => void) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+      };
+      document.getElementById('activity-log-title')?.addEventListener('click', toggleBackendLogs);
+      document.getElementById('activity-log-title')?.addEventListener('keydown', (event) => {
+        toggleOnEnterOrSpace(event, toggleBackendLogs);
+      });
+      document.getElementById('activity-open-collection-btn')?.addEventListener('click', () => {
+        openPanel('library');
+      });
+      document.getElementById('frontend-log-title')?.addEventListener('click', toggleFrontendLogs);
+      document.getElementById('frontend-log-title')?.addEventListener('keydown', (event) => {
+        toggleOnEnterOrSpace(event, toggleFrontendLogs);
       });
       document.getElementById('refresh-frontend-logs-btn')?.addEventListener('click', () => {
         void loadClientLogFeed({ force: true, silent: true });
@@ -4543,18 +4547,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }, 3000);
       syncCollapsibleLogSection({
         bodyId: 'activity-log-section-body',
-        buttonId: 'toggle-activity-log-btn',
+        controlId: 'activity-log-title',
         storageKey: activityScanLogCollapsedKey,
         fallbackCollapsed: preferences.collapseScanLog,
-        expandedLabel: 'Collapse Backend Logs',
-        collapsedLabel: 'Expand Backend Logs',
       });
       syncCollapsibleLogSection({
         bodyId: 'frontend-log-section-body',
-        buttonId: 'toggle-frontend-log-btn',
+        controlId: 'frontend-log-title',
         storageKey: frontendLogCollapsedKey,
-        expandedLabel: 'Collapse Frontend Logs',
-        collapsedLabel: 'Expand Frontend Logs',
       });
       renderServerCallSummary();
       flushPendingScanLogs();

@@ -57,7 +57,7 @@ export default function AppShell({
       <div className="now-playing-bar" id="now-playing-bar" data-state="idle" hidden />
 
       <main>
-        <section className="pane">
+        <section className="pane songs-pane">
           <div className="bulk-toolbar" id="bulk-toolbar" />
           <div className="sorts" id="sorts">
             <button type="button" data-sort="name" className="active">Name</button>
@@ -69,7 +69,7 @@ export default function AppShell({
           <div className="list" id="track-list" />
         </section>
 
-        <section className="pane">
+        <section className="pane details-pane">
           <div className="panel-tabs">
             <button type="button" className="panel-tab active" id="tab-track" data-panel="track">Track</button>
             <button type="button" className="panel-tab" id="tab-sets" data-panel="sets">Playlists</button>

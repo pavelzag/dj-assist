@@ -301,6 +301,30 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
 .collapsible-log-section[data-collapsed="true"] {
   display: none;
 }
+.collapsible-log-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.collapsible-log-title::after {
+  content: 'Collapse';
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.collapsible-log-title[data-collapsed="true"]::after {
+  content: 'Expand';
+}
+.collapsible-log-title:focus-visible {
+  outline: 2px solid rgba(255, 108, 0, 0.55);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
 #activity-log-list,
 #frontend-log-list {
   min-height: 360px;
@@ -1081,7 +1105,20 @@ body[data-list-density="compact"] .row span {
 
 @media (max-width: 1500px) {
   main {
-    grid-template-columns: minmax(0, 1.28fr) minmax(380px, 0.72fr);
+    grid-template-columns: 1fr;
+  }
+  .details-pane {
+    order: 1;
+  }
+  .songs-pane {
+    order: 2;
+  }
+  .list {
+    height: min(460px, var(--pane-height));
+  }
+  .detail {
+    height: min(560px, var(--pane-height));
+    min-height: min(420px, var(--pane-height));
   }
   .row {
     grid-template-columns: 32px 40px minmax(0, 1.7fr) 74px 68px 68px;

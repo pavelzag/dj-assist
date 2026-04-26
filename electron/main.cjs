@@ -8,6 +8,28 @@ const { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, shell } = re
 const APP_ROOT = path.join(__dirname, '..');
 const MEDIA_PROTOCOL = 'djassist-media';
 
+function bundledBuildEnvPath() {
+  return path.join(APP_ROOT, 'electron', 'build-env.json');
+}
+
+function readBundledBuildEnv() {
+  try {
+    const raw = fs.readFileSync(bundledBuildEnvPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function applyBundledBuildEnv() {
+  const buildEnv = readBundledBuildEnv();
+  const googleClientId = String(buildEnv.GOOGLE_CLIENT_ID ?? '').trim();
+  if (googleClientId && !process.env.GOOGLE_CLIENT_ID) {
+    process.env.GOOGLE_CLIENT_ID = googleClientId;
+  }
+}
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: MEDIA_PROTOCOL,
@@ -136,9 +158,8 @@ function readManagedGoogleOauthSettings() {
     const raw = fs.readFileSync(managedSettingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
     const clientId = String(parsed?.googleOauth?.clientId ?? '').trim();
-    const clientSecret = String(parsed?.googleOauth?.clientSecret ?? '').trim();
     if (!clientId) return null;
-    return { clientId, clientSecret: clientSecret || '' };
+    return { clientId };
   } catch {
     return null;
   }
@@ -213,6 +234,7 @@ function validateBundledPythonPath(binaryPath) {
 }
 
 function applyManagedRuntimeEnv() {
+  applyBundledBuildEnv();
   process.env.DJ_ASSIST_DB_PATH = resolveManagedDatabasePath();
   process.env.DJ_ASSIST_CONFIG_DIR = resolveManagedConfigDir();
   process.env.DJ_ASSIST_LOG_DIR = app.getPath('logs');
@@ -222,11 +244,10 @@ function applyManagedRuntimeEnv() {
     process.env.SPOTIFY_CLIENT_SECRET = spotifySettings.clientSecret;
   }
   const googleOauthSettings = readManagedGoogleOauthSettings();
-  if (googleOauthSettings) {
+  if (googleOauthSettings && !process.env.GOOGLE_CLIENT_ID) {
     process.env.GOOGLE_CLIENT_ID = googleOauthSettings.clientId;
-    if (googleOauthSettings.clientSecret) process.env.GOOGLE_CLIENT_SECRET = googleOauthSettings.clientSecret;
-    else delete process.env.GOOGLE_CLIENT_SECRET;
   }
+  delete process.env.GOOGLE_CLIENT_SECRET;
   const bundledPython = resolveBundledPythonPath();
   delete process.env.DJ_ASSIST_BUNDLED_PYTHON_ERROR;
   if (bundledPython && validateBundledPythonPath(bundledPython)) {
