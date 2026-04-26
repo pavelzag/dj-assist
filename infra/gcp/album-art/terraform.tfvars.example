@@ -1,0 +1,12 @@
+project_id                = "dj-assist-494002"
+region                    = "asia-southeast1"
+bucket_name               = "dj-assist-album-art"
+bucket_location           = "asia-southeast1"
+bucket_storage_class      = "STANDARD"
+public_access_enabled     = true
+public_access_prevention  = "unspecified"
+service_account_id        = "dj-assist-art-uploader"
+service_account_display_name = "DJ Assist Album Art Uploader"
+create_service_account_key = false
+bucket_prefix             = "album-art"
+

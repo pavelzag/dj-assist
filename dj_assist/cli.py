@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -599,6 +601,197 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
     return result
 
 
+def _merge_art_storage_debug(
+    existing_debug: object,
+    *,
+    origin_url: str,
+    public_url: str,
+    bucket: str,
+    object_name: str,
+    sha256_hex: str,
+    content_type: str,
+) -> str:
+    payload: dict[str, Any]
+    if isinstance(existing_debug, str) and existing_debug.strip():
+        try:
+            parsed = json.loads(existing_debug)
+            payload = dict(parsed) if isinstance(parsed, Mapping) else {"raw": existing_debug}
+        except json.JSONDecodeError:
+            payload = {"raw": existing_debug}
+    else:
+        payload = {}
+    payload["storage"] = {
+        "provider": "gcs",
+        "origin_url": origin_url,
+        "public_url": public_url,
+        "bucket": bucket,
+        "object_name": object_name,
+        "sha256": sha256_hex,
+        "content_type": content_type,
+    }
+    return json.dumps(payload)
+
+
+def _compact_debug_payload(raw: object) -> str:
+    if not raw:
+        return ""
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return ""
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return text[:220]
+    if not isinstance(raw, Mapping):
+        return str(raw)[:220]
+
+    preferred_keys = [
+        "error",
+        "timed_out",
+        "enabled",
+        "result_count",
+        "selected_artist",
+        "selected_title",
+        "selected_album",
+        "selected_score",
+        "selection_strength",
+        "album_art_url",
+        "artist_image_url",
+    ]
+    parts: list[str] = []
+    for key in preferred_keys:
+        if key not in raw:
+            continue
+        value = raw.get(key)
+        if value in ("", None, [], {}):
+            continue
+        parts.append(f"{key}={value}")
+    if not parts and raw.get("events"):
+        events = raw.get("events")
+        if isinstance(events, Sequence) and not isinstance(events, (str, bytes)) and events:
+            last_event = events[-1]
+            if isinstance(last_event, Mapping):
+                stage = last_event.get("stage")
+                error = last_event.get("error")
+                if stage:
+                    parts.append(f"last_stage={stage}")
+                if error:
+                    parts.append(f"last_error={error}")
+    if not parts:
+        return json.dumps(raw, ensure_ascii=True)[:220]
+    return " ".join(parts)[:220]
+
+
+def _provider_attempt_summary(previews: dict[str, object], resolution_meta: dict[str, object]) -> str:
+    spotify_state = "on" if resolution_meta.get("spotify_enabled") else "off"
+    spotify_missing = ",".join(resolution_meta.get("spotify_missing_credentials") or [])
+    acoustid_state = "on" if resolution_meta.get("needs_acoustid") else "off"
+    provider = str(previews.get("album_art_provider") or "none")
+    artist_provider = str(previews.get("artist_image_provider") or "none")
+    bits = [
+        f"spotify={spotify_state}",
+        f"acoustid={acoustid_state}",
+        f"album_provider={provider}",
+        f"artist_provider={artist_provider}",
+    ]
+    if spotify_missing:
+        bits.append(f"spotify_missing={spotify_missing}")
+    return " ".join(bits)
+
+
+def _provider_debug_summary(previews: dict[str, object]) -> str:
+    labels = [
+        ("spotify", previews.get("spotify_debug")),
+        ("acoustid", previews.get("acoustid_debug")),
+        ("theaudiodb", previews.get("theaudiodb_debug")),
+        ("musicbrainz", previews.get("musicbrainz_debug")),
+        ("discogs", previews.get("discogs_debug")),
+    ]
+    parts = []
+    for label, raw in labels:
+        compact = _compact_debug_payload(raw)
+        if compact:
+            parts.append(f"{label}[{compact}]")
+    return " | ".join(parts)
+
+
+def _resolve_track_art_for_storage(
+    track,
+    *,
+    force_resolve: bool,
+    album_art_cache: dict[str, dict],
+    artist_art_cache: dict[str, dict],
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    from .media import build_media_links
+    from .scanner import _resolve_album_art
+
+    current_url = str(track.album_art_url or "").strip()
+    if current_url and not force_resolve:
+        return (
+            {
+                "album_art_url": current_url,
+                "album_art_source": track.album_art_source or "existing",
+                "album_art_confidence": float(track.album_art_confidence or 0.0),
+                "album_art_review_status": track.album_art_review_status or ("approved" if current_url else "missing"),
+                "album_art_review_notes": track.album_art_review_notes or "",
+                "album_group_key": track.album_group_key or "",
+                "embedded_album_art": bool(track.embedded_album_art),
+            },
+            {
+                "spotify_id": track.spotify_id or "",
+                "spotify_uri": track.spotify_uri or "",
+                "spotify_url": track.spotify_url or "",
+                "spotify_preview_url": track.spotify_preview_url or "",
+                "spotify_album_name": track.spotify_album_name or "",
+                "spotify_match_score": float(track.spotify_match_score or 0.0),
+                "spotify_high_confidence": str(track.spotify_high_confidence or False).lower(),
+            },
+            {
+                "used_existing_url": True,
+                "spotify_enabled": bool(track.spotify_id),
+                "spotify_missing_credentials": [],
+                "needs_acoustid": False,
+            },
+        )
+
+    missing = SpotifyClient().missing_credentials()
+    spotify_enabled = not bool(missing)
+    needs_acoustid = not bool((track.artist and str(track.artist).strip()) and (track.title and str(track.title).strip()))
+    previews = build_media_links(
+        track.artist,
+        track.title,
+        track.album,
+        track.duration,
+        fetch_album_art=True,
+        file_path=track.path,
+        enable_spotify=spotify_enabled,
+        enable_acoustid=needs_acoustid,
+    )
+    album_art = _resolve_album_art(
+        {
+            "artist": track.artist,
+            "title": track.title,
+            "album": track.album,
+            "embedded_album_art_url": "",
+        },
+        previews,
+        True,
+        album_art_cache,
+        artist_art_cache,
+    )
+    return (
+        album_art,
+        previews,
+        {
+            "used_existing_url": False,
+            "spotify_enabled": spotify_enabled,
+            "spotify_missing_credentials": missing,
+            "needs_acoustid": needs_acoustid,
+        },
+    )
+
+
 @main.command(name="reanalyze-art")
 @click.argument("track_id", type=int)
 @click.option("--force", is_flag=True, help="Refresh art even if the track already has an image.")
@@ -723,6 +916,161 @@ def fetch_art(force: bool, limit: int | None, verbose: bool) -> None:
 
     console.print(
         f"Updated: {updated}  No match: {skipped}  Errors: {errors}"
+    )
+
+
+@main.command(name="store-art-gcs")
+@click.option("--force", is_flag=True, help="Reprocess tracks even if their art already points at the configured GCS URL base.")
+@click.option("--force-resolve", is_flag=True, help="Ignore the current album_art_url and resolve artwork again from providers.")
+@click.option("--limit", type=int, default=None, help="Maximum number of tracks to process.")
+@click.option("--bucket", type=str, default=None, help="GCS bucket name. Falls back to DJ_ASSIST_GCS_BUCKET.")
+@click.option("--prefix", type=str, default=None, help="Object prefix inside the bucket. Falls back to DJ_ASSIST_GCS_PREFIX.")
+@click.option("--public-base-url", type=str, default=None, help="Public URL base for stored art. Defaults to https://storage.googleapis.com/<bucket>.")
+@click.option("--verbose", "-v", is_flag=True, help="Print per-track debug output.")
+def store_art_gcs(
+    force: bool,
+    force_resolve: bool,
+    limit: int | None,
+    bucket: str | None,
+    prefix: str | None,
+    public_base_url: str | None,
+    verbose: bool,
+) -> None:
+    """Backfill album art into GCS and rewrite DB URLs to the stored objects."""
+    from tqdm import tqdm
+
+    from .art_store import (
+        download_art,
+        gcs_bucket_from_env,
+        gcs_prefix_from_env,
+        gcs_public_base_url,
+        is_managed_art_url,
+        upload_art_to_gcs,
+    )
+
+    resolved_bucket = (bucket or gcs_bucket_from_env()).strip()
+    if not resolved_bucket:
+        raise click.ClickException("GCS bucket is required. Pass --bucket or set DJ_ASSIST_GCS_BUCKET.")
+    resolved_prefix = (prefix or gcs_prefix_from_env()).strip()
+    resolved_public_base_url = gcs_public_base_url(resolved_bucket, explicit=public_base_url)
+
+    db = _db()
+    tracks = db.get_all_tracks()
+    if not tracks:
+        console.print("No tracks in database. Run [bold]dj-assist scan[/bold] first.")
+        return
+
+    targets = [
+        track for track in tracks
+        if force or not is_managed_art_url(track.album_art_url or "", resolved_bucket, resolved_public_base_url)
+    ]
+    if limit is not None:
+        targets = targets[:limit]
+    if not targets:
+        console.print("All tracks already point at the configured GCS bucket.")
+        return
+
+    console.print(f"Storing album art to GCS for {len(targets)} tracks...")
+    updated = 0
+    skipped = 0
+    errors = 0
+    reused = 0
+    album_art_cache: dict[str, dict] = {}
+    artist_art_cache: dict[str, dict] = {}
+    source_cache: dict[str, dict[str, str]] = {}
+
+    for track in tqdm(targets, desc="Uploading art"):
+        try:
+            album_art, preview_payload, resolution_meta = _resolve_track_art_for_storage(
+                track,
+                force_resolve=force_resolve,
+                album_art_cache=album_art_cache,
+                artist_art_cache=artist_art_cache,
+            )
+            source_url = str(album_art.get("album_art_url") or "").strip()
+            if not source_url:
+                skipped += 1
+                if verbose:
+                    reason = str(album_art.get("album_art_review_notes") or "no album art resolved")
+                    tqdm.write(f"  ✗ {_track_label(track)}  |  {reason}")
+                    tqdm.write(f"    {_provider_attempt_summary(preview_payload, resolution_meta)}")
+                    debug_summary = _provider_debug_summary(preview_payload)
+                    if debug_summary:
+                        tqdm.write(f"    {debug_summary}")
+                continue
+
+            cached_storage = source_cache.get(source_url)
+            if cached_storage:
+                stored_public_url = cached_storage["public_url"]
+                object_name = cached_storage["object_name"]
+                sha256_hex = cached_storage["sha256"]
+                content_type = cached_storage["content_type"]
+                reused += 1
+            else:
+                downloaded = download_art(source_url)
+                stored = upload_art_to_gcs(
+                    downloaded,
+                    bucket_name=resolved_bucket,
+                    prefix=resolved_prefix,
+                    public_base_url=resolved_public_base_url,
+                )
+                stored_public_url = stored.public_url
+                object_name = stored.object_name
+                sha256_hex = stored.sha256_hex
+                content_type = stored.content_type
+                source_cache[source_url] = {
+                    "public_url": stored_public_url,
+                    "object_name": object_name,
+                    "sha256": sha256_hex,
+                    "content_type": content_type,
+                }
+
+            db.add_track({
+                "path": track.path,
+                "album_art_url": stored_public_url,
+                "album_art_source": album_art.get("album_art_source") or track.album_art_source or "",
+                "album_art_confidence": float(album_art.get("album_art_confidence") or track.album_art_confidence or 0.0),
+                "album_art_review_status": album_art.get("album_art_review_status") or track.album_art_review_status or "missing",
+                "album_art_review_notes": album_art.get("album_art_review_notes") or track.album_art_review_notes or "",
+                "album_group_key": album_art.get("album_group_key") or track.album_group_key or "",
+                "embedded_album_art": bool(album_art.get("embedded_album_art") if "embedded_album_art" in album_art else track.embedded_album_art),
+                "album_art_match_debug": _merge_art_storage_debug(
+                    track.album_art_match_debug,
+                    origin_url=source_url,
+                    public_url=stored_public_url,
+                    bucket=resolved_bucket,
+                    object_name=object_name,
+                    sha256_hex=sha256_hex,
+                    content_type=content_type,
+                ),
+                "spotify_id": str(preview_payload.get("spotify_id") or track.spotify_id or ""),
+                "spotify_uri": str(preview_payload.get("spotify_uri") or track.spotify_uri or ""),
+                "spotify_url": str(preview_payload.get("spotify_url") or track.spotify_url or ""),
+                "spotify_preview_url": str(preview_payload.get("spotify_preview_url") or track.spotify_preview_url or ""),
+                "spotify_album_name": str(preview_payload.get("spotify_album_name") or track.spotify_album_name or ""),
+                "spotify_match_score": float(preview_payload.get("spotify_match_score") or track.spotify_match_score or 0.0),
+                "spotify_high_confidence": str(preview_payload.get("spotify_high_confidence") or track.spotify_high_confidence or False).lower(),
+            })
+            updated += 1
+            if verbose:
+                source_label = str(album_art.get("album_art_source") or track.album_art_source or "unknown")
+                action = "reused_existing" if resolution_meta.get("used_existing_url") else "resolved_fresh"
+                tqdm.write(f"  ✓ {_track_label(track)}  |  source: {source_label}  |  mode: {action}  |  stored: {stored_public_url}")
+                tqdm.write(f"    {_provider_attempt_summary(preview_payload, resolution_meta)}")
+        except Exception as exc:
+            errors += 1
+            tqdm.write(f"Error for {_track_label(track)}: {exc}")
+            if verbose:
+                debug_summary = ""
+                try:
+                    debug_summary = _provider_debug_summary(preview_payload)  # type: ignore[name-defined]
+                except Exception:
+                    debug_summary = ""
+                if debug_summary:
+                    tqdm.write(f"    {debug_summary}")
+
+    console.print(
+        f"Stored: {updated}  Reused uploads: {reused}  No match: {skipped}  Errors: {errors}"
     )
 
 

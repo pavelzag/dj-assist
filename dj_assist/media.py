@@ -25,7 +25,6 @@ _DISCOGS_REQUEST_DELAY = float(os.getenv("DISCOGS_REQUEST_DELAY", "0.8"))
 _DISCOGS_HTTP_TIMEOUT = float(os.getenv("DISCOGS_HTTP_TIMEOUT", "5"))
 _ACOUSTID_REQUEST_DELAY = float(os.getenv("ACOUSTID_REQUEST_DELAY", "0.05"))
 _ACOUSTID_API_URL = "https://api.acoustid.org/v2/lookup"
-_DEFAULT_ACOUSTID_API_KEY = "UNhsnYL0za"
 
 # Module-level token cache so all SpotifyClient instances within a process
 # share one token instead of fetching a new one per track.
@@ -1136,7 +1135,7 @@ class DiscogsClient:
 class AcoustIdClient:
     def __init__(self) -> None:
         configured_key = os.getenv("ACOUSTID_API_KEY", "").strip()
-        self.api_key = configured_key or _DEFAULT_ACOUSTID_API_KEY
+        self.api_key = configured_key
         configured_fpcalc = os.getenv("FPCALC_PATH", "").strip()
         self.fpcalc_path = configured_fpcalc or shutil.which("fpcalc") or ""
 
