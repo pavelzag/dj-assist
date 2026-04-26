@@ -69,6 +69,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const confirmQuitAppBtn = document.getElementById('confirm-quit-app-btn') as HTMLButtonElement | null;
     const tapBpmModal = document.getElementById('tap-bpm-modal') as HTMLElement | null;
     const googleAuthUpsellModal = document.getElementById('google-auth-upsell-modal') as HTMLElement | null;
+    const googleAuthMainBtn = document.getElementById('google-auth-main-btn') as HTMLButtonElement | null;
+    const googleAuthMainLabel = document.getElementById('google-auth-main-label') as HTMLElement | null;
     const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
     const closeGoogleAuthUpsellBtn = document.getElementById('close-google-auth-upsell') as HTMLButtonElement | null;
     const tapBpmTrackLabelEl = document.getElementById('tap-bpm-track-label') as HTMLElement | null;
@@ -725,6 +727,40 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       closeModal(googleAuthUpsellModal);
     }
 
+    function googleSignedInUser() {
+      const server = serverRuntimeSummary();
+      const user = server?.user && typeof server.user === 'object' ? server.user as Record<string, unknown> : null;
+      return user?.type === 'google' ? user : null;
+    }
+
+    function syncGoogleAuthEntryPoint() {
+      const user = googleSignedInUser();
+      const googleConfigured = serverRuntimeSummary()?.googleAuthConfigured === true;
+      if (googleAuthMainBtn) {
+        googleAuthMainBtn.hidden = !googleConfigured;
+        googleAuthMainBtn.dataset.connected = user ? 'true' : 'false';
+        googleAuthMainBtn.title = user ? 'Google connected' : 'Connect Google';
+      }
+      if (googleAuthMainLabel) {
+        googleAuthMainLabel.textContent = user ? 'Connected' : 'Google';
+      }
+    }
+
+    function openGoogleAuthModal() {
+      const user = googleSignedInUser();
+      const statusEl = document.getElementById('google-auth-upsell-status') as HTMLElement | null;
+      const signInLabel = document.getElementById('google-auth-upsell-sign-in-label') as HTMLElement | null;
+      if (statusEl) {
+        statusEl.textContent = user
+          ? `Signed in as ${String(user.email ?? user.name ?? 'Google user')}.`
+          : 'Sign in to unlock backend-powered quick scan.';
+      }
+      if (signInLabel) {
+        signInLabel.textContent = user ? 'Switch Google Account' : 'Sign in with Google';
+      }
+      openModal(googleAuthUpsellModal);
+    }
+
     function maybeOpenGoogleAuthUpsell() {
       if (googleAuthUpsellEvaluated) return;
       const server = serverRuntimeSummary();
@@ -743,7 +779,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (statusEl) {
         statusEl.textContent = 'Continue without signing in if you want, but backend-powered quick scan will stay unavailable.';
       }
-      openModal(googleAuthUpsellModal);
+      openGoogleAuthModal();
     }
 
     async function submitServerSettings() {
@@ -4040,6 +4076,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       renderLibraryPanel();
       renderActivityPanel();
+      syncGoogleAuthEntryPoint();
       maybeOpenGoogleAuthUpsell();
     }
 
@@ -5358,6 +5395,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     document.getElementById('save-edit-metadata-btn')?.addEventListener('click', () => {
       void saveEditMetadataModal();
+    });
+    googleAuthMainBtn?.addEventListener('click', () => {
+      openGoogleAuthModal();
     });
     document.getElementById('google-auth-upsell-sign-in-btn')?.addEventListener('click', () => {
       dismissGoogleAuthUpsell();

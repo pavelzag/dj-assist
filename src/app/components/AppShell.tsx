@@ -42,6 +42,10 @@ export default function AppShell({
             <span className="badge" id="hidden-count-badge">Shown: 0</span>
           </div>
           <div className="header-global-actions">
+            <button type="button" className="google-auth-main-btn" id="google-auth-main-btn" title="Connect Google">
+              <span className="google-mark" aria-hidden="true">G</span>
+              <span id="google-auth-main-label">Google</span>
+            </button>
             <button type="button" className="icon-btn" id="mute-btn" aria-pressed="false" title="Mute">Mute</button>
           </div>
         </div>
@@ -246,7 +250,7 @@ export default function AppShell({
       <div className="modal" id="google-auth-upsell-modal" aria-hidden="true">
         <div className="modal-card google-auth-upsell-card">
           <div className="modal-head">
-            <h3>Speed Up Scans</h3>
+            <h3>Connect Google</h3>
             <button className="close" id="close-google-auth-upsell" type="button">&times;</button>
           </div>
           <div className="metadata-editor">
@@ -261,7 +265,10 @@ export default function AppShell({
               You can continue without signing in, but backend-powered quick scan will stay unavailable.
             </div>
             <div className="buttons">
-              <button className="btn" id="google-auth-upsell-sign-in-btn" type="button">Sign in with Google</button>
+              <button className="google-sign-in-primary" id="google-auth-upsell-sign-in-btn" type="button">
+                <span className="google-mark" aria-hidden="true">G</span>
+                <span id="google-auth-upsell-sign-in-label">Sign in with Google</span>
+              </button>
               <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button">Continue Without Sign-In</button>
             </div>
           </div>

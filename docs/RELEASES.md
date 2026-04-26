@@ -5,6 +5,7 @@
 - Google sign-in uses OAuth PKCE with a Desktop App client ID only.
 - Users no longer need to provide a Google client secret or service-account key for Gmail/Google account connection.
 - GitHub release builds embed `GOOGLE_CLIENT_ID` from a repository variable or secret so paying clients are not asked for OAuth setup.
+- Manual release workflow runs without an explicit tag automatically bump the patch version, commit it, tag it, and build that version.
 
 This project currently has one automated release target that is ready to ship:
 
@@ -105,6 +106,8 @@ That gives you:
 The workflow at [release.yml](/Users/pavel/Projects/dj-assist/.github/workflows/release.yml):
 
 - runs on `v*` tags
+- on manual runs without a tag, bumps `package.json` and `package-lock.json` from `vX.Y.Z` to `vX.Y.(Z+1)`
+- on manual runs with a tag, skips version bumping and builds the requested tag
 - builds macOS release artifacts
 - requires `GOOGLE_CLIENT_ID` as a GitHub repository variable or secret
 - uploads `.dmg` and `.zip`
