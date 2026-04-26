@@ -739,10 +739,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (googleAuthMainBtn) {
         googleAuthMainBtn.hidden = !googleConfigured;
         googleAuthMainBtn.dataset.connected = user ? 'true' : 'false';
-        googleAuthMainBtn.title = user ? 'Google connected' : 'Connect Google';
+        googleAuthMainBtn.title = user ? `Google connected: ${String(user.email ?? user.name ?? 'signed in')}` : 'Google signed out';
       }
       if (googleAuthMainLabel) {
-        googleAuthMainLabel.textContent = user ? 'Connected' : 'Google';
+        googleAuthMainLabel.textContent = user ? 'Connected' : 'Signed out';
       }
     }
 
@@ -750,14 +750,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const user = googleSignedInUser();
       const statusEl = document.getElementById('google-auth-upsell-status') as HTMLElement | null;
       const signInLabel = document.getElementById('google-auth-upsell-sign-in-label') as HTMLElement | null;
+      const signOutBtn = document.getElementById('google-auth-modal-sign-out-btn') as HTMLButtonElement | null;
+      const declineBtn = document.getElementById('google-auth-upsell-decline-btn') as HTMLButtonElement | null;
       if (statusEl) {
         statusEl.textContent = user
           ? `Signed in as ${String(user.email ?? user.name ?? 'Google user')}.`
-          : 'Sign in to unlock backend-powered quick scan.';
+          : 'Signed out. Sign in to unlock backend-powered quick scan.';
       }
       if (signInLabel) {
         signInLabel.textContent = user ? 'Switch Google Account' : 'Sign in with Google';
       }
+      if (signOutBtn) signOutBtn.hidden = !user;
+      if (declineBtn) declineBtn.hidden = Boolean(user);
       openModal(googleAuthUpsellModal);
     }
 
@@ -829,11 +833,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const response = await fetch('/api/auth/logout', { method: 'POST' });
       if (!response.ok) {
         showToast('Could not sign out.', 'error');
-        return;
+        return false;
       }
       await loadRuntimeHealth();
       renderLibraryPanel();
       showToast('Signed out of Google.', 'success');
+      return true;
     }
 
     async function submitGoogleOauthCredentials() {
@@ -5402,6 +5407,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     document.getElementById('google-auth-upsell-sign-in-btn')?.addEventListener('click', () => {
       dismissGoogleAuthUpsell();
       void signInWithGoogle();
+    });
+    document.getElementById('google-auth-modal-sign-out-btn')?.addEventListener('click', () => {
+      void (async () => {
+        const signedOut = await logoutGoogleAuth();
+        if (signedOut) openGoogleAuthModal();
+      })();
     });
     document.getElementById('google-auth-upsell-decline-btn')?.addEventListener('click', () => {
       dismissGoogleAuthUpsell();

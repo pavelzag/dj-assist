@@ -226,6 +226,13 @@ export async function effectiveUserData(): Promise<UserData> {
   const settings = await loadRuntimeSettings();
   const auth = settings.auth;
   if (auth?.provider === 'google' && auth.id) {
+    if (!isUsableGoogleAuth(auth)) {
+      await clearAuthSettings();
+      return {
+        type: 'anonymous',
+        id: await getClientId(),
+      };
+    }
     return {
       type: 'google',
       id: auth.id,
@@ -240,6 +247,26 @@ export async function effectiveUserData(): Promise<UserData> {
     type: 'anonymous',
     id: await getClientId(),
   };
+}
+
+function isUsableGoogleAuth(auth: AuthSettings): boolean {
+  const token = String(auth.idToken ?? '').trim();
+  if (!token) return false;
+  const expiresAt = googleIdTokenExpiresAt(token);
+  if (!expiresAt) return false;
+  return expiresAt > Date.now() + 30_000;
+}
+
+function googleIdTokenExpiresAt(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
+    const exp = Number(payload.exp);
+    return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 export function publicUserSummary(user: UserData) {
