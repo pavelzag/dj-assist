@@ -2,9 +2,9 @@
 
 ## v0.5.0
 
-- Google sign-in uses OAuth PKCE with a Desktop App client ID only.
-- Users no longer need to provide a Google client secret or service-account key for Gmail/Google account connection.
-- GitHub release builds embed `GOOGLE_CLIENT_ID` from a repository variable or secret so paying clients are not asked for OAuth setup.
+- Google sign-in uses OAuth PKCE with Desktop App OAuth credentials embedded at build time.
+- Users no longer need to provide OAuth credentials or a service-account key for Gmail/Google account connection.
+- GitHub release builds embed `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from repository configuration so paying clients are not asked for OAuth setup.
 - Manual release workflow runs without an explicit tag automatically bump the patch version, commit it, tag it, and build that version.
 
 This project currently has one automated release target that is ready to ship:
@@ -110,6 +110,7 @@ The workflow at [release.yml](/Users/pavel/Projects/dj-assist/.github/workflows/
 - on manual runs with a tag, skips version bumping and builds the requested tag
 - builds macOS release artifacts
 - requires `GOOGLE_CLIENT_ID` as a GitHub repository variable or secret
+- requires `GOOGLE_CLIENT_SECRET` as a GitHub repository secret
 - uploads `.dmg` and `.zip`
 - creates a GitHub release
 - marks `-beta` and `-rc` style tags as prereleases

@@ -8,7 +8,6 @@ const sourceStatic = path.join(repoRoot, '.next', 'static');
 const targetStatic = path.join(standaloneNextRoot, 'static');
 const sourcePublic = path.join(repoRoot, 'public');
 const targetPublic = path.join(standaloneRoot, 'public');
-const sourceEnvLocal = path.join(repoRoot, '.env.local');
 const targetEnvLocal = path.join(standaloneRoot, '.env.local');
 
 function copyTree(source, target) {
@@ -30,13 +29,11 @@ function main() {
 
   copyTree(sourceStatic, targetStatic);
   copyTree(sourcePublic, targetPublic);
-  if (fs.existsSync(sourceEnvLocal)) {
-    fs.copyFileSync(sourceEnvLocal, targetEnvLocal);
-    console.log(`Prepared standalone env file at ${targetEnvLocal}`);
-  }
+  fs.rmSync(targetEnvLocal, { force: true });
 
   console.log(`Prepared standalone static assets at ${targetStatic}`);
   console.log(`Prepared standalone public assets at ${targetPublic}`);
+  console.log(`Skipped standalone env file at ${targetEnvLocal}`);
 }
 
 main();

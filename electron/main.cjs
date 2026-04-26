@@ -25,8 +25,12 @@ function readBundledBuildEnv() {
 function applyBundledBuildEnv() {
   const buildEnv = readBundledBuildEnv();
   const googleClientId = String(buildEnv.GOOGLE_CLIENT_ID ?? '').trim();
+  const googleClientSecret = String(buildEnv.GOOGLE_CLIENT_SECRET ?? '').trim();
   if (googleClientId && !process.env.GOOGLE_CLIENT_ID) {
     process.env.GOOGLE_CLIENT_ID = googleClientId;
+  }
+  if (googleClientSecret && !process.env.GOOGLE_CLIENT_SECRET) {
+    process.env.GOOGLE_CLIENT_SECRET = googleClientSecret;
   }
 }
 
@@ -76,6 +80,18 @@ let quitConfirmed = false;
 let quitPromptOpen = false;
 let quitRequestPending = false;
 let splashShownAt = 0;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
 
 function appIconDataUrl() {
   try {
@@ -247,7 +263,6 @@ function applyManagedRuntimeEnv() {
   if (googleOauthSettings && !process.env.GOOGLE_CLIENT_ID) {
     process.env.GOOGLE_CLIENT_ID = googleOauthSettings.clientId;
   }
-  delete process.env.GOOGLE_CLIENT_SECRET;
   const bundledPython = resolveBundledPythonPath();
   delete process.env.DJ_ASSIST_BUNDLED_PYTHON_ERROR;
   if (bundledPython && validateBundledPythonPath(bundledPython)) {
@@ -427,7 +442,7 @@ async function ensureManagedServer() {
   if (!shouldManageServer()) return;
 
   const host = DEFAULT_HOST;
-  const explicitPort = process.env.DJ_ASSIST_ELECTRON_PORT || process.env.PORT;
+  const explicitPort = process.env.DJ_ASSIST_ELECTRON_PORT;
   let port = explicitPort ? String(explicitPort) : String(await findAvailablePort(3000));
   let rootUrl = `http://${host}:${port}`;
   const mode = serverMode();
@@ -684,33 +699,35 @@ ipcMain.handle('desktop:cancel-quit', async () => {
   return true;
 });
 
-app.whenReady().then(() => {
-  app.setName('DJ Assist');
-  registerMediaProtocol();
-  appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
-  applyManagedRuntimeEnv();
-  appendMainLog(
-    `Runtime env: db=${process.env.DJ_ASSIST_DB_PATH || 'unset'} python=${process.env.PYTHON_EXECUTABLE || 'unset'} fpcalc=${process.env.FPCALC_PATH || 'unset'}`,
-  );
-  if (process.platform === 'darwin' && app.dock) {
-    const dockIcon = nativeImage.createFromPath(APP_ICON_PATH);
-    if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
-  }
-  createMainWindow();
-  ensureManagedServer()
-    .then(() => {
-      void loadMainRenderer();
+if (hasSingleInstanceLock) {
+  app.whenReady().then(() => {
+    app.setName('DJ Assist');
+    registerMediaProtocol();
+    appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
+    applyManagedRuntimeEnv();
+    appendMainLog(
+      `Runtime env: db=${process.env.DJ_ASSIST_DB_PATH || 'unset'} python=${process.env.PYTHON_EXECUTABLE || 'unset'} fpcalc=${process.env.FPCALC_PATH || 'unset'}`,
+    );
+    if (process.platform === 'darwin' && app.dock) {
+      const dockIcon = nativeImage.createFromPath(APP_ICON_PATH);
+      if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
+    }
+    createMainWindow();
+    ensureManagedServer()
+      .then(() => {
+        void loadMainRenderer();
 
-      app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+        app.on('activate', () => {
+          if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+        });
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        appendMainLog(`ensureManagedServer failed: ${message}`);
+        showDiagnosticWindow('DJ Assist could not start', 'The local desktop backend did not load.', message);
       });
-    })
-    .catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      appendMainLog(`ensureManagedServer failed: ${message}`);
-      showDiagnosticWindow('DJ Assist could not start', 'The local desktop backend did not load.', message);
-    });
-});
+  });
+}
 
 process.on('uncaughtException', (error) => {
   const message = error instanceof Error ? error.stack || error.message : String(error);

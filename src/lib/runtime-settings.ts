@@ -10,6 +10,7 @@ export type SpotifyCredentials = {
 
 export type GoogleOauthCredentials = {
   clientId: string;
+  clientSecret?: string;
 };
 
 type RuntimeSettings = {
@@ -73,6 +74,7 @@ export type GoogleOauthSettingsSummary = {
   configured: boolean;
   source: 'saved' | 'env' | 'none';
   client_id_masked: string | null;
+  has_secret: boolean;
   missing: string[];
 };
 
@@ -342,9 +344,11 @@ export function applySpotifyCredentialsToEnv(credentials: Partial<SpotifyCredent
 
 export function applyGoogleOauthCredentialsToEnv(credentials: Partial<GoogleOauthCredentials> | null | undefined) {
   const clientId = String(credentials?.clientId ?? '').trim();
+  const clientSecret = String(credentials?.clientSecret ?? '').trim();
   if (clientId) process.env.GOOGLE_CLIENT_ID = clientId;
   else delete process.env.GOOGLE_CLIENT_ID;
-  delete process.env.GOOGLE_CLIENT_SECRET;
+  if (clientSecret) process.env.GOOGLE_CLIENT_SECRET = clientSecret;
+  else delete process.env.GOOGLE_CLIENT_SECRET;
 }
 
 export async function effectiveSpotifyCredentials(): Promise<{
@@ -390,13 +394,15 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
   summary: GoogleOauthSettingsSummary;
 }> {
   const envId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
+  const envSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
   if (envId) {
     return {
-      credentials: { clientId: envId },
+      credentials: { clientId: envId, ...(envSecret ? { clientSecret: envSecret } : {}) },
       summary: {
         configured: true,
         source: 'env',
         client_id_masked: maskClientId(envId),
+        has_secret: Boolean(envSecret),
         missing: [],
       },
     };
@@ -404,13 +410,15 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
 
   const settings = await loadRuntimeSettings();
   const savedId = String(settings.googleOauth?.clientId ?? '').trim();
+  const savedSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
   if (savedId) {
     return {
-      credentials: { clientId: savedId },
+      credentials: { clientId: savedId, ...(savedSecret ? { clientSecret: savedSecret } : {}) },
       summary: {
         configured: true,
         source: 'saved',
         client_id_masked: maskClientId(savedId),
+        has_secret: Boolean(savedSecret),
         missing: [],
       },
     };
@@ -422,6 +430,7 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
       configured: false,
       source: 'none',
       client_id_masked: null,
+      has_secret: false,
       missing: ['GOOGLE_CLIENT_ID'],
     },
   };
