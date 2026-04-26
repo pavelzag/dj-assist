@@ -13,7 +13,6 @@ function optionalValue(name) {
 
 const buildEnv = {
   GOOGLE_CLIENT_ID: optionalValue('GOOGLE_CLIENT_ID'),
-  GOOGLE_CLIENT_SECRET: optionalValue('GOOGLE_CLIENT_SECRET'),
 };
 
 fs.writeFileSync(outputPath, `${JSON.stringify(buildEnv, null, 2)}\n`, 'utf8');

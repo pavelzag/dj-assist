@@ -15,6 +15,7 @@
     "prepare:audio-tools": "node scripts/prepare-audio-tools.cjs",
     "prepare:python-bundle": "node scripts/prepare-python-bundle.cjs",
     "prepare:standalone-assets": "node scripts/prepare-standalone-assets.cjs",
+    "verify:google-oauth": "node scripts/verify-google-oauth.cjs",
     "prebuild": "node scripts/check-node.cjs",
     "build": "next build",
     "dist:mac": "npm run prepare:build-env && npm run build && npm run prepare:standalone-assets && npm run prepare:python-bundle && npm run prepare:audio-tools && electron-builder --mac dmg zip",

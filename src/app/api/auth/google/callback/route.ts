@@ -10,10 +10,12 @@ import {
   stringOrUndefined,
   verifyGoogleIdToken,
 } from '@/lib/google-auth';
+import { appendAuthLog, createAuthDiagnosticId, maskValue } from '@/lib/auth-log';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
+  const diagnosticId = createAuthDiagnosticId();
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
   const clientId = String(googleOauth.credentials?.clientId ?? '').trim();
@@ -26,22 +28,80 @@ export async function GET(request: NextRequest) {
   const expectedState = pendingAuth?.state ?? '';
   const verifier = pendingAuth?.verifier ?? '';
   const expectedNonce = pendingAuth?.nonce ?? '';
+  const requestOrigin = new URL(request.url).origin;
+
+  await appendAuthLog({
+    id: diagnosticId,
+    level: 'info',
+    event: 'google_oauth_callback_received',
+    message: 'Received Google OAuth callback.',
+    context: {
+      request_origin: requestOrigin,
+      credential_source: googleOauth.summary.source,
+      client_id_masked: maskValue(clientId),
+      has_secret: Boolean(clientSecret),
+      has_code: Boolean(code),
+      has_state: Boolean(state),
+      has_pending_session: Boolean(pendingAuth),
+      state_matches: Boolean(state && expectedState && state === expectedState),
+      callback_error: oauthError || undefined,
+      scope: searchParams.get('scope') ?? undefined,
+    },
+  });
 
   if (!clientId) {
-    return authResultResponse(request, 'error', 'Google sign-in is not configured.');
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'error',
+      event: 'google_oauth_missing_client_id',
+      message: 'Google OAuth callback cannot continue because no client ID is configured.',
+      context: { credential_source: googleOauth.summary.source },
+    });
+    return authResultResponse(request, 'error', 'Google sign-in is not configured.', diagnosticId);
   }
 
   if (oauthError) {
     await clearPendingGoogleAuthSession();
-    return authResultResponse(request, 'error', googleErrorMessage(oauthError));
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'warning',
+      event: 'google_oauth_provider_error',
+      message: 'Google returned an OAuth error.',
+      context: { error: oauthError },
+    });
+    return authResultResponse(request, 'error', googleErrorMessage(oauthError), diagnosticId);
   }
 
   if (!code || !state || !expectedState || state !== expectedState || !verifier || !expectedNonce) {
     await clearPendingGoogleAuthSession();
-    return authResultResponse(request, 'error', 'Google sign-in could not be verified.');
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'error',
+      event: 'google_oauth_state_verification_failed',
+      message: 'Google OAuth state, verifier, or nonce was missing or invalid.',
+      context: {
+        has_code: Boolean(code),
+        has_state: Boolean(state),
+        has_expected_state: Boolean(expectedState),
+        state_matches: Boolean(state && expectedState && state === expectedState),
+        has_verifier: Boolean(verifier),
+        has_expected_nonce: Boolean(expectedNonce),
+      },
+    });
+    return authResultResponse(request, 'error', 'Google sign-in could not be verified.', diagnosticId);
   }
 
   const redirectUri = new URL('/api/auth/google/callback', request.url).toString();
+  await appendAuthLog({
+    id: diagnosticId,
+    level: 'info',
+    event: 'google_oauth_token_exchange_start',
+    message: 'Exchanging Google OAuth authorization code for tokens.',
+    context: {
+      redirect_uri: redirectUri,
+      has_client_secret: Boolean(clientSecret),
+    },
+  });
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -58,14 +118,35 @@ export async function GET(request: NextRequest) {
 
   if (!tokenResponse.ok) {
     await clearPendingGoogleAuthSession();
-    return authResultResponse(request, 'error', await tokenFailureMessage(tokenResponse));
+    const failure = await tokenFailureMessage(tokenResponse);
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'error',
+      event: 'google_oauth_token_exchange_failed',
+      message: 'Google OAuth token exchange failed.',
+      context: {
+        status: tokenResponse.status,
+        status_text: tokenResponse.statusText,
+        failure,
+        has_client_secret: Boolean(clientSecret),
+        redirect_uri: redirectUri,
+      },
+    });
+    return authResultResponse(request, 'error', failure, diagnosticId);
   }
 
   const tokens = await tokenResponse.json() as Record<string, unknown>;
   const idToken = String(tokens.id_token ?? '').trim();
   if (!idToken) {
     await clearPendingGoogleAuthSession();
-    return authResultResponse(request, 'error', 'Google sign-in returned no user identity.');
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'error',
+      event: 'google_oauth_missing_id_token',
+      message: 'Google OAuth token response did not include an ID token.',
+      context: { token_keys: Object.keys(tokens).sort() },
+    });
+    return authResultResponse(request, 'error', 'Google sign-in returned no user identity.', diagnosticId);
   }
 
   try {
@@ -84,16 +165,35 @@ export async function GET(request: NextRequest) {
       idToken,
     });
     await clearPendingGoogleAuthSession();
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'info',
+      event: 'google_oauth_success',
+      message: 'Google OAuth sign-in completed.',
+      context: {
+        email: identity.email,
+        email_verified: identity.emailVerified,
+      },
+    });
   } catch (error) {
     await clearPendingGoogleAuthSession();
+    const message = error instanceof Error ? error.message : 'Google sign-in could not be verified.';
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'error',
+      event: 'google_oauth_identity_verification_failed',
+      message: 'Google ID token verification failed.',
+      context: { failure: message },
+    });
     return authResultResponse(
       request,
       'error',
-      error instanceof Error ? error.message : 'Google sign-in could not be verified.',
+      message,
+      diagnosticId,
     );
   }
 
-  return authResultResponse(request, 'success', 'Google sign-in connected. You can return to DJ Assist.');
+  return authResultResponse(request, 'success', 'Google sign-in connected. You can return to DJ Assist.', diagnosticId);
 }
 
 async function tokenFailureMessage(response: Response): Promise<string> {
@@ -117,13 +217,14 @@ function googleErrorMessage(code: string): string {
   }
 }
 
-function authResultResponse(request: NextRequest, kind: 'success' | 'error', message: string) {
+function authResultResponse(request: NextRequest, kind: 'success' | 'error', message: string, diagnosticId?: string) {
   const appUrl = new URL('/', request.url).toString();
   const response = new NextResponse(
     renderAuthResultHtml({
       appUrl,
       kind,
       message,
+      diagnosticId,
     }),
     {
       headers: {
@@ -135,11 +236,12 @@ function authResultResponse(request: NextRequest, kind: 'success' | 'error', mes
   return response;
 }
 
-function renderAuthResultHtml(input: { appUrl: string; kind: 'success' | 'error'; message: string }) {
+function renderAuthResultHtml(input: { appUrl: string; kind: 'success' | 'error'; message: string; diagnosticId?: string }) {
   const title = input.kind === 'success' ? 'Google Sign-In Complete' : 'Google Sign-In Failed';
   const accent = input.kind === 'success' ? '#1f7a45' : '#b33a3a';
   const safeMessage = escapeHtml(input.message);
   const safeUrl = escapeHtml(input.appUrl);
+  const safeDiagnosticId = escapeHtml(input.diagnosticId ?? '');
 
   return `<!doctype html>
 <html lang="en">
@@ -192,6 +294,14 @@ function renderAuthResultHtml(input: { appUrl: string; kind: 'success' | 'error'
         font-size: 15px;
         line-height: 1.55;
       }
+      code {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 6px 9px;
+        border-radius: 8px;
+        background: rgba(24, 21, 18, 0.08);
+        font-size: 12px;
+      }
       a {
         display: inline-block;
         margin-top: 18px;
@@ -205,6 +315,7 @@ function renderAuthResultHtml(input: { appUrl: string; kind: 'success' | 'error'
       <div class="badge">${input.kind === 'success' ? 'Connected' : 'Needs Attention'}</div>
       <h1>${title}</h1>
       <p>${safeMessage}</p>
+      ${safeDiagnosticId ? `<code>Diagnostic ID: ${safeDiagnosticId}</code>` : ''}
       <a href="${safeUrl}">Return to DJ Assist</a>
     </main>
     <script>

@@ -220,7 +220,7 @@ All configuration is via environment variables (`.env.local` for local dev).
 | `DJ_ASSIST_ELECTRON_PORT` | `3000` | Port the Next.js server listens on |
 | `DJ_ASSIST_ELECTRON_HOST` | `127.0.0.1` | Host the Next.js server binds to |
 
-Google sign-in expects a Google OAuth client of type `Desktop app`. Release builds embed `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from GitHub Actions configuration so end users only see **Sign in with Google**. This is not a service-account key; Google treats installed-app client secrets as app credentials rather than user-facing secrets.
+Google sign-in expects a Google OAuth client of type `Desktop app`. Release builds embed `GOOGLE_CLIENT_ID` from GitHub Actions configuration so end users only see **Sign in with Google**. The desktop loopback flow uses PKCE and does not depend on a bundled client secret.
 
 Spotify credentials can also be saved from within the app under **Settings → Spotify**.
 
