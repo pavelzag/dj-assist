@@ -132,6 +132,7 @@ jobs:
             git add package.json package-lock.json
             git commit -m "chore: release ${tag}"
             git tag "${tag}"
+            release_sha="$(git rev-parse HEAD)"
             git push origin HEAD:${GITHUB_REF_NAME}
             git push origin "${tag}"
           else
@@ -143,10 +144,12 @@ jobs:
             git fetch --tags origin "${tag}"
             git checkout "${tag}"
             version="${tag#v}"
+            release_sha="$(git rev-parse HEAD)"
           fi
 
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha=${release_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Install Chromaprint
         run: brew install chromaprint
@@ -211,7 +214,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ steps.version.outputs.sha }}
           files: |
             dist-electron/*.dmg
             dist-electron/*.zip
