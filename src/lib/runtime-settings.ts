@@ -402,13 +402,14 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
   const envId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
   const envSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
   if (envId) {
+    const mergedSecret = envSecret || (savedId && savedId === envId ? savedSecret : '');
     return {
-      credentials: { clientId: envId, ...(envSecret ? { clientSecret: envSecret } : {}) },
+      credentials: { clientId: envId, ...(mergedSecret ? { clientSecret: mergedSecret } : {}) },
       summary: {
         configured: true,
         source: 'env',
         client_id_masked: maskClientId(envId),
-        has_secret: Boolean(envSecret),
+        has_secret: Boolean(mergedSecret),
         missing: [],
       },
     };

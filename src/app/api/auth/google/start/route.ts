@@ -40,6 +40,10 @@ export async function GET(request: NextRequest) {
   const savedClientSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
   const envClientId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
   const envClientSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
+  const resolvedIdFrom = envClientId ? 'env' : (savedClientId ? 'saved' : 'none');
+  const resolvedSecretFrom = envClientSecret
+    ? 'env'
+    : (savedClientSecret && savedClientId === clientId ? 'saved' : 'none');
 
   await appendAuthLog({
     id: diagnosticId,
@@ -55,8 +59,11 @@ export async function GET(request: NextRequest) {
       env_has_secret: Boolean(envClientSecret),
       saved_client_id_masked: maskClientId(savedClientId),
       saved_has_secret: Boolean(savedClientSecret),
-      effective_id_from: envClientId ? 'env' : (savedClientId ? 'saved' : 'none'),
-      effective_secret_from: envClientSecret ? 'env' : (savedClientSecret ? 'saved' : 'none'),
+      effective_id_from: resolvedIdFrom,
+      effective_secret_from: resolvedSecretFrom,
+      effective_has_secret: Boolean(clientSecret),
+      env_saved_client_id_match: Boolean(envClientId && savedClientId && envClientId === savedClientId),
+      effective_client_id_matches_saved: Boolean(clientId && savedClientId && clientId === savedClientId),
     },
   });
 
@@ -126,6 +133,7 @@ export async function GET(request: NextRequest) {
       redirect_uri: session.redirectUri,
       port: session.port,
       has_secret: Boolean(clientSecret),
+      effective_secret_from: resolvedSecretFrom,
       flow: 'desktop_loopback',
       redirect_uri_kind: session.redirectUri.startsWith('http://127.0.0.1:') ? 'loopback' : 'other',
       oauth_client_hint: clientSecret ? 'confidential_or_web' : 'public_or_desktop',
@@ -223,6 +231,7 @@ async function handleLoopbackCallback(
         context: {
           redirect_uri: input.redirectUri,
           has_client_secret: Boolean(String(input.clientSecret ?? '').trim()),
+          client_secret_length: String(input.clientSecret ?? '').trim().length || 0,
         },
       });
 

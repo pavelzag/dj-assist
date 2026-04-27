@@ -20,6 +20,12 @@ export async function GET(request: NextRequest) {
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
   const clientId = String(googleOauth.credentials?.clientId ?? '').trim();
   const clientSecret = String(googleOauth.credentials?.clientSecret ?? '').trim();
+  const envClientId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
+  const envClientSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
+  const resolvedIdFrom = envClientId ? 'env' : (clientId ? googleOauth.summary.source : 'none');
+  const resolvedSecretFrom = envClientSecret
+    ? 'env'
+    : (clientSecret ? googleOauth.summary.source : 'none');
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code') ?? '';
   const state = searchParams.get('state') ?? '';
@@ -40,6 +46,11 @@ export async function GET(request: NextRequest) {
       credential_source: googleOauth.summary.source,
       client_id_masked: maskValue(clientId),
       has_secret: Boolean(clientSecret),
+      env_client_id_masked: maskValue(envClientId),
+      env_has_secret: Boolean(envClientSecret),
+      effective_id_from: resolvedIdFrom,
+      effective_secret_from: resolvedSecretFrom,
+      effective_has_secret: Boolean(clientSecret),
       has_code: Boolean(code),
       has_state: Boolean(state),
       has_pending_session: Boolean(pendingAuth),
@@ -108,6 +119,8 @@ export async function GET(request: NextRequest) {
     context: {
       redirect_uri: redirectUri,
       has_client_secret: Boolean(clientSecret),
+      client_secret_length: clientSecret.length || 0,
+      effective_secret_from: resolvedSecretFrom,
     },
   });
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
