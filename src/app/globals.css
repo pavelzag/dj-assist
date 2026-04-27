@@ -1160,22 +1160,6 @@ body[data-list-density="compact"] .row span {
 }
 
 @media (max-width: 1500px) {
-  main {
-    grid-template-columns: 1fr;
-  }
-  .details-pane {
-    order: 1;
-  }
-  .songs-pane {
-    order: 2;
-  }
-  .list {
-    height: min(460px, var(--pane-height));
-  }
-  .detail {
-    height: min(560px, var(--pane-height));
-    min-height: min(420px, var(--pane-height));
-  }
   .row {
     grid-template-columns: 32px 40px minmax(0, 1.7fr) 74px 68px 68px;
     gap: 10px;
@@ -1303,6 +1287,8 @@ body[data-list-density="compact"] .row span {
 @media (max-width: 960px) {
   :root { --top-utility-height: 132px; }
   main { grid-template-columns: 1fr; }
+  .details-pane { order: 1; }
+  .songs-pane { order: 2; }
   .list, .detail { height: auto; min-height: unset; }
   .hero { grid-template-columns: 1fr; }
   .hero-cover { width: 100%; max-width: 260px; }
