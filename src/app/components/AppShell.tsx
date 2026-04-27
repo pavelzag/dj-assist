@@ -16,7 +16,6 @@ export default function AppShell({
             <span className="app-version-badge" title="Application version">{`v${appVersion}`}</span>
           </div>
           <div className="quick-actions">
-            <button type="button" className="icon-btn" id="open-command-palette-btn" title="Command palette">Cmd/K</button>
             <button type="button" className="btn" id="quick-choose-folder-btn">Choose Folder</button>
             <span className="scan-status" id="scan-status">Idle</span>
             <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
@@ -27,7 +26,7 @@ export default function AppShell({
               </div>
             </div>
           </div>
-          <div className="search-shortcut-hint">Use <strong>F</strong> or <strong>/</strong> to search</div>
+          <div className="search-shortcut-hint">Use <strong>/</strong> to search</div>
           <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album..." aria-label="Search collection" />
           <div className="filters">
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
@@ -36,10 +35,7 @@ export default function AppShell({
             <label>
               <input id="hide-unknown-artists" type="checkbox" /> Hide unknown artists
             </label>
-            <div className="quick-filter-bar" id="quick-filter-bar">
-              <button type="button" className="quick-filter-btn" data-filter="high-bitrate">High bitrate</button>
-            </div>
-            <span className="badge" id="hidden-count-badge">Shown: 0</span>
+            <div className="quick-filter-bar" id="quick-filter-bar" />
           </div>
           <div className="header-global-actions">
             <button type="button" className="google-auth-main-btn" id="google-auth-main-btn" title="Connect Google">
@@ -268,7 +264,7 @@ export default function AppShell({
                 <span id="google-auth-upsell-sign-in-label">Sign in with Google</span>
               </button>
               <button className="btn secondary" id="google-auth-modal-sign-out-btn" type="button" hidden>Sign out</button>
-              <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button">Continue Without Sign-In</button>
+              <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button" hidden>Continue Without Sign-In</button>
             </div>
           </div>
         </div>

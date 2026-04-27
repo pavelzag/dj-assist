@@ -4225,7 +4225,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             </div>
           </section>
-          <section class="library-card">
+          <section class="library-card" hidden>
             <div class="scan-log-head"><strong>Fast Scan Server</strong></div>
             <div class="preferences-list">
               <label class="preference-row"><input id="server-sync-enabled" type="checkbox" ${serverRuntimeSummary()?.enabled !== false ? 'checked' : ''} /><span>Send scan results to DJ Assist Server</span></label>
@@ -4258,7 +4258,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             </div>
           </section>
-          <section class="library-card">
+          <section class="library-card" hidden>
             <div class="scan-log-head"><strong>Spotify Credentials</strong></div>
             <div class="preferences-list">
               <label class="preference-field">
@@ -4276,7 +4276,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             </div>
           </section>
-          <section class="library-card">
+          <section class="library-card" hidden>
             <div class="scan-log-head"><strong>Smart Crates</strong></div>
             <div class="chips">
               ${smartCrates.map((crate) => `<button type="button" class="chip nav-chip smart-crate-btn" data-query="${esc(crate.query)}">${esc(crate.label)} · ${esc(crate.count)}</button>`).join('')}
@@ -4285,7 +4285,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               ${tags.slice(0, 12).map((tag) => `<button type="button" class="chip nav-chip tag-filter-btn" data-tag="${esc(tag.tag)}">${esc(tag.tag)} · ${esc(tag.count)}</button>`).join('') || '<span class="chip subtle">No tags yet</span>'}
             </div>
           </section>
-          <section class="library-card">
+          <section class="library-card" hidden>
             <div class="scan-log-head"><strong>Artist Browser</strong></div>
             <div class="scan-history">
               ${artists.map((artist) => `
@@ -4618,7 +4618,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (activityLogAutoRefreshTimer) clearInterval(activityLogAutoRefreshTimer);
       activityLogAutoRefreshTimer = setInterval(() => {
         flushPendingScanLogs();
-        if (currentPanel === 'activity' && !readCollapsedState(frontendLogCollapsedKey, false)) {
+        if (currentPanel === 'activity' && !readCollapsedState(frontendLogCollapsedKey, true)) {
           void loadClientLogFeed({ silent: true });
         }
       }, 3000);
@@ -4626,16 +4626,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         bodyId: 'activity-log-section-body',
         controlId: 'activity-log-title',
         storageKey: activityScanLogCollapsedKey,
-        fallbackCollapsed: preferences.collapseScanLog,
+        fallbackCollapsed: true,
       });
       syncCollapsibleLogSection({
         bodyId: 'frontend-log-section-body',
         controlId: 'frontend-log-title',
         storageKey: frontendLogCollapsedKey,
+        fallbackCollapsed: true,
       });
       renderServerCallSummary();
       flushPendingScanLogs();
-      if (!readCollapsedState(frontendLogCollapsedKey, false)) {
+      if (!readCollapsedState(frontendLogCollapsedKey, true)) {
         void loadClientLogFeed({ force: true, silent: false });
       }
     }
