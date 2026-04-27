@@ -1,6 +1,12 @@
 import http from 'node:http';
 import { NextRequest, NextResponse } from 'next/server';
-import { createLoopbackRedirectUri, createDesktopAuthState, createGoogleDesktopAuthUrl, exchangeGoogleDesktopAuthCode } from '@/lib/google-desktop-auth';
+import {
+  GoogleDesktopTokenExchangeError,
+  createLoopbackRedirectUri,
+  createDesktopAuthState,
+  createGoogleDesktopAuthUrl,
+  exchangeGoogleDesktopAuthCode,
+} from '@/lib/google-desktop-auth';
 import { createPkceChallenge } from '@/lib/google-auth';
 import {
   applyGoogleOauthCredentialsToEnv,
@@ -11,6 +17,7 @@ import {
 } from '@/lib/runtime-settings';
 import { appendAuthLog, createAuthDiagnosticId, maskValue } from '@/lib/auth-log';
 import { verifyGoogleIdToken, stringOrUndefined } from '@/lib/google-auth';
+import { loadRuntimeSettings, maskClientId } from '@/lib/runtime-settings';
 
 export const runtime = 'nodejs';
 
@@ -27,6 +34,12 @@ export async function GET(request: NextRequest) {
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
   const clientId = String(googleOauth.credentials?.clientId ?? '').trim();
+  const clientSecret = String(googleOauth.credentials?.clientSecret ?? '').trim();
+  const settings = await loadRuntimeSettings();
+  const savedClientId = String(settings.googleOauth?.clientId ?? '').trim();
+  const savedClientSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
+  const envClientId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
+  const envClientSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
 
   await appendAuthLog({
     id: diagnosticId,
@@ -36,8 +49,14 @@ export async function GET(request: NextRequest) {
     context: {
       source: googleOauth.summary.source,
       client_id_masked: maskValue(clientId),
-      has_secret: Boolean(googleOauth.credentials?.clientSecret),
+      has_secret: Boolean(clientSecret),
       request_origin: new URL(request.url).origin,
+      env_client_id_masked: maskClientId(envClientId),
+      env_has_secret: Boolean(envClientSecret),
+      saved_client_id_masked: maskClientId(savedClientId),
+      saved_has_secret: Boolean(savedClientSecret),
+      effective_id_from: envClientId ? 'env' : (savedClientId ? 'saved' : 'none'),
+      effective_secret_from: envClientSecret ? 'env' : (savedClientSecret ? 'saved' : 'none'),
     },
   });
 
@@ -56,6 +75,7 @@ export async function GET(request: NextRequest) {
   const callbackServer = http.createServer((req, res) => {
     void handleLoopbackCallback(req, res, {
       clientId,
+      clientSecret,
       authState,
       diagnosticId,
       requestOrigin: new URL(request.url).origin,
@@ -105,7 +125,10 @@ export async function GET(request: NextRequest) {
     context: {
       redirect_uri: session.redirectUri,
       port: session.port,
-      has_secret: Boolean(googleOauth.credentials?.clientSecret),
+      has_secret: Boolean(clientSecret),
+      flow: 'desktop_loopback',
+      redirect_uri_kind: session.redirectUri.startsWith('http://127.0.0.1:') ? 'loopback' : 'other',
+      oauth_client_hint: clientSecret ? 'confidential_or_web' : 'public_or_desktop',
     },
   });
 
@@ -117,6 +140,7 @@ async function handleLoopbackCallback(
   res: http.ServerResponse,
   input: {
     clientId: string;
+    clientSecret?: string;
     authState: { state: string; verifier: string; nonce: string };
     diagnosticId: string;
     requestOrigin: string;
@@ -198,12 +222,13 @@ async function handleLoopbackCallback(
         message: 'Exchanging Google OAuth authorization code for tokens.',
         context: {
           redirect_uri: input.redirectUri,
-          client_secret_used: false,
+          has_client_secret: Boolean(String(input.clientSecret ?? '').trim()),
         },
       });
 
     const tokens = await exchangeGoogleDesktopAuthCode({
       clientId: input.clientId,
+      clientSecret: input.clientSecret,
       code,
       verifier: input.authState.verifier,
       redirectUri: input.redirectUri,
@@ -278,12 +303,22 @@ async function handleLoopbackCallback(
   } catch (error) {
     await clearPendingGoogleAuthSession();
     const message = error instanceof Error ? error.message : 'Google sign-in failed.';
+    const tokenExchangeError = error instanceof GoogleDesktopTokenExchangeError ? error : null;
     await appendAuthLog({
       id: input.diagnosticId,
       level: 'error',
       event: 'google_oauth_callback_error',
       message: 'Google OAuth callback handler failed.',
-      context: { failure: message },
+      context: {
+        failure: message,
+        flow: 'desktop_loopback',
+        redirect_uri: input.redirectUri,
+        token_status: tokenExchangeError?.status ?? undefined,
+        token_status_text: tokenExchangeError?.statusText ?? undefined,
+        token_error: String(tokenExchangeError?.payload?.error ?? '').trim() || undefined,
+        token_error_description: String(tokenExchangeError?.payload?.error_description ?? '').trim() || undefined,
+        client_secret_required_hint: isMissingClientSecretError(tokenExchangeError),
+      },
     });
     if (!res.headersSent) {
       await sendAuthResultPage(res, {
@@ -299,6 +334,13 @@ async function handleLoopbackCallback(
     activeSession?.server.close();
     activeSession = null;
   }
+}
+
+function isMissingClientSecretError(error: GoogleDesktopTokenExchangeError | null): boolean {
+  if (!error) return false;
+  const description = String(error.payload?.error_description ?? '').toLowerCase();
+  const code = String(error.payload?.error ?? '').toLowerCase();
+  return code === 'invalid_request' && description.includes('client_secret') && description.includes('missing');
 }
 
 async function sendAuthResultPage(

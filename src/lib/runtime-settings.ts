@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { googleAuthConfigured } from '@/lib/google-auth';
 
 export type SpotifyCredentials = {
@@ -90,7 +91,7 @@ function envBoolean(name: string): boolean | undefined {
 }
 
 function settingsDirectory(): string {
-  return process.env.DJ_ASSIST_CONFIG_DIR?.trim() || process.cwd();
+  return process.env.DJ_ASSIST_CONFIG_DIR?.trim() || path.join(homedir(), '.dj_assist');
 }
 
 export function runtimeSettingsPath(): string {
@@ -313,10 +314,12 @@ export async function saveSpotifySettings(credentials: SpotifyCredentials): Prom
 export async function saveGoogleOauthSettings(credentials: GoogleOauthCredentials): Promise<void> {
   await ensureSettingsDirectory();
   const current = await loadRuntimeSettings();
+  const clientSecret = String(credentials.clientSecret ?? '').trim();
   const next: RuntimeSettings = {
     ...current,
     googleOauth: {
       clientId: credentials.clientId.trim(),
+      ...(clientSecret ? { clientSecret } : {}),
       updatedAt: new Date().toISOString(),
     },
   };
@@ -393,6 +396,9 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
   credentials: GoogleOauthCredentials | null;
   summary: GoogleOauthSettingsSummary;
 }> {
+  const settings = await loadRuntimeSettings();
+  const savedId = String(settings.googleOauth?.clientId ?? '').trim();
+  const savedSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
   const envId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
   const envSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
   if (envId) {
@@ -407,10 +413,6 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
       },
     };
   }
-
-  const settings = await loadRuntimeSettings();
-  const savedId = String(settings.googleOauth?.clientId ?? '').trim();
-  const savedSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
   if (savedId) {
     return {
       credentials: { clientId: savedId, ...(savedSecret ? { clientSecret: savedSecret } : {}) },

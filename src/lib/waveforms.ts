@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 export type WaveformPeaksPayload = {
@@ -11,7 +12,7 @@ export type WaveformPeaksPayload = {
 };
 
 function waveformCacheDir() {
-  const baseDir = process.env.DJ_ASSIST_CONFIG_DIR?.trim() || process.cwd();
+  const baseDir = process.env.DJ_ASSIST_CONFIG_DIR?.trim() || path.join(homedir(), '.dj_assist');
   return path.join(baseDir, 'waveforms');
 }
 

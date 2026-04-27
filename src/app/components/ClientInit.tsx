@@ -846,6 +846,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       googleOauthSettingsBusy = true;
       const saveBtn = document.getElementById('google-oauth-save-btn') as HTMLButtonElement | null;
       const clientIdInput = document.getElementById('google-client-id') as HTMLInputElement | null;
+      const clientSecretInput = document.getElementById('google-client-secret') as HTMLInputElement | null;
       if (saveBtn) {
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving…';
@@ -857,6 +858,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             clientId: clientIdInput?.value.trim() ?? '',
+            clientSecret: clientSecretInput?.value.trim() ?? '',
           }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -4207,17 +4209,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </label>
               <div class="scan-preflight" id="server-sync-status" data-state="idle">${esc(serverRuntimeLabel())}</div>
               <div class="scan-preflight">Google sign-in is optional. Signed-in users can fetch exact matches before local analysis; anonymous users only upload scan results.</div>
-              ${googleOauthConfigured ? '' : `
-                <label class="preference-field">
-                  <span>Google Client ID</span>
-                  <input id="google-client-id" placeholder="${esc(String(googleOauth?.client_id_masked ?? 'Paste Google OAuth Client ID'))}" autocomplete="off" spellcheck="false" />
-                </label>
-                <div class="scan-preflight">Development setup only. Production builds include the app OAuth client automatically.</div>
-              `}
+              <label class="preference-field">
+                <span>Google Client ID</span>
+                <input id="google-client-id" placeholder="${esc(String(googleOauth?.client_id_masked ?? 'Paste Google OAuth Client ID'))}" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="preference-field">
+                <span>Google Client Secret</span>
+                <input id="google-client-secret" type="password" placeholder="${googleOauth?.has_secret ? 'Saved secret on file' : 'Paste Google OAuth Client Secret'}" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="scan-preflight">Development setup only. Production builds include the app OAuth client automatically.</div>
               <div class="scan-preflight" id="google-oauth-status" data-state="idle">${esc(googleOauthRuntimeLabel())}</div>
               <div class="buttons">
                 <button type="button" class="btn" id="server-settings-save-btn">Save Server Settings</button>
-                ${googleOauthConfigured ? '' : '<button type="button" class="btn" id="google-oauth-save-btn">Save Google Settings</button>'}
+                <button type="button" class="btn" id="google-oauth-save-btn">Save Google Settings</button>
                 <button type="button" class="btn" id="google-sign-in-btn">Sign in with Google</button>
                 <button type="button" class="btn secondary" id="google-sign-out-btn">Sign out</button>
               </div>

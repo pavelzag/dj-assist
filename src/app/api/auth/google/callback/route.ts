@@ -74,6 +74,7 @@ export async function GET(request: NextRequest) {
 
   if (!code || !state || !expectedState || state !== expectedState || !verifier || !expectedNonce) {
     await clearPendingGoogleAuthSession();
+    const missingPendingSession = !pendingAuth;
     await appendAuthLog({
       id: diagnosticId,
       level: 'error',
@@ -88,7 +89,14 @@ export async function GET(request: NextRequest) {
         has_expected_nonce: Boolean(expectedNonce),
       },
     });
-    return authResultResponse(request, 'error', 'Google sign-in could not be verified.', diagnosticId);
+    return authResultResponse(
+      request,
+      'error',
+      missingPendingSession
+        ? 'Google sign-in session was not active on this device. Start sign-in again from the DJ Assist app.'
+        : 'Google sign-in could not be verified.',
+      diagnosticId,
+    );
   }
 
   const redirectUri = new URL('/api/auth/google/callback', request.url).toString();
@@ -118,7 +126,7 @@ export async function GET(request: NextRequest) {
 
   if (!tokenResponse.ok) {
     await clearPendingGoogleAuthSession();
-    const failure = await tokenFailureMessage(tokenResponse);
+    const failure = await parseTokenFailure(tokenResponse);
     await appendAuthLog({
       id: diagnosticId,
       level: 'error',
@@ -127,12 +135,17 @@ export async function GET(request: NextRequest) {
       context: {
         status: tokenResponse.status,
         status_text: tokenResponse.statusText,
-        failure,
+        failure: failure.userMessage,
+        token_error: failure.errorCode,
+        token_error_description: failure.errorDescription,
+        client_secret_required_hint: failure.clientSecretLikelyRequired,
         has_client_secret: Boolean(clientSecret),
         redirect_uri: redirectUri,
+        flow: 'nextjs_callback',
+        redirect_uri_kind: redirectUri.includes('/api/auth/google/callback') ? 'nextjs_callback' : 'other',
       },
     });
-    return authResultResponse(request, 'error', failure, diagnosticId);
+    return authResultResponse(request, 'error', failure.userMessage, diagnosticId);
   }
 
   const tokens = await tokenResponse.json() as Record<string, unknown>;
@@ -196,16 +209,37 @@ export async function GET(request: NextRequest) {
   return authResultResponse(request, 'success', 'Google sign-in connected. You can return to DJ Assist.', diagnosticId);
 }
 
-async function tokenFailureMessage(response: Response): Promise<string> {
+async function parseTokenFailure(response: Response): Promise<{
+  userMessage: string;
+  errorCode: string | null;
+  errorDescription: string | null;
+  clientSecretLikelyRequired: boolean;
+}> {
   const raw = await response.text();
+  let errorCode: string | null = null;
+  let errorDescription: string | null = null;
   try {
     const payload = JSON.parse(raw) as Record<string, unknown>;
-    const message = String(payload.error_description ?? payload.error ?? '').trim();
-    if (message) return message;
+    errorCode = String(payload.error ?? '').trim() || null;
+    errorDescription = String(payload.error_description ?? '').trim() || null;
+    const message = errorDescription || errorCode || '';
+    if (message) {
+      return {
+        userMessage: message,
+        errorCode,
+        errorDescription,
+        clientSecretLikelyRequired: isClientSecretMissingError(errorCode, errorDescription),
+      };
+    }
   } catch {
     // ignore JSON parsing failures
   }
-  return raw.trim() || 'Google sign-in failed.';
+  return {
+    userMessage: raw.trim() || 'Google sign-in failed.',
+    errorCode,
+    errorDescription,
+    clientSecretLikelyRequired: isClientSecretMissingError(errorCode, errorDescription),
+  };
 }
 
 function googleErrorMessage(code: string): string {
@@ -234,6 +268,12 @@ function authResultResponse(request: NextRequest, kind: 'success' | 'error', mes
     },
   );
   return response;
+}
+
+function isClientSecretMissingError(errorCode: string | null, errorDescription: string | null): boolean {
+  const code = String(errorCode ?? '').toLowerCase();
+  const description = String(errorDescription ?? '').toLowerCase();
+  return code === 'invalid_request' && description.includes('client_secret') && description.includes('missing');
 }
 
 function renderAuthResultHtml(input: { appUrl: string; kind: 'success' | 'error'; message: string; diagnosticId?: string }) {

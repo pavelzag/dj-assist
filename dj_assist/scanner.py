@@ -40,6 +40,8 @@ _SPOTIFY_TIMEOUT_STREAK_LIMIT = int(os.getenv("SPOTIFY_TIMEOUT_STREAK_LIMIT", "3
 _ANALYSIS_SUBPROCESS_TIMEOUT = float(os.getenv("ANALYSIS_SUBPROCESS_TIMEOUT", "180"))
 _SERVER_LOOKUP_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_LOOKUP_TIMEOUT", os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "4")))
 _SERVER_UPLOAD_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_UPLOAD_TIMEOUT", os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "12")))
+_SERVER_ART_UPLOAD_CACHE: dict[str, str] = {}
+_SERVER_ART_UPLOAD_WARNING: str | None = None
 
 _UNKNOWN_ARTIST_VALUES = {"unknown", "unknown artist", "various artists"}
 _UPPERCASE_TOKENS = {"DJ", "MC", "UK", "USA", "EDM", "RNB", "EP", "LP", "VIP", "ID"}
@@ -198,7 +200,51 @@ def _server_track_to_local(server_track: dict, filepath: str, file_hash: str, fi
     }
 
 
+def _server_album_art_url(track_data: dict) -> str:
+    global _SERVER_ART_UPLOAD_WARNING
+
+    album_art_url = str(track_data.get("album_art_url") or "").strip()
+    if not album_art_url:
+        return ""
+    if not album_art_url.startswith("data:"):
+        return album_art_url
+
+    cached = _SERVER_ART_UPLOAD_CACHE.get(album_art_url)
+    if cached:
+        return cached
+
+    try:
+        from .art_store import (
+            download_art,
+            gcs_bucket_from_env,
+            gcs_prefix_from_env,
+            gcs_public_base_url,
+            upload_art_to_gcs,
+        )
+
+        bucket_name = gcs_bucket_from_env().strip()
+        if not bucket_name:
+            raise RuntimeError("DJ_ASSIST_GCS_BUCKET is not configured")
+
+        stored = upload_art_to_gcs(
+            download_art(album_art_url),
+            bucket_name=bucket_name,
+            prefix=gcs_prefix_from_env(),
+            public_base_url=gcs_public_base_url(bucket_name),
+        )
+        _SERVER_ART_UPLOAD_CACHE[album_art_url] = stored.public_url
+        return stored.public_url
+    except Exception as exc:
+        warning = f"server album art upload skipped: {exc}"
+        if _SERVER_ART_UPLOAD_WARNING != warning:
+            _SERVER_ART_UPLOAD_WARNING = warning
+            print(f"[dj-assist] {warning}", file=sys.stderr)
+        return ""
+
+
 def _serialize_track_for_server(track_data: dict, client_track_id: str) -> dict:
+    album_art_url = _server_album_art_url(track_data)
+    has_album_art = bool(album_art_url)
     return {
         "client_track_id": client_track_id,
         "title": track_data.get("title"),
@@ -225,6 +271,22 @@ def _serialize_track_for_server(track_data: dict, client_track_id: str) -> dict:
         "file_mtime": track_data.get("file_mtime"),
         "effective_bpm": track_data.get("bpm") or track_data.get("spotify_tempo"),
         "effective_key": track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric"),
+        # Server-side ingestion expects artwork_* fields (with album_art_* aliases).
+        # Embedded data URIs must be externalized before sync; otherwise Postgres stores the blob itself.
+        "artwork_url": album_art_url,
+        "artwork_source": track_data.get("album_art_source"),
+        "artwork_status": (
+            "present"
+            if has_album_art
+            else "missing"
+        ),
+        "album_art_url": album_art_url,
+        "album_art_source": track_data.get("album_art_source"),
+        "album_art_status": (
+            "present"
+            if has_album_art
+            else "missing"
+        ),
     }
 
 

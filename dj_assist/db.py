@@ -3,6 +3,7 @@ from typing import Optional
 import os
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, create_engine, func, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, selectinload
 
 Base = declarative_base()
@@ -257,10 +258,15 @@ class Database:
     def add_track(self, track_data: dict) -> Track:
         session = self.get_session()
         try:
+            def _apply_fields(target: Track, data: dict, *, skip_empty: bool) -> None:
+                for key, value in data.items():
+                    if skip_empty and value in (None, ""):
+                        continue
+                    setattr(target, key, value)
+
             existing = session.query(Track).filter_by(path=track_data["path"]).first()
             if existing:
-                for key, value in track_data.items():
-                    setattr(existing, key, value)
+                _apply_fields(existing, track_data, skip_empty=False)
                 session.commit()
                 return existing
 
@@ -283,16 +289,25 @@ class Database:
                     )
 
             if duplicate:
-                for key, value in track_data.items():
-                    if value not in (None, ""):
-                        setattr(duplicate, key, value)
+                _apply_fields(duplicate, track_data, skip_empty=True)
                 session.commit()
                 return duplicate
 
             track = Track(**track_data)
             session.add(track)
-            session.commit()
-            return track
+            try:
+                session.commit()
+                return track
+            except IntegrityError:
+                # A concurrent insert can win the UNIQUE(path) race between
+                # our pre-check and commit. Recover by loading and updating.
+                session.rollback()
+                raced = session.query(Track).filter_by(path=track_data["path"]).first()
+                if not raced:
+                    raise
+                _apply_fields(raced, track_data, skip_empty=False)
+                session.commit()
+                return raced
         finally:
             session.close()
 
