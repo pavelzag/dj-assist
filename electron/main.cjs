@@ -3,7 +3,7 @@ const net = require('node:net');
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, screen, shell } = require('electron');
 
 const APP_ROOT = path.join(__dirname, '..');
 const MEDIA_PROTOCOL = 'djassist-media';
@@ -563,19 +563,23 @@ function stopManagedServer() {
 
 function registerMediaProtocol() {
   protocol.handle(MEDIA_PROTOCOL, async (request) => {
+    const rangeHeader = request.headers.get('range');
     try {
       const parsed = new URL(request.url);
-      const filePath = resolveMediaPath(parsed.searchParams.get('path'));
+      const rawPath = parsed.searchParams.get('path');
+      const filePath = resolveMediaPath(rawPath);
+
       if (!filePath) {
+        appendMainLog(`media protocol: missing path in request url=${request.url}`);
         return new Response('missing media path', { status: 400 });
       }
       if (!fs.existsSync(filePath)) {
+        appendMainLog(`media protocol: file not found path=${filePath}`);
         return new Response('media file not found', { status: 404 });
       }
 
       const { size } = fs.statSync(filePath);
       const mimeType = getMediaMimeType(filePath);
-      const rangeHeader = request.headers.get('range');
 
       if (rangeHeader) {
         const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
@@ -583,6 +587,7 @@ function registerMediaProtocol() {
           const start = parseInt(match[1], 10);
           const end = match[2] ? parseInt(match[2], 10) : size - 1;
           const chunkSize = end - start + 1;
+          appendMainLog(`media protocol: 206 range=${rangeHeader} start=${start} end=${end} size=${size} mime=${mimeType} path=${filePath}`);
           return new Response(nodeStreamToWebStream(fs.createReadStream(filePath, { start, end })), {
             status: 206,
             headers: {
@@ -595,6 +600,7 @@ function registerMediaProtocol() {
         }
       }
 
+      appendMainLog(`media protocol: 200 size=${size} mime=${mimeType} path=${filePath}`);
       return new Response(nodeStreamToWebStream(fs.createReadStream(filePath)), {
         status: 200,
         headers: {
@@ -605,7 +611,7 @@ function registerMediaProtocol() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      appendMainLog(`media protocol error: ${message}`);
+      appendMainLog(`media protocol error: range=${rangeHeader ?? 'none'} url=${request.url} error=${message}`);
       return new Response('media load failed', { status: 500 });
     }
   });
@@ -645,11 +651,17 @@ function requestRendererQuitConfirmation() {
 
 function createMainWindow(options = {}) {
   const icon = nativeImage.createFromPath(APP_ICON_PATH);
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+  const zoomFactor = screenWidth <= 1440 ? 0.9 : 1.0;
+  const windowWidth = Math.min(1560, Math.floor(screenWidth * 0.96));
+  const windowHeight = Math.min(980, Math.floor(screenHeight * 0.96));
+  appendMainLog(`createMainWindow screen=${screenWidth}x${screenHeight} window=${windowWidth}x${windowHeight} zoom=${zoomFactor}`);
+
   const win = new BrowserWindow({
-    width: 1560,
-    height: 980,
-    minWidth: 1180,
-    minHeight: 760,
+    width: windowWidth,
+    height: windowHeight,
+    minWidth: 1000,
+    minHeight: 680,
     autoHideMenuBar: true,
     title: 'DJ Assist',
     icon: icon.isEmpty() ? undefined : APP_ICON_PATH,
@@ -658,6 +670,7 @@ function createMainWindow(options = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      zoomFactor,
     },
   });
   mainWindow = win;

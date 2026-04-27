@@ -742,7 +742,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         googleAuthMainBtn.title = user ? `Google connected: ${String(user.email ?? user.name ?? 'signed in')}` : 'Google signed out';
       }
       if (googleAuthMainLabel) {
-        googleAuthMainLabel.textContent = user ? 'Connected' : 'Signed out';
+        googleAuthMainLabel.textContent = user ? 'Connected' : 'Sign In';
       }
     }
 
@@ -755,13 +755,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (statusEl) {
         statusEl.textContent = user
           ? `Signed in as ${String(user.email ?? user.name ?? 'Google user')}.`
-          : 'Signed out. Sign in to unlock backend-powered quick scan.';
+          : '';
       }
       if (signInLabel) {
-        signInLabel.textContent = user ? 'Switch Google Account' : 'Sign in with Google';
+        signInLabel.textContent = 'Sign in with Google';
       }
       if (signOutBtn) signOutBtn.hidden = !user;
-      if (declineBtn) declineBtn.hidden = Boolean(user);
+      if (declineBtn) declineBtn.hidden = true;
       openModal(googleAuthUpsellModal);
     }
 
@@ -779,10 +779,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       googleAuthUpsellEvaluated = true;
-      const statusEl = document.getElementById('google-auth-upsell-status') as HTMLElement | null;
-      if (statusEl) {
-        statusEl.textContent = 'Continue without signing in if you want, but backend-powered quick scan will stay unavailable.';
-      }
       openGoogleAuthModal();
     }
 
@@ -3705,15 +3701,50 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             'Audio failed to load';
           showToast(label, 'error');
           updateNowPlayingBar(localAudio);
+
+          const errorCodeName =
+            code === MediaError.MEDIA_ERR_ABORTED ? 'MEDIA_ERR_ABORTED' :
+            code === MediaError.MEDIA_ERR_NETWORK ? 'MEDIA_ERR_NETWORK' :
+            code === MediaError.MEDIA_ERR_DECODE ? 'MEDIA_ERR_DECODE' :
+            code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' :
+            `unknown(${code})`;
+
+          appendScanLog(`Audio error for track ${trackId}: ${label}`, 'error', {
+            category: 'playback',
+            trackId,
+            errorCode: code,
+            errorCodeName,
+            errorMessage: mediaError?.message ?? null,
+            src: localAudio.src,
+            networkState: localAudio.networkState,
+            readyState: localAudio.readyState,
+            currentSrc: localAudio.currentSrc,
+          });
+
           const probeUrl = localAudio.dataset.probeUrl || streamProbeUrl;
           fetch(probeUrl, { headers: { Range: 'bytes=0-0' } })
             .then(async (response) => {
+              appendScanLog(`Audio probe response for track ${trackId}`, 'info', {
+                category: 'playback',
+                trackId,
+                probeUrl,
+                status: response.status,
+                contentType: response.headers.get('content-type'),
+                contentRange: response.headers.get('content-range'),
+                acceptRanges: response.headers.get('accept-ranges'),
+              });
               if (response.status !== 404) return;
               const payload = await response.json().catch(() => ({}));
               if (String((payload as Record<string, unknown>).error ?? '') !== 'file missing') return;
               await pruneMissingTracks([trackId]);
             })
-            .catch(() => {});
+            .catch((probeErr) => {
+              appendScanLog(`Audio probe fetch failed for track ${trackId}: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`, 'error', {
+                category: 'playback',
+                trackId,
+                probeUrl,
+              });
+            });
         });
         playBtn.addEventListener('click', async () => {
           try {

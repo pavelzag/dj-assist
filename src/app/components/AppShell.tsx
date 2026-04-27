@@ -255,15 +255,13 @@ export default function AppShell({
           </div>
           <div className="metadata-editor">
             <div className="scan-preflight">
-              Sign in with Google to let DJ Assist check the backend for exact file matches before local analysis.
+              Sign in to fetch exact file matches from the server before local analysis.
             </div>
             <div className="shortcuts-list google-auth-upsell-points">
-              <div><strong>Signed in</strong><span>Exact file-hash matches can be fetched from the server instead of re-analyzed locally.</span></div>
-              <div><strong>Not signed in</strong><span>Scans still run locally and results are still uploaded for other users.</span></div>
+              <div><strong>Signed in</strong><span>Exact matches fetched from server — faster scans.</span></div>
+              <div><strong>Not signed in</strong><span>Scans run locally and results are uploaded for others.</span></div>
             </div>
-            <div className="scan-preflight" id="google-auth-upsell-status">
-              You can continue without signing in, but backend-powered quick scan will stay unavailable.
-            </div>
+            <div className="scan-preflight" id="google-auth-upsell-status" />
             <div className="buttons">
               <button className="google-sign-in-primary" id="google-auth-upsell-sign-in-btn" type="button">
                 <span className="google-mark" aria-hidden="true">G</span>
