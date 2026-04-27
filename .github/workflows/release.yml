@@ -58,7 +58,7 @@ jobs:
           git add package.json package-lock.json
           git commit -m "chore: release ${tag}"
           git tag "${tag}"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:refs/heads/${GITHUB_REF_NAME}
           git push origin "${tag}"
 
           {
