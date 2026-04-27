@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { loadProjectEnv } = require('./load-env.cjs');
 
@@ -16,8 +17,44 @@ function resolveStandaloneRoots() {
 
   if (explicitRoot) candidates.push(explicitRoot);
   if (explicitExecutable) candidates.push(path.dirname(path.dirname(explicitExecutable)));
+  candidates.push(...localStandaloneCandidates());
 
   return [...new Set(candidates.filter(Boolean))];
+}
+
+function localStandaloneCandidates() {
+  const base = path.join(os.homedir(), '.local', 'python-build-standalone');
+  const candidates = [];
+  const directRoot = path.join(base, 'python');
+  if (fs.existsSync(directRoot)) candidates.push(directRoot);
+  if (!fs.existsSync(base)) return candidates;
+
+  const stack = [base];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const entryPath = path.join(current, entry.name);
+      if (fs.existsSync(path.join(entryPath, 'bin', 'python3')) || fs.existsSync(path.join(entryPath, 'bin', 'python'))) {
+        candidates.push(entryPath);
+        continue;
+      }
+      if (fs.existsSync(path.join(entryPath, 'python', 'bin', 'python3')) || fs.existsSync(path.join(entryPath, 'python', 'bin', 'python'))) {
+        candidates.push(entryPath);
+        continue;
+      }
+      stack.push(entryPath);
+    }
+  }
+
+  return candidates;
 }
 
 function findPythonExecutable(root) {
@@ -100,6 +137,7 @@ function resolveStandaloneSource() {
       'No self-contained Python runtime found for packaging.',
       'Set DJ_ASSIST_PYTHON_STANDALONE to an unpacked relocatable Python root,',
       'or set DJ_ASSIST_PYTHON_STANDALONE_PYTHON to its interpreter path.',
+      `A local cache at ${path.join(os.homedir(), '.local', 'python-build-standalone')} is also checked automatically.`,
       'Do not point this at a Homebrew virtualenv.',
     ].join(' '),
   );
