@@ -183,6 +183,18 @@ jobs:
           py_root="$(cd "$(dirname "$py_bin")/.." && pwd)"
           echo "DJ_ASSIST_PYTHON_STANDALONE=$py_root" >> "$GITHUB_ENV"
 
+      - name: Verify Google OAuth config
+        env:
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GOOGLE_CLIENT_ID}" ]; then
+            echo "GOOGLE_CLIENT_ID must be set as a repository variable or secret for release builds." >&2
+            exit 1
+          fi
+          npm run verify:google-oauth-config
+
       - name: Build desktop app
         env:
           GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
