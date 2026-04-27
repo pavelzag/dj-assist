@@ -117,6 +117,35 @@ function mediaUrlForPath(rawPath) {
   return `${MEDIA_PROTOCOL}://track?path=${encodeURIComponent(filePath)}`;
 }
 
+function getMediaMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const map = {
+    '.mp3': 'audio/mpeg',
+    '.flac': 'audio/flac',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.m4a': 'audio/mp4',
+    '.aiff': 'audio/x-aiff',
+    '.aif': 'audio/x-aiff',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
+function nodeStreamToWebStream(nodeStream) {
+  return new ReadableStream({
+    start(controller) {
+      nodeStream.on('data', (chunk) =>
+        controller.enqueue(chunk instanceof Buffer ? chunk : Buffer.from(chunk)),
+      );
+      nodeStream.on('end', () => controller.close());
+      nodeStream.on('error', (err) => controller.error(err));
+    },
+    cancel() {
+      nodeStream.destroy();
+    },
+  });
+}
+
 function currentAppUrl() {
   return process.env.DJ_ASSIST_ELECTRON_URL || DEFAULT_URL;
 }
@@ -543,8 +572,36 @@ function registerMediaProtocol() {
       if (!fs.existsSync(filePath)) {
         return new Response('media file not found', { status: 404 });
       }
-      return fetch(pathToFileURL(filePath).toString(), {
-        headers: request.headers,
+
+      const { size } = fs.statSync(filePath);
+      const mimeType = getMediaMimeType(filePath);
+      const rangeHeader = request.headers.get('range');
+
+      if (rangeHeader) {
+        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+        if (match) {
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? parseInt(match[2], 10) : size - 1;
+          const chunkSize = end - start + 1;
+          return new Response(nodeStreamToWebStream(fs.createReadStream(filePath, { start, end })), {
+            status: 206,
+            headers: {
+              'Content-Type': mimeType,
+              'Content-Range': `bytes ${start}-${end}/${size}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': String(chunkSize),
+            },
+          });
+        }
+      }
+
+      return new Response(nodeStreamToWebStream(fs.createReadStream(filePath)), {
+        status: 200,
+        headers: {
+          'Content-Type': mimeType,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(size),
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

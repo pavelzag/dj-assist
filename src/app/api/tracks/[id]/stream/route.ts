@@ -16,8 +16,8 @@ function getMimeType(filePath: string): string {
     '.wav': 'audio/wav',
     '.ogg': 'audio/ogg',
     '.m4a': 'audio/mp4',
-    '.aiff': 'audio/aiff',
-    '.aif': 'audio/aiff',
+    '.aiff': 'audio/x-aiff',
+    '.aif': 'audio/x-aiff',
   };
   return map[ext] ?? 'application/octet-stream';
 }
