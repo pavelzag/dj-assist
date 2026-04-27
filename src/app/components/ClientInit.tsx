@@ -21,7 +21,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const keyFilterEl = document.getElementById('key-filter') as HTMLInputElement;
     const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement | null;
     const hideUnknownArtistsEl = document.getElementById('hide-unknown-artists') as HTMLInputElement;
-    const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement;
+    const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement | null;
     const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
     const browseScopeEl = document.getElementById('browse-scope') as HTMLElement;
     const bulkToolbarEl = document.getElementById('bulk-toolbar') as HTMLElement;
@@ -3105,7 +3105,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const sorted = visibleTracks(items);
       currentRenderedList = sorted;
       const previousScrollTop = listEl.scrollTop;
-      hiddenCountBadge.textContent = `Shown: ${sorted.length}`;
+      if (hiddenCountBadge) hiddenCountBadge.textContent = `Shown: ${sorted.length}`;
       statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''}`;
       if (!items.length) {
         listIsVirtualized = false;
