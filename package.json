@@ -45,6 +45,7 @@
   "build": {
     "appId": "com.djassist.desktop",
     "productName": "DJ Assist",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "asar": false,
     "directories": {
       "output": "dist-electron",
@@ -89,9 +90,6 @@
         "zip"
       ],
       "icon": "electron/assets/app-icon.png"
-    },
-    "dmg": {
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
   }
 }

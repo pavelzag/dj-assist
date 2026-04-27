@@ -28,6 +28,13 @@ async function main() {
     process.exit(1);
   }
 
+  if (clientSecret) {
+    console.error(
+      'GOOGLE_CLIENT_SECRET is set, but packaged desktop releases must use a Desktop App OAuth client without a client secret.',
+    );
+    process.exit(1);
+  }
+
   const redirectUri = 'http://127.0.0.1:1/callback';
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -57,7 +64,7 @@ async function main() {
     if (errorCode === 'invalid_grant') {
       console.log('Google OAuth config verification passed.');
       console.log(`GOOGLE_CLIENT_ID=${mask(clientId)}`);
-      console.log(`GOOGLE_CLIENT_SECRET_PRESENT=${clientSecret ? 'true' : 'false'}`);
+      console.log('GOOGLE_CLIENT_SECRET_PRESENT=false');
       console.log(`redirect_uri_probe=${redirectUri}`);
       console.log(`google_response=${errorCode}`);
       return;
@@ -72,7 +79,7 @@ async function main() {
 
     if (errorCode === 'invalid_request' && errorDescription.toLowerCase().includes('client_secret')) {
       console.error(
-        `Google reports that a client secret is required for this OAuth client, but the provided secret is missing or unusable: ${errorDescription}`,
+        `Google reports that a client secret is required for this OAuth client. This client is not suitable for packaged desktop releases: ${errorDescription}`,
       );
       process.exit(1);
     }

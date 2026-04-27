@@ -1,7 +1,7 @@
 name: Release Desktop App
 run-name: >-
   Release Desktop App
-  (${{ github.event_name == 'workflow_dispatch' && (inputs.tag || 'patch bump') || github.ref_name }})
+  (${{ github.ref_type == 'tag' && github.ref_name || github.event_name == 'workflow_dispatch' && (inputs.tag || 'patch bump') || 'master patch bump' }})
 
 on:
   push:
@@ -20,9 +20,57 @@ permissions:
   contents: write
 
 jobs:
+  bump-release:
+    name: Bump Patch Release
+    if: "${{ github.event_name == 'push' && github.ref_name == 'master' && !startsWith(github.event.head_commit.message, 'chore: release v') }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Bump patch version, commit, and tag
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          npm version patch --no-git-tag-version
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+
+          if git rev-parse "${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists locally." >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists on origin." >&2
+            exit 1
+          fi
+
+          git add package.json package-lock.json
+          git commit -m "chore: release ${tag}"
+          git tag "${tag}"
+          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin "${tag}"
+
+          {
+            echo "## Patch Release Created"
+            echo ""
+            echo "- Version: \`${version}\`"
+            echo "- Tag: \`${tag}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   prepare-release:
     name: Resolve Release Version
-    if: "${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore: release v')) }}"
+    if: "${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}"
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
@@ -67,6 +115,7 @@ jobs:
   build-macos:
     name: Build macOS Release (${{ needs.prepare-release.outputs.tag }})
     needs: prepare-release
+    if: "${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}"
     runs-on: macos-15
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -188,7 +237,6 @@ jobs:
       - name: Verify Google OAuth config
         env:
           GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           if [ -z "${GOOGLE_CLIENT_ID}" ]; then
@@ -217,7 +265,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-release
+          name: macos-release-${{ steps.version.outputs.tag }}
           path: |
             dist-electron/*.dmg
             dist-electron/*.zip
