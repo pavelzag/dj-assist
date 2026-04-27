@@ -17,6 +17,7 @@ const { execSync } = require('node:child_process');
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const clientId = (process.argv[2] || process.env.GOOGLE_CLIENT_ID || '').trim();
+const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
 
 if (!clientId) {
   console.error('Error: no client ID provided.');
@@ -80,6 +81,7 @@ async function main() {
   console.log('=== Google OAuth Debug Tool ===');
   console.log('');
   console.log(`  Client ID : ${clientId}`);
+  console.log(`  Secret    : ${clientSecret ? 'present ✓' : 'not set'}`);
   console.log(`  Platform  : ${process.platform} / Node ${process.version}`);
 
   // ── 1. Start loopback server ───────────────────────────────────────────────
@@ -215,6 +217,7 @@ async function main() {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         client_id: clientId,
+        ...(clientSecret ? { client_secret: clientSecret } : {}),
         code: callbackResult.code,
         code_verifier: verifier,
         grant_type: 'authorization_code',
