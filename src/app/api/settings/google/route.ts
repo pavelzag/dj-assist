@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   applyGoogleOauthCredentialsToEnv,
   effectiveGoogleOauthCredentials,
+  googleOauthDiagnostics,
   saveGoogleOauthSettings,
 } from '@/lib/runtime-settings';
 
@@ -10,9 +11,11 @@ export const runtime = 'nodejs';
 export async function GET() {
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
+  const diagnostics = await googleOauthDiagnostics();
   return NextResponse.json({
     ok: true,
     googleOauth: googleOauth.summary,
+    diagnostics,
   });
 }
 
@@ -40,9 +43,11 @@ export async function POST(request: NextRequest) {
   await saveGoogleOauthSettings(credentials);
   applyGoogleOauthCredentialsToEnv(credentials);
   const googleOauth = await effectiveGoogleOauthCredentials();
+  const diagnostics = await googleOauthDiagnostics();
 
   return NextResponse.json({
     ok: true,
     googleOauth: googleOauth.summary,
+    diagnostics,
   });
 }

@@ -174,8 +174,9 @@ function readManagedGoogleOauthSettings() {
     const raw = fs.readFileSync(managedSettingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
     const clientId = String(parsed?.googleOauth?.clientId ?? '').trim();
+    const clientSecret = String(parsed?.googleOauth?.clientSecret ?? '').trim();
     if (!clientId) return null;
-    return { clientId };
+    return { clientId, hasSecret: Boolean(clientSecret) };
   } catch {
     return null;
   }
@@ -275,6 +276,30 @@ function applyManagedRuntimeEnv() {
   const pythonPathParts = [APP_ROOT, process.env.PYTHONPATH].filter(Boolean);
   process.env.PYTHONPATH = [...new Set(pythonPathParts)].join(path.delimiter);
   process.env.PYTHONNOUSERSITE = '1';
+}
+
+function logGoogleOauthEnvDiagnostics() {
+  const buildEnv = readBundledBuildEnv();
+  const buildClientId = String(buildEnv.GOOGLE_CLIENT_ID ?? '').trim();
+  const buildClientSecret = String(buildEnv.GOOGLE_CLIENT_SECRET ?? '').trim();
+  const managedGoogle = readManagedGoogleOauthSettings();
+  const envClientId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
+  const envClientSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
+  appendMainLog(
+    [
+      'Google OAuth env:',
+      `build_env_path=${bundledBuildEnvPath()}`,
+      `managed_settings_path=${managedSettingsPath()}`,
+      `build_has_client_id=${Boolean(buildClientId)}`,
+      `build_has_secret=${Boolean(buildClientSecret)}`,
+      `managed_has_client_id=${Boolean(managedGoogle?.clientId)}`,
+      `managed_has_secret=${Boolean(managedGoogle?.hasSecret)}`,
+      `runtime_has_client_id=${Boolean(envClientId)}`,
+      `runtime_has_secret=${Boolean(envClientSecret)}`,
+      `runtime_client_id_matches_managed=${Boolean(envClientId && managedGoogle?.clientId && envClientId === managedGoogle.clientId)}`,
+      `runtime_client_id_matches_build=${Boolean(envClientId && buildClientId && envClientId === buildClientId)}`,
+    ].join(' '),
+  );
 }
 
 function findAvailablePort(preferredPort) {
@@ -705,6 +730,7 @@ if (hasSingleInstanceLock) {
     registerMediaProtocol();
     appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
     applyManagedRuntimeEnv();
+    logGoogleOauthEnvDiagnostics();
     appendMainLog(
       `Runtime env: db=${process.env.DJ_ASSIST_DB_PATH || 'unset'} python=${process.env.PYTHON_EXECUTABLE || 'unset'} fpcalc=${process.env.FPCALC_PATH || 'unset'}`,
     );

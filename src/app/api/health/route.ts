@@ -4,6 +4,7 @@ import { resolveWorkingPython } from '@/lib/scan';
 import {
   applyGoogleOauthCredentialsToEnv,
   effectiveGoogleOauthCredentials,
+  googleOauthDiagnostics,
   applySpotifyCredentialsToEnv,
   effectiveSpotifyCredentials,
   serverRuntimeSummary,
@@ -26,6 +27,7 @@ export async function GET() {
   if (spotify.credentials) applySpotifyCredentialsToEnv(spotify.credentials);
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
+  const googleOauthDiag = await googleOauthDiagnostics();
   const server = await serverRuntimeSummary();
 
   return NextResponse.json({
@@ -43,6 +45,7 @@ export async function GET() {
       spotify_missing: spotify.summary.missing,
       spotify: spotify.summary,
       google_oauth: googleOauth.summary,
+      google_oauth_diagnostics: googleOauthDiag,
       server,
       client_log_path: getClientLogPath(),
       cwd: process.cwd(),

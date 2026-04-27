@@ -79,6 +79,20 @@ export type GoogleOauthSettingsSummary = {
   missing: string[];
 };
 
+export type GoogleOauthDiagnostics = {
+  settings_path: string;
+  cwd: string;
+  env_client_id_masked: string | null;
+  env_has_secret: boolean;
+  saved_client_id_masked: string | null;
+  saved_has_secret: boolean;
+  env_saved_client_id_match: boolean;
+  effective: GoogleOauthSettingsSummary & {
+    effective_secret_from: 'env' | 'saved' | 'none';
+    effective_client_id_matches_saved: boolean;
+  };
+};
+
 const DEFAULT_PRODUCTION_SERVER_URL = 'https://dj-assist-server.vercel.app';
 const DEFAULT_LOCAL_SERVER_URL = 'http://localhost:3001';
 
@@ -435,6 +449,34 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
       client_id_masked: null,
       has_secret: false,
       missing: ['GOOGLE_CLIENT_ID'],
+    },
+  };
+}
+
+export async function googleOauthDiagnostics(): Promise<GoogleOauthDiagnostics> {
+  const settings = await loadRuntimeSettings();
+  const savedId = String(settings.googleOauth?.clientId ?? '').trim();
+  const savedSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
+  const envId = String(process.env.GOOGLE_CLIENT_ID ?? '').trim();
+  const envSecret = String(process.env.GOOGLE_CLIENT_SECRET ?? '').trim();
+  const effective = await effectiveGoogleOauthCredentials();
+  const effectiveId = String(effective.credentials?.clientId ?? '').trim();
+  const effectiveSecret = String(effective.credentials?.clientSecret ?? '').trim();
+
+  return {
+    settings_path: runtimeSettingsPath(),
+    cwd: process.cwd(),
+    env_client_id_masked: maskClientId(envId),
+    env_has_secret: Boolean(envSecret),
+    saved_client_id_masked: maskClientId(savedId),
+    saved_has_secret: Boolean(savedSecret),
+    env_saved_client_id_match: Boolean(envId && savedId && envId === savedId),
+    effective: {
+      ...effective.summary,
+      effective_secret_from: envSecret
+        ? 'env'
+        : (effectiveId && savedId && effectiveId === savedId && effectiveSecret ? 'saved' : 'none'),
+      effective_client_id_matches_saved: Boolean(effectiveId && savedId && effectiveId === savedId),
     },
   };
 }
