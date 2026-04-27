@@ -264,7 +264,7 @@ export default function AppShell({
                 <span id="google-auth-upsell-sign-in-label">Sign in with Google</span>
               </button>
               <button className="btn secondary" id="google-auth-modal-sign-out-btn" type="button" hidden>Sign out</button>
-              <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button" hidden>Continue Without Sign-In</button>
+              {/* <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button" hidden>Continue Without Sign-In</button> */}
             </div>
           </div>
         </div>
