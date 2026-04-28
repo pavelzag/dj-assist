@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import https from 'node:https';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -56,25 +57,21 @@ export async function exchangeGoogleDesktopAuthCode(input: {
   redirectUri: string;
 }) {
   const clientSecret = String(input.clientSecret ?? '').trim();
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: input.clientId,
-      ...(clientSecret ? { client_secret: clientSecret } : {}),
-      code: input.code,
-      code_verifier: input.verifier,
-      grant_type: 'authorization_code',
-      redirect_uri: input.redirectUri,
-    }).toString(),
-    cache: 'no-store',
-  });
+  const body = new URLSearchParams({
+    client_id: input.clientId,
+    ...(clientSecret ? { client_secret: clientSecret } : {}),
+    code: input.code,
+    code_verifier: input.verifier,
+    grant_type: 'authorization_code',
+    redirect_uri: input.redirectUri,
+  }).toString();
 
-  const raw = await response.text();
-  if (!response.ok) {
+  const { status, statusText, raw } = await httpsPost('oauth2.googleapis.com', '/token', body);
+
+  if (status < 200 || status >= 300) {
     throw new GoogleDesktopTokenExchangeError({
-      status: response.status,
-      statusText: response.statusText,
+      status,
+      statusText,
       raw,
       payload: parseJsonRecord(raw),
     });
@@ -87,6 +84,22 @@ export async function exchangeGoogleDesktopAuthCode(input: {
     refreshToken: String(tokens.refresh_token ?? '').trim() || null,
     scope: String(tokens.scope ?? '').trim() || null,
   };
+}
+
+function httpsPost(hostname: string, path: string, body: string): Promise<{ status: number; statusText: string; raw: string }> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname, path, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, statusText: res.statusMessage ?? '', raw: Buffer.concat(chunks).toString('utf8') }));
+      },
+    );
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 export function createDesktopAuthState() {

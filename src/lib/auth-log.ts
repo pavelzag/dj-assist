@@ -48,7 +48,7 @@ function sanitizeAuthContext(context: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(context).map(([key, value]) => {
       const lowered = key.toLowerCase();
-      if (['code', 'token', 'id_token', 'client_secret', 'verifier', 'nonce'].some((part) => lowered.includes(part))) {
+      if (['_token', 'id_token', 'client_secret', 'verifier', 'nonce', 'has_code', 'auth_code'].some((part) => lowered.includes(part)) || lowered === 'code') {
         return [key, maskValue(value)];
       }
       return [key, value];
