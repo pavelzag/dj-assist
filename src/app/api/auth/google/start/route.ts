@@ -313,6 +313,9 @@ async function handleLoopbackCallback(
     await clearPendingGoogleAuthSession();
     const message = error instanceof Error ? error.message : 'Google sign-in failed.';
     const tokenExchangeError = error instanceof GoogleDesktopTokenExchangeError ? error : null;
+    const errorCause = error instanceof Error && error.cause instanceof Error
+      ? { message: error.cause.message, code: (error.cause as NodeJS.ErrnoException).code ?? null }
+      : null;
     await appendAuthLog({
       id: input.diagnosticId,
       level: 'error',
@@ -320,6 +323,8 @@ async function handleLoopbackCallback(
       message: 'Google OAuth callback handler failed.',
       context: {
         failure: message,
+        failure_cause: errorCause?.message ?? null,
+        failure_code: errorCause?.code ?? null,
         flow: 'desktop_loopback',
         redirect_uri: input.redirectUri,
         token_status: tokenExchangeError?.status ?? undefined,
