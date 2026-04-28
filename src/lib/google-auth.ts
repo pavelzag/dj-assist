@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import https from 'node:https';
 
 export const GOOGLE_OAUTH_STATE_COOKIE = 'dj_assist_google_oauth_state';
 export const GOOGLE_OAUTH_VERIFIER_COOKIE = 'dj_assist_google_oauth_verifier';
@@ -41,15 +42,15 @@ export async function verifyGoogleIdToken(input: {
   clientId: string;
   nonce: string;
 }): Promise<GoogleIdentity> {
-  const url = new URL('https://oauth2.googleapis.com/tokeninfo');
-  url.searchParams.set('id_token', input.token);
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) {
-    const raw = await response.text();
+  const { status, raw } = await httpsGet(
+    'oauth2.googleapis.com',
+    `/tokeninfo?id_token=${encodeURIComponent(input.token)}`,
+  );
+  if (status < 200 || status >= 300) {
     throw new Error(raw.trim() || 'Google sign-in could not be verified.');
   }
 
-  const payload = await response.json() as Record<string, unknown>;
+  const payload = JSON.parse(raw) as Record<string, unknown>;
   const audience = normalizeRequiredString(payload.aud, 'Google sign-in returned no audience.');
   if (audience !== input.clientId) {
     throw new Error('Google sign-in returned an unexpected audience.');
@@ -87,4 +88,16 @@ function normalizeRequiredString(value: unknown, message: string): string {
 function normalizeOptionalString(value: unknown): string | undefined {
   const normalized = String(value ?? '').trim();
   return normalized || undefined;
+}
+
+function httpsGet(hostname: string, path: string): Promise<{ status: number; raw: string }> {
+  return new Promise((resolve, reject) => {
+    const req = https.request({ hostname, path, method: 'GET' }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, raw: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
