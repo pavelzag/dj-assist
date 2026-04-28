@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import http from 'node:http';
 import https from 'node:https';
 
 type JsonRecord = Record<string, unknown>;
@@ -88,6 +89,22 @@ export async function exchangeGoogleDesktopAuthCode(input: {
 }
 
 function httpsPost(hostname: string, path: string, body: string): Promise<{ status: number; statusText: string; raw: string }> {
+  const proxyPort = process.env.DJ_ASSIST_GOOGLE_PROXY_PORT?.trim();
+  if (proxyPort) {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        { hostname: '127.0.0.1', port: parseInt(proxyPort, 10), path, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, statusText: res.statusMessage ?? '', raw: Buffer.concat(chunks).toString('utf8') }));
+        },
+      );
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
   return new Promise((resolve, reject) => {
     const req = https.request(
       { hostname, path, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } },

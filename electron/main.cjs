@@ -3,7 +3,7 @@ const net = require('node:net');
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, screen, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, screen, shell } = require('electron');
 
 const APP_ROOT = path.join(__dirname, '..');
 const MEDIA_PROTOCOL = 'djassist-media';
@@ -561,6 +561,66 @@ function stopManagedServer() {
   }
 }
 
+function startGoogleApiProxy() {
+  return new Promise((resolve) => {
+    const proxyServer = http.createServer((req, res) => {
+      const url = req.url || '';
+
+      const proxyNetRequest = (method, targetUrl, body) => {
+        const netReq = net.request({ method, url: targetUrl });
+        if (body) {
+          netReq.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+          netReq.setHeader('Content-Length', String(Buffer.byteLength(body)));
+        }
+        const chunks = [];
+        netReq.on('response', (netRes) => {
+          netRes.on('data', (chunk) => chunks.push(chunk));
+          netRes.on('end', () => {
+            const responseBody = Buffer.concat(chunks);
+            res.writeHead(netRes.statusCode, { 'Content-Type': 'application/json' });
+            res.end(responseBody);
+          });
+        });
+        netReq.on('error', (err) => {
+          appendMainLog(`google-proxy error method=${method} url=${targetUrl} err=${err.message}`);
+          res.writeHead(502);
+          res.end(JSON.stringify({ error: 'proxy_error', message: err.message }));
+        });
+        if (body) netReq.write(body);
+        netReq.end();
+      };
+
+      if (req.method === 'POST' && url === '/token') {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => {
+          const body = Buffer.concat(chunks).toString();
+          proxyNetRequest('POST', 'https://oauth2.googleapis.com/token', body);
+        });
+      } else if (req.method === 'GET' && url.startsWith('/tokeninfo')) {
+        const parsed = new URL(url, 'http://localhost');
+        const idToken = parsed.searchParams.get('id_token') || '';
+        proxyNetRequest('GET', `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`, null);
+      } else {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+    });
+
+    proxyServer.listen(0, '127.0.0.1', () => {
+      const port = proxyServer.address().port;
+      process.env.DJ_ASSIST_GOOGLE_PROXY_PORT = String(port);
+      appendMainLog(`Google API proxy started on port ${port}`);
+      resolve(port);
+    });
+
+    proxyServer.on('error', (err) => {
+      appendMainLog(`Google API proxy failed to start: ${err.message}`);
+      resolve(null);
+    });
+  });
+}
+
 function registerMediaProtocol() {
   protocol.handle(MEDIA_PROTOCOL, async (request) => {
     const rangeHeader = request.headers.get('range');
@@ -809,7 +869,8 @@ if (hasSingleInstanceLock) {
       if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
     }
     createMainWindow();
-    ensureManagedServer()
+    startGoogleApiProxy()
+      .then(() => ensureManagedServer())
       .then(() => {
         void loadMainRenderer();
 
@@ -819,7 +880,7 @@ if (hasSingleInstanceLock) {
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        appendMainLog(`ensureManagedServer failed: ${message}`);
+        appendMainLog(`startup failed: ${message}`);
         showDiagnosticWindow('DJ Assist could not start', 'The local desktop backend did not load.', message);
       });
   });

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import http from 'node:http';
 import https from 'node:https';
 
 export const GOOGLE_OAUTH_STATE_COOKIE = 'dj_assist_google_oauth_state';
@@ -92,6 +93,18 @@ function normalizeOptionalString(value: unknown): string | undefined {
 }
 
 function httpsGet(hostname: string, path: string): Promise<{ status: number; raw: string }> {
+  const proxyPort = process.env.DJ_ASSIST_GOOGLE_PROXY_PORT?.trim();
+  if (proxyPort) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port: parseInt(proxyPort, 10), path, method: 'GET' }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, raw: Buffer.concat(chunks).toString('utf8') }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
   return new Promise((resolve, reject) => {
     const req = https.request({ hostname, path, method: 'GET' }, (res) => {
       const chunks: Buffer[] = [];
