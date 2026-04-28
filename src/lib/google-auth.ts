@@ -46,6 +46,7 @@ export async function verifyGoogleIdToken(input: {
     'oauth2.googleapis.com',
     `/tokeninfo?id_token=${encodeURIComponent(input.token)}`,
   );
+  console.log(`[google-auth] tokeninfo status=${status} raw_length=${raw.length} raw_preview=${raw.slice(0, 120)}`);
   if (status < 200 || status >= 300) {
     throw new Error(raw.trim() || 'Google sign-in could not be verified.');
   }

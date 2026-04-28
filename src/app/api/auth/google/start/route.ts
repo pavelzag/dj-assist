@@ -243,6 +243,19 @@ async function handleLoopbackCallback(
       redirectUri: input.redirectUri,
     });
 
+    await appendAuthLog({
+      id: input.diagnosticId,
+      level: 'info',
+      event: 'google_oauth_token_exchange_done',
+      message: 'Token exchange returned.',
+      context: {
+        has_access_token: Boolean(tokens.accessToken),
+        has_id_token: Boolean(tokens.idToken),
+        has_refresh_token: Boolean(tokens.refreshToken),
+        scope: tokens.scope,
+      },
+    });
+
     if (!tokens.idToken) {
       await clearPendingGoogleAuthSession();
       await appendAuthLog({
@@ -260,11 +273,34 @@ async function handleLoopbackCallback(
       return;
     }
 
+    await appendAuthLog({
+      id: input.diagnosticId,
+      level: 'info',
+      event: 'google_oauth_verify_start',
+      message: 'Starting ID token verification.',
+      context: { client_id_masked: maskValue(input.clientId) },
+    });
+
     try {
       const identity = await verifyGoogleIdToken({
         token: tokens.idToken,
         clientId: input.clientId,
         nonce: input.authState.nonce,
+      });
+
+      await appendAuthLog({
+        id: input.diagnosticId,
+        level: 'info',
+        event: 'google_oauth_verify_done',
+        message: 'ID token verified.',
+        context: { email: identity.email, has_sub: Boolean(identity.sub) },
+      });
+
+      await appendAuthLog({
+        id: input.diagnosticId,
+        level: 'info',
+        event: 'google_oauth_save_start',
+        message: 'Saving Google auth.',
       });
 
       await saveGoogleAuth({
@@ -275,6 +311,14 @@ async function handleLoopbackCallback(
         picture: stringOrUndefined(identity.picture),
         idToken: tokens.idToken,
       });
+
+      await appendAuthLog({
+        id: input.diagnosticId,
+        level: 'info',
+        event: 'google_oauth_save_done',
+        message: 'Google auth saved.',
+      });
+
       await clearPendingGoogleAuthSession();
       await appendAuthLog({
         id: input.diagnosticId,
@@ -295,12 +339,18 @@ async function handleLoopbackCallback(
     } catch (error) {
       await clearPendingGoogleAuthSession();
       const message = error instanceof Error ? error.message : 'Google sign-in could not be verified.';
+      const innerErrNode = error as NodeJS.ErrnoException;
       await appendAuthLog({
         id: input.diagnosticId,
         level: 'error',
         event: 'google_oauth_identity_verification_failed',
         message: 'Google ID token verification failed.',
-        context: { failure: message },
+        context: {
+          failure: message,
+          failure_type: error instanceof Error ? error.constructor.name : typeof error,
+          failure_code_direct: innerErrNode?.code ?? null,
+          failure_stack: error instanceof Error ? (error.stack ?? '').split('\n').slice(0, 4).join(' | ') : null,
+        },
       });
       await sendAuthResultPage(res, {
         kind: 'error',
@@ -313,6 +363,7 @@ async function handleLoopbackCallback(
     await clearPendingGoogleAuthSession();
     const message = error instanceof Error ? error.message : 'Google sign-in failed.';
     const tokenExchangeError = error instanceof GoogleDesktopTokenExchangeError ? error : null;
+    const errNode = error as NodeJS.ErrnoException;
     const errorCause = error instanceof Error && error.cause instanceof Error
       ? { message: error.cause.message, code: (error.cause as NodeJS.ErrnoException).code ?? null }
       : null;
@@ -323,6 +374,8 @@ async function handleLoopbackCallback(
       message: 'Google OAuth callback handler failed.',
       context: {
         failure: message,
+        failure_code_direct: errNode?.code ?? null,
+        failure_type: error instanceof Error ? error.constructor.name : typeof error,
         failure_cause: errorCause?.message ?? null,
         failure_code: errorCause?.code ?? null,
         flow: 'desktop_loopback',

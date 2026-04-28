@@ -67,6 +67,7 @@ export async function exchangeGoogleDesktopAuthCode(input: {
   }).toString();
 
   const { status, statusText, raw } = await httpsPost('oauth2.googleapis.com', '/token', body);
+  console.log(`[google-desktop-auth] token exchange status=${status} raw_length=${raw.length} raw_preview=${raw.slice(0, 120)}`);
 
   if (status < 200 || status >= 300) {
     throw new GoogleDesktopTokenExchangeError({
