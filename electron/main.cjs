@@ -1,9 +1,9 @@
 const path = require('node:path');
-const net = require('node:net');
+const nodeNet = require('node:net');
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, screen, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, net: electronNet, protocol, screen, shell } = require('electron');
 
 const APP_ROOT = path.join(__dirname, '..');
 const MEDIA_PROTOCOL = 'djassist-media';
@@ -333,7 +333,7 @@ function logGoogleOauthEnvDiagnostics() {
 
 function findAvailablePort(preferredPort) {
   return new Promise((resolve, reject) => {
-    const server = net.createServer();
+    const server = nodeNet.createServer();
     server.unref();
     server.on('error', reject);
     server.listen({ host: DEFAULT_HOST, port: preferredPort }, () => {
@@ -453,7 +453,7 @@ function parseHostPort(targetUrl) {
 
 function probeTcpPort(host, port, timeoutMs = 750) {
   return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port });
+    const socket = nodeNet.createConnection({ host, port });
     let settled = false;
 
     const finish = (ok) => {
@@ -567,7 +567,7 @@ function startGoogleApiProxy() {
       const url = req.url || '';
 
       const proxyNetRequest = (method, targetUrl, body) => {
-        const netReq = net.request({ method, url: targetUrl });
+        const netReq = electronNet.request({ method, url: targetUrl });
         if (body) {
           netReq.setHeader('Content-Type', 'application/x-www-form-urlencoded');
           netReq.setHeader('Content-Length', String(Buffer.byteLength(body)));
