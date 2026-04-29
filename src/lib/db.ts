@@ -2,6 +2,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
+import {
+  syncCollectionDeletion,
+  syncCollectionSnapshot,
+} from '@/lib/server-collections';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -815,6 +819,28 @@ function mapSet(row: Record<string, unknown>): TrackSet {
   };
 }
 
+function serializeSetForServer(set: SetDetail) {
+  return {
+    client_collection_id: `set:${set.id}`,
+    local_collection_id: set.id,
+    name: set.name,
+    created_at: set.created_at?.toISOString() ?? null,
+    tracks: set.tracks.map((track) => ({
+      position: track.position,
+      local_track_id: track.id,
+      file_hash: track.file_hash ?? null,
+      path: track.path ?? null,
+      spotify_id: track.spotify_id ?? null,
+    })),
+  };
+}
+
+async function syncSetToServer(setId: number): Promise<void> {
+  const set = await getSetById(setId);
+  if (!set) return;
+  await syncCollectionSnapshot(serializeSetForServer(set));
+}
+
 export async function getAllSets(): Promise<SetSummary[]> {
   return queryAll<Record<string, unknown>>(
     `SELECT s.id, s.name, s.created_at,
@@ -837,14 +863,24 @@ export async function getAllSets(): Promise<SetSummary[]> {
 export async function createSet(name: string): Promise<TrackSet> {
   execute('INSERT INTO sets (name) VALUES (?)', name);
   const row = queryOne<Record<string, unknown>>('SELECT * FROM sets WHERE id = last_insert_rowid()');
-  return mapSet(row ?? {});
+  const set = mapSet(row ?? {});
+  await syncSetToServer(set.id);
+  return set;
 }
 
 export async function deleteSet(id: number): Promise<void> {
+  const existing = await getSetById(id);
   transaction(() => {
     execute('DELETE FROM set_tracks WHERE set_id = ?', id);
     execute('DELETE FROM sets WHERE id = ?', id);
   });
+  if (existing) {
+    await syncCollectionDeletion({
+      localCollectionId: existing.id,
+      name: existing.name,
+      createdAt: existing.created_at?.toISOString() ?? null,
+    });
+  }
 }
 
 export async function getSetById(id: number): Promise<SetDetail | null> {
@@ -865,6 +901,7 @@ export async function addTrackToSet(setId: number, trackId: number): Promise<voi
   const countRow = queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', setId);
   const position = Number(countRow?.count ?? 0) + 1;
   execute('INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)', setId, trackId, position);
+  await syncSetToServer(setId);
 }
 
 export async function removeTrackFromSet(setId: number, position: number): Promise<void> {
@@ -872,6 +909,7 @@ export async function removeTrackFromSet(setId: number, position: number): Promi
     execute('DELETE FROM set_tracks WHERE set_id = ? AND position = ?', setId, position);
     execute('UPDATE set_tracks SET position = position - 1 WHERE set_id = ? AND position > ?', setId, position);
   });
+  await syncSetToServer(setId);
 }
 
 export interface LibraryOverview {
