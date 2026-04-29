@@ -163,6 +163,13 @@ export async function GET(request: NextRequest) {
 
   const tokens = await tokenResponse.json() as Record<string, unknown>;
   const idToken = String(tokens.id_token ?? '').trim();
+  const accessToken = String(tokens.access_token ?? '').trim() || undefined;
+  const refreshToken = String(tokens.refresh_token ?? '').trim() || undefined;
+  const expiresIn = Number(tokens.expires_in ?? 0) || 0;
+  const scopes = String(tokens.scope ?? '')
+    .split(/\s+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
   if (!idToken) {
     await clearPendingGoogleAuthSession();
     await appendAuthLog({
@@ -189,6 +196,10 @@ export async function GET(request: NextRequest) {
       name: stringOrUndefined(identity.name),
       picture: stringOrUndefined(identity.picture),
       idToken,
+      accessToken,
+      accessTokenExpiresAt: expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000).toISOString() : undefined,
+      refreshToken,
+      scopes,
     });
     await clearPendingGoogleAuthSession();
     await appendAuthLog({

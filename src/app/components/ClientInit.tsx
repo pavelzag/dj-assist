@@ -148,6 +148,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let runtimeHealth: Record<string, unknown> | null = null;
     let spotifySettingsBusy = false;
     let googleOauthSettingsBusy = false;
+    let googleDriveImportBusy = false;
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
     let activeQuickFilter = '';
@@ -688,6 +689,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       statusEl.dataset.state = state;
     }
 
+    function googleDriveRuntimeSummary() {
+      const drive = serverRuntimeSummary()?.googleDrive;
+      return drive && typeof drive === 'object' ? drive as Record<string, unknown> : null;
+    }
+
+    function googleDriveRuntimeLabel() {
+      const drive = googleDriveRuntimeSummary();
+      const user = googleSignedInUser();
+      if (!user) return 'Sign in with Google to import Google Drive audio file metadata.';
+      if (!drive?.connected) return 'Google is connected, but Drive metadata access has not been granted yet.';
+      return `Ready to import Drive audio file metadata for ${String(user.email ?? user.name ?? 'Google user')}.`;
+    }
+
+    function setGoogleDriveImportStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const statusEl = document.getElementById('google-drive-import-status') as HTMLElement | null;
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.state = state;
+    }
+
     function serverRuntimeSummary() {
       const server = runtimeHealth?.server;
       return server && typeof server === 'object' ? server as Record<string, unknown> : null;
@@ -904,6 +925,45 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       window.location.href = targetUrl;
+    }
+
+    async function importGoogleDriveMetadata() {
+      if (googleDriveImportBusy) return;
+      googleDriveImportBusy = true;
+      const button = document.getElementById('google-drive-import-btn') as HTMLButtonElement | null;
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Importing…';
+      }
+      setGoogleDriveImportStatus('Fetching Google Drive metadata and sending it to the server…', 'saving');
+      try {
+        const response = await fetch('/api/google-drive/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ maxFiles: 2000 }),
+        });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          setGoogleDriveImportStatus(String(payload.error ?? 'Google Drive import failed.'), 'error');
+          return;
+        }
+        const imported = Number(payload.tracks_received ?? 0);
+        const scanned = Number(payload.drive_files_scanned ?? imported);
+        const truncated = payload.truncated === true;
+        setGoogleDriveImportStatus(
+          `Imported ${imported} Drive tracks to the server${truncated ? ' (stopped at the import limit).' : '.'}`,
+          'success',
+        );
+        showToast(`Drive import complete: ${imported} tracks from ${scanned} files.`, 'success');
+      } catch (error) {
+        setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        googleDriveImportBusy = false;
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Import Google Drive Metadata';
+        }
+      }
     }
 
     async function submitSpotifyCredentials(mode: 'save' | 'test-current') {
@@ -4190,6 +4250,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const tags = (libraryOverview.tags as Record<string, unknown>[]) ?? [];
       const googleOauth = googleOauthRuntimeSummary();
       const googleOauthConfigured = googleOauth?.configured === true;
+      const googleDrive = googleDriveRuntimeSummary();
+      const googleUser = googleSignedInUser();
 
       libraryPanel.innerHTML = `
         <div class="library-grid">
@@ -4198,6 +4260,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="scan-preflight">Clear tracks, playlists, scan history, and watched folders from this app database.</div>
             <div class="buttons">
               <button type="button" class="btn danger" id="reset-library-data-btn">Reset Library Data</button>
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Google Drive Import</strong></div>
+            <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist Server. This does not download audio or add tracks to the local desktop library.</div>
+            <div class="scan-preflight" id="google-drive-import-status" data-state="idle">${esc(googleDriveRuntimeLabel())}</div>
+            <div class="buttons">
+              <button type="button" class="btn" id="google-drive-import-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Import Google Drive Metadata</button>
+              <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleUser ? 'Refresh Google Access' : 'Sign in with Google'}</button>
             </div>
           </section>
           <section class="library-card">
@@ -4424,6 +4495,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       document.getElementById('google-sign-out-btn')?.addEventListener('click', () => {
         void logoutGoogleAuth();
+      });
+      document.getElementById('google-drive-import-btn')?.addEventListener('click', () => {
+        void importGoogleDriveMetadata();
+      });
+      document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
+        void signInWithGoogle();
       });
       document.getElementById('reset-library-data-btn')?.addEventListener('click', async () => {
         const confirmed = window.confirm('Reset the current DJ Assist library data? This clears tracks, playlists, scan history, and watched folders from the app database.');

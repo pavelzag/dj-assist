@@ -21,7 +21,7 @@ type CollectionSnapshot = {
   tracks: CollectionTrackReference[];
 };
 
-function buildServerHeaders(googleIdToken: string) {
+function buildServerHeaders(googleIdToken: string, googleAccessToken: string) {
   const headers = new Headers({
     'Content-Type': 'application/json',
     'User-Agent': 'dj-assist-client',
@@ -29,6 +29,9 @@ function buildServerHeaders(googleIdToken: string) {
   if (googleIdToken) {
     headers.set('Authorization', `Bearer ${googleIdToken}`);
     headers.set('X-Google-Id-Token', googleIdToken);
+  }
+  if (googleAccessToken) {
+    headers.set('X-Google-Access-Token', googleAccessToken);
   }
   return headers;
 }
@@ -44,7 +47,10 @@ async function postCollectionPayload(payload: Record<string, unknown>) {
 
   const response = await fetch(`${baseUrl}/api/v1/collections/sync`, {
     method: 'POST',
-    headers: buildServerHeaders(String(user.google_id_token ?? '').trim()),
+    headers: buildServerHeaders(
+      String(user.google_id_token ?? '').trim(),
+      String(user.google_access_token ?? '').trim(),
+    ),
     body: JSON.stringify({
       client_id: clientId,
       user_data: user,

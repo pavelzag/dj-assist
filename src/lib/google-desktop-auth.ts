@@ -4,6 +4,8 @@ import https from 'node:https';
 
 type JsonRecord = Record<string, unknown>;
 
+export const GOOGLE_DRIVE_METADATA_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
+
 export class GoogleDesktopTokenExchangeError extends Error {
   readonly status: number;
   readonly statusText: string;
@@ -41,12 +43,14 @@ export function createGoogleDesktopAuthUrl(input: {
   url.searchParams.set('client_id', input.clientId);
   url.searchParams.set('redirect_uri', input.redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', 'openid email profile');
+  url.searchParams.set('scope', ['openid', 'email', 'profile', GOOGLE_DRIVE_METADATA_SCOPE].join(' '));
   url.searchParams.set('state', input.state);
   url.searchParams.set('nonce', input.nonce);
   url.searchParams.set('code_challenge', input.challenge);
   url.searchParams.set('code_challenge_method', 'S256');
-  url.searchParams.set('prompt', 'select_account');
+  url.searchParams.set('access_type', 'offline');
+  url.searchParams.set('include_granted_scopes', 'true');
+  url.searchParams.set('prompt', 'consent select_account');
   return url;
 }
 
@@ -85,6 +89,7 @@ export async function exchangeGoogleDesktopAuthCode(input: {
     idToken: String(tokens.id_token ?? '').trim() || null,
     refreshToken: String(tokens.refresh_token ?? '').trim() || null,
     scope: String(tokens.scope ?? '').trim() || null,
+    expiresIn: Number(tokens.expires_in ?? 0) || null,
   };
 }
 

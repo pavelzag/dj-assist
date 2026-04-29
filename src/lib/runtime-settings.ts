@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { googleAuthConfigured } from '@/lib/google-auth';
+import { GOOGLE_DRIVE_METADATA_SCOPE } from '@/lib/google-desktop-auth';
 
 export type SpotifyCredentials = {
   clientId: string;
@@ -43,6 +44,10 @@ export type AuthSettings = {
   name?: string;
   picture?: string;
   idToken: string;
+  accessToken?: string;
+  accessTokenExpiresAt?: string;
+  refreshToken?: string;
+  scopes?: string[];
   updatedAt?: string;
 };
 
@@ -61,6 +66,7 @@ export type UserData = {
   name?: string;
   picture?: string;
   google_id_token?: string;
+  google_access_token?: string;
 };
 
 export type SpotifySettingsSummary = {
@@ -197,9 +203,15 @@ export async function saveServerSettings(input: Partial<ServerSettings>): Promis
 
 export async function saveGoogleAuth(auth: Omit<AuthSettings, 'provider' | 'updatedAt'>): Promise<AuthSettings> {
   const current = await loadRuntimeSettings();
+  const existing = current.auth?.provider === 'google' ? current.auth : null;
   const next: AuthSettings = {
     provider: 'google',
+    ...(existing ?? {}),
     ...auth,
+    accessToken: auth.accessToken ?? existing?.accessToken,
+    accessTokenExpiresAt: auth.accessTokenExpiresAt ?? existing?.accessTokenExpiresAt,
+    refreshToken: auth.refreshToken ?? existing?.refreshToken,
+    scopes: auth.scopes ?? existing?.scopes,
     updatedAt: new Date().toISOString(),
   };
   await saveRuntimeSettings({ ...current, auth: next });
@@ -241,9 +253,13 @@ export async function clearPendingGoogleAuthSession(): Promise<void> {
 
 export async function effectiveUserData(): Promise<UserData> {
   const settings = await loadRuntimeSettings();
-  const auth = settings.auth;
+  let auth = settings.auth;
   if (auth?.provider === 'google' && auth.id) {
-    if (!isUsableGoogleAuth(auth)) {
+    if (!isUsableGoogleAuth(auth) && auth.refreshToken) {
+      const refreshedAuth = await refreshGoogleAuth(auth);
+      auth = refreshedAuth ?? auth;
+    }
+    if (!auth || !isUsableGoogleAuth(auth)) {
       await clearAuthSettings();
       return {
         type: 'anonymous',
@@ -257,7 +273,8 @@ export async function effectiveUserData(): Promise<UserData> {
       emailVerified: auth.emailVerified,
       name: auth.name,
       picture: auth.picture,
-      google_id_token: auth.idToken,
+      google_id_token: hasUsableGoogleIdToken(auth) ? auth.idToken : undefined,
+      google_access_token: hasUsableGoogleAccessToken(auth) ? auth.accessToken : undefined,
     };
   }
   return {
@@ -267,11 +284,119 @@ export async function effectiveUserData(): Promise<UserData> {
 }
 
 function isUsableGoogleAuth(auth: AuthSettings): boolean {
+  return hasUsableGoogleIdToken(auth) || hasUsableGoogleAccessToken(auth);
+}
+
+function hasUsableGoogleIdToken(auth: AuthSettings): boolean {
   const token = String(auth.idToken ?? '').trim();
   if (!token) return false;
   const expiresAt = googleIdTokenExpiresAt(token);
   if (!expiresAt) return false;
   return expiresAt > Date.now() + 30_000;
+}
+
+function hasUsableGoogleAccessToken(auth: AuthSettings): boolean {
+  const token = String(auth.accessToken ?? '').trim();
+  if (!token) return false;
+  const expiresAt = Date.parse(String(auth.accessTokenExpiresAt ?? ''));
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt > Date.now() + 30_000;
+}
+
+function authScopes(auth: AuthSettings): string[] {
+  return Array.isArray(auth.scopes)
+    ? auth.scopes.filter((scope): scope is string => typeof scope === 'string' && scope.trim().length > 0)
+    : [];
+}
+
+function hasGoogleDriveScope(auth: AuthSettings): boolean {
+  const scopes = new Set(authScopes(auth));
+  return scopes.has(GOOGLE_DRIVE_METADATA_SCOPE) || scopes.has('https://www.googleapis.com/auth/drive.readonly');
+}
+
+function computeAccessTokenExpiresAt(expiresInSeconds: unknown): string | undefined {
+  const expiresIn = Number(expiresInSeconds);
+  if (!Number.isFinite(expiresIn) || expiresIn <= 0) return undefined;
+  return new Date(Date.now() + expiresIn * 1000).toISOString();
+}
+
+function parseGoogleScopes(value: unknown): string[] {
+  return String(value ?? '')
+    .split(/\s+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+}
+
+async function refreshGoogleAuth(auth: AuthSettings): Promise<AuthSettings | null> {
+  const refreshToken = String(auth.refreshToken ?? '').trim();
+  if (!refreshToken) return null;
+
+  const googleOauth = await effectiveGoogleOauthCredentials();
+  const clientId = String(googleOauth.credentials?.clientId ?? '').trim();
+  const clientSecret = String(googleOauth.credentials?.clientSecret ?? '').trim();
+  if (!clientId) return null;
+
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        ...(clientSecret ? { client_secret: clientSecret } : {}),
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }).toString(),
+      cache: 'no-store',
+    });
+
+    if (!response.ok) return null;
+    const payload = await response.json() as Record<string, unknown>;
+    const next = await saveGoogleAuth({
+      id: auth.id,
+      email: auth.email,
+      emailVerified: auth.emailVerified,
+      name: auth.name,
+      picture: auth.picture,
+      idToken: String(payload.id_token ?? auth.idToken ?? '').trim(),
+      accessToken: String(payload.access_token ?? auth.accessToken ?? '').trim() || undefined,
+      accessTokenExpiresAt: computeAccessTokenExpiresAt(payload.expires_in) ?? auth.accessTokenExpiresAt,
+      refreshToken,
+      scopes: parseGoogleScopes(payload.scope).length ? parseGoogleScopes(payload.scope) : authScopes(auth),
+    });
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+export async function getGoogleDriveAccessToken(): Promise<{
+  accessToken: string;
+  userData: UserData;
+}> {
+  const settings = await loadRuntimeSettings();
+  let auth = settings.auth;
+  if (!auth || auth.provider !== 'google' || !auth.id) {
+    throw new Error('Google sign-in is required before importing from Google Drive.');
+  }
+  if (!hasGoogleDriveScope(auth)) {
+    throw new Error('Google Drive access has not been granted. Sign in with Google again to approve Drive metadata access.');
+  }
+  if (!hasUsableGoogleAccessToken(auth)) {
+    const refreshedAuth = await refreshGoogleAuth(auth);
+    auth = refreshedAuth ?? auth;
+  }
+  if (!auth || !hasUsableGoogleAccessToken(auth)) {
+    throw new Error('Google Drive access token is unavailable. Sign in with Google again and retry the import.');
+  }
+  const userData = await effectiveUserData();
+  if (userData.type !== 'google') {
+    throw new Error('Google sign-in is required before importing from Google Drive.');
+  }
+  const accessToken = String(auth.accessToken ?? '').trim();
+  if (!accessToken) {
+    throw new Error('Google Drive access token is unavailable.');
+  }
+  return { accessToken, userData };
 }
 
 function googleIdTokenExpiresAt(token: string): number | null {
@@ -295,6 +420,7 @@ export function publicUserSummary(user: UserData) {
     name: user.name ?? null,
     picture: user.picture ?? null,
     canFetchServerData: user.type === 'google',
+    hasGoogleAccessToken: Boolean(user.google_access_token),
   };
 }
 
@@ -302,12 +428,19 @@ export async function serverRuntimeSummary() {
   const server = await effectiveServerSettings();
   const user = await effectiveUserData();
   const googleOauth = await effectiveGoogleOauthCredentials();
+  const settings = await loadRuntimeSettings();
+  const auth = settings.auth?.provider === 'google' ? settings.auth : null;
   return {
     ...server,
     activeUrl: server.localDebug ? server.localServerUrl : server.serverUrl,
     user: publicUserSummary(user),
     googleAuthConfigured: googleOauth.summary.configured || googleAuthConfigured(),
     googleOauth: googleOauth.summary,
+    googleDrive: {
+      connected: Boolean(auth && hasGoogleDriveScope(auth)),
+      hasRefreshToken: Boolean(auth?.refreshToken),
+      scopes: auth ? authScopes(auth) : [],
+    },
   };
 }
 

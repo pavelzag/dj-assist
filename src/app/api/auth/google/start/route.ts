@@ -310,6 +310,15 @@ async function handleLoopbackCallback(
         name: stringOrUndefined(identity.name),
         picture: stringOrUndefined(identity.picture),
         idToken: tokens.idToken,
+        accessToken: tokens.accessToken ?? undefined,
+        accessTokenExpiresAt: tokens.expiresIn
+          ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
+          : undefined,
+        refreshToken: tokens.refreshToken ?? undefined,
+        scopes: String(tokens.scope ?? '')
+          .split(/\s+/)
+          .map((scope) => scope.trim())
+          .filter(Boolean),
       });
 
       await appendAuthLog({

@@ -97,8 +97,10 @@ def _server_post(path: str, payload: dict, timeout: float) -> tuple[int, dict]:
     data = json.dumps(payload).encode("utf-8")
     user = payload.get("user_data") if isinstance(payload, dict) else None
     google_id_token = ""
+    google_access_token = ""
     if isinstance(user, dict):
         google_id_token = str(user.get("google_id_token") or "").strip()
+        google_access_token = str(user.get("google_access_token") or "").strip()
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "dj-assist-client",
@@ -106,6 +108,8 @@ def _server_post(path: str, payload: dict, timeout: float) -> tuple[int, dict]:
     if google_id_token:
         headers["Authorization"] = f"Bearer {google_id_token}"
         headers["X-Google-Id-Token"] = google_id_token
+    if google_access_token:
+        headers["X-Google-Access-Token"] = google_access_token
     request = urllib.request.Request(
         _server_url(path),
         data=data,
