@@ -1,5 +1,6 @@
 const path = require('node:path');
 const nodeNet = require('node:net');
+const http = require('node:http');
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
