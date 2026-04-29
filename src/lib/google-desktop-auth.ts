@@ -102,14 +102,38 @@ function httpsPost(hostname: string, path: string, body: string): Promise<{ stat
         (res) => {
           const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => chunks.push(chunk));
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, statusText: res.statusMessage ?? '', raw: Buffer.concat(chunks).toString('utf8') }));
+          res.on('end', async () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            if (shouldRetryDirect(res.statusCode ?? 0, raw)) {
+              console.warn(`[google-desktop-auth] proxy token exchange failed on port=${proxyPort}; retrying direct HTTPS`);
+              try {
+                resolve(await directHttpsPost(hostname, path, body));
+                return;
+              } catch (error) {
+                reject(error);
+                return;
+              }
+            }
+            resolve({ status: res.statusCode ?? 0, statusText: res.statusMessage ?? '', raw });
+          });
         },
       );
-      req.on('error', reject);
+      req.on('error', async (error) => {
+        console.warn(`[google-desktop-auth] proxy token exchange request error on port=${proxyPort}; retrying direct HTTPS: ${error.message}`);
+        try {
+          resolve(await directHttpsPost(hostname, path, body));
+        } catch (directError) {
+          reject(directError);
+        }
+      });
       req.write(body);
       req.end();
     });
   }
+  return directHttpsPost(hostname, path, body);
+}
+
+function directHttpsPost(hostname: string, path: string, body: string): Promise<{ status: number; statusText: string; raw: string }> {
   return new Promise((resolve, reject) => {
     const req = https.request(
       { hostname, path, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } },
@@ -123,6 +147,12 @@ function httpsPost(hostname: string, path: string, body: string): Promise<{ stat
     req.write(body);
     req.end();
   });
+}
+
+function shouldRetryDirect(status: number, raw: string): boolean {
+  if (status !== 502) return false;
+  const payload = parseJsonRecord(raw);
+  return String(payload?.error ?? '').trim() === 'proxy_error';
 }
 
 export function createDesktopAuthState() {

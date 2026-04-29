@@ -99,12 +99,36 @@ function httpsGet(hostname: string, path: string): Promise<{ status: number; raw
       const req = http.request({ hostname: '127.0.0.1', port: parseInt(proxyPort, 10), path, method: 'GET' }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, raw: Buffer.concat(chunks).toString('utf8') }));
+        res.on('end', async () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          if (shouldRetryDirect(res.statusCode ?? 0, raw)) {
+            console.warn(`[google-auth] proxy tokeninfo request failed on port=${proxyPort}; retrying direct HTTPS`);
+            try {
+              resolve(await directHttpsGet(hostname, path));
+              return;
+            } catch (error) {
+              reject(error);
+              return;
+            }
+          }
+          resolve({ status: res.statusCode ?? 0, raw });
+        });
       });
-      req.on('error', reject);
+      req.on('error', async (error) => {
+        console.warn(`[google-auth] proxy tokeninfo request error on port=${proxyPort}; retrying direct HTTPS: ${error.message}`);
+        try {
+          resolve(await directHttpsGet(hostname, path));
+        } catch (directError) {
+          reject(directError);
+        }
+      });
       req.end();
     });
   }
+  return directHttpsGet(hostname, path);
+}
+
+function directHttpsGet(hostname: string, path: string): Promise<{ status: number; raw: string }> {
   return new Promise((resolve, reject) => {
     const req = https.request({ hostname, path, method: 'GET' }, (res) => {
       const chunks: Buffer[] = [];
@@ -114,4 +138,14 @@ function httpsGet(hostname: string, path: string): Promise<{ status: number; raw
     req.on('error', reject);
     req.end();
   });
+}
+
+function shouldRetryDirect(status: number, raw: string): boolean {
+  if (status !== 502) return false;
+  try {
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    return String(payload.error ?? '').trim() === 'proxy_error';
+  } catch {
+    return false;
+  }
 }
