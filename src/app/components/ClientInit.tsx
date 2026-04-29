@@ -2968,7 +2968,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         panelSets.style.display = panel === 'sets' ? '' : 'none';
         panelLibrary.style.display = panel === 'library' ? '' : 'none';
         panelActivity.style.display = panel === 'activity' ? '' : 'none';
-        if (panel === 'sets') renderSetsPanel({ syncFromServer: true });
+        if (panel === 'sets') renderSetsPanel();
         if (panel === 'library') renderLibraryPanel();
         if (panel === 'activity') renderActivityPanel();
       });
@@ -4043,22 +4043,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     // ── Sets panel ────────────────────────────────────────────────────────────
-    async function loadSets(options: { syncFromServer?: boolean } = {}) {
-      const res = await fetch(options.syncFromServer ? '/api/sets?sync=1' : '/api/sets');
+    async function loadSets() {
+      const res = await fetch('/api/sets');
       const data = await res.json();
       sets = data.sets ?? [];
-      return data.sync ?? null;
     }
 
-    async function renderSetsPanel(options: { syncFromServer?: boolean; announceSync?: boolean } = {}) {
-      const { syncFromServer = false, announceSync = false } = options;
-      const syncResult = await loadSets({ syncFromServer });
+    async function renderSetsPanel() {
+      await loadSets();
 
       const newSetForm = `
         <div class="new-set-form">
           <input id="new-set-name" placeholder="New playlist name…" />
           <button class="btn" id="create-set-btn" type="button">Create</button>
-          <button class="btn" id="sync-sets-btn" type="button">Sync From Server</button>
         </div>
       `;
 
@@ -4155,33 +4152,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
       });
 
-      document.getElementById('sync-sets-btn')?.addEventListener('click', async () => {
-        const button = document.getElementById('sync-sets-btn') as HTMLButtonElement | null;
-        if (button) {
-          button.disabled = true;
-          button.textContent = 'Syncing…';
-        }
-        try {
-          await renderSetsPanel({ syncFromServer: true, announceSync: true });
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : 'Could not sync playlists from server.', 'error');
-        } finally {
-          const nextButton = document.getElementById('sync-sets-btn') as HTMLButtonElement | null;
-          if (nextButton) {
-            nextButton.disabled = false;
-            nextButton.textContent = 'Sync From Server';
-          }
-        }
-      });
-
-      if (announceSync && syncResult && Number(syncResult.imported ?? 0) + Number(syncResult.updated ?? 0) > 0) {
-        showToast(
-          `Synced ${Number(syncResult.imported ?? 0) + Number(syncResult.updated ?? 0)} playlists from server.`,
-          'success',
-        );
-      } else if (announceSync) {
-        showToast('Playlists synced from server.', 'success');
-      }
     }
 
     function attachNewSetForm() {
@@ -4191,11 +4161,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const create = async () => {
         const name = input.value.trim();
         if (!name) return;
-        await fetch('/api/sets', {
+        const response = await fetch('/api/sets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name }),
         });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null) as { error?: string } | null;
+          showToast(payload?.error || 'Could not create playlist.', 'error');
+          return;
+        }
         input.value = '';
         renderSetsPanel();
       };

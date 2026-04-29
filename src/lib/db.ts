@@ -887,7 +887,15 @@ export async function getAllSets(): Promise<SetSummary[]> {
 }
 
 export async function createSet(name: string): Promise<TrackSet> {
-  execute('INSERT INTO sets (name) VALUES (?)', name);
+  const normalizedName = name.trim();
+  const existing = queryOne<Record<string, unknown>>(
+    'SELECT * FROM sets WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1',
+    normalizedName,
+  );
+  if (existing) {
+    throw new Error('A playlist with this name already exists.');
+  }
+  execute('INSERT INTO sets (name) VALUES (?)', normalizedName);
   const row = queryOne<Record<string, unknown>>('SELECT * FROM sets WHERE id = last_insert_rowid()');
   const set = mapSet(row ?? {});
   await syncSetToServer(set.id);
