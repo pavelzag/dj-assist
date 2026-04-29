@@ -1097,6 +1097,19 @@ main {
 .banner { margin: 10px 14px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,89,89,0.4); background: rgba(255,89,89,0.1); color: #ffd1d1; font-size: 13px; }
 .banner strong { color: #fff; }
 .statusbar { padding: 5px 18px; font-size: 11px; color: var(--muted); letter-spacing: 0.03em; }
+.statusbar-action {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--orange);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.statusbar-action:hover {
+  color: #ffd48a;
+  text-decoration: underline;
+}
 .toast-stack {
   position: fixed;
   right: 18px;

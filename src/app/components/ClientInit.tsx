@@ -1510,6 +1510,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return tracks.filter((track) => selectedTrackIds.has(Number(track.id)));
     }
 
+    function selectAllVisibleTracks() {
+      const visibleIds = visibleTracksOrdered()
+        .map((track) => Number(track.id))
+        .filter((id) => Number.isFinite(id));
+      for (const id of visibleIds) selectedTrackIds.add(id);
+      renderList(tracks);
+      renderBulkToolbar();
+      showToast(visibleIds.length === 1 ? 'Selected 1 visible track.' : `Selected ${visibleIds.length} visible tracks.`, 'success');
+    }
+
     function toggleTrackSelection(trackId: number) {
       if (selectedTrackIds.has(trackId)) selectedTrackIds.delete(trackId);
       else selectedTrackIds.add(trackId);
@@ -2435,6 +2445,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       bulkToolbarEl.innerHTML = `
         <div class="bulk-toolbar-main">
           <strong>${selected.length} selected</strong>
+          <button type="button" class="btn" id="bulk-select-all-visible-btn">Select All Visible</button>
           <button type="button" class="btn danger" id="bulk-delete-btn">Delete</button>
           <button type="button" class="btn" id="bulk-reanalyze-art-btn">Fill Missing Art</button>
           <button type="button" class="btn" id="bulk-ignore-btn">Ignore</button>
@@ -2462,6 +2473,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         await loadLibraryOverview();
       };
 
+      document.getElementById('bulk-select-all-visible-btn')?.addEventListener('click', () => {
+        selectAllVisibleTracks();
+      });
       document.getElementById('bulk-ignore-btn')?.addEventListener('click', () => { void runBulkAction('ignore'); });
       document.getElementById('bulk-unignore-btn')?.addEventListener('click', () => { void runBulkAction('unignore'); });
       document.getElementById('bulk-delete-btn')?.addEventListener('click', () => { openDeleteTracksModal([...selectedTrackIds], 'bulk'); });
@@ -3166,7 +3180,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       currentRenderedList = sorted;
       const previousScrollTop = listEl.scrollTop;
       if (hiddenCountBadge) hiddenCountBadge.textContent = `Shown: ${sorted.length}`;
-      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''}`;
+      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
       if (!items.length) {
         listIsVirtualized = false;
         listEl.innerHTML = `
@@ -3220,12 +3234,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
         renderBulkToolbar();
         listEl.scrollTop = previousScrollTop;
+        document.getElementById('statusbar-select-all-visible-btn')?.addEventListener('click', () => {
+          selectAllVisibleTracks();
+        });
         return;
       }
       listIsVirtualized = shouldVirtualizeList(sorted.length);
       if (listIsVirtualized) renderVisibleTrackWindow(sorted, previousScrollTop);
       else renderTrackRows(sorted);
       listEl.scrollTop = previousScrollTop;
+      document.getElementById('statusbar-select-all-visible-btn')?.addEventListener('click', () => {
+        selectAllVisibleTracks();
+      });
       renderBulkToolbar();
       updateNowPlayingBar();
     }
