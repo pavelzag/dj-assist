@@ -13,12 +13,48 @@ type CollectionTrackReference = {
 };
 
 type CollectionSnapshot = {
+  server_collection_id?: string;
+  source_client_id?: string;
   client_collection_id: string;
   local_collection_id: number;
   name: string;
   created_at: string | null;
   deleted_at?: string;
   tracks: CollectionTrackReference[];
+};
+
+export type ServerCollectionSummary = {
+  id: string;
+  client_id: string;
+  client_collection_id: string;
+  local_collection_id: number;
+  name: string;
+  track_count: number;
+  created_at: string | null;
+  synced_at: string | null;
+};
+
+export type ServerCollectionTrack = {
+  id: string;
+  client_id: string | null;
+  client_track_id: string | null;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  duration: number | null;
+  bpm: number | null;
+  bpm_override: number | null;
+  musical_key: string | null;
+  spotify_tempo: number | null;
+  spotify_key: string | null;
+  effective_bpm: number | null;
+  effective_key: string | null;
+  album_art_url: string | null;
+  custom_tags: string[] | unknown;
+  updated_at: string | null;
+  spotify_id?: string | null;
+  file_hash?: string | null;
+  path?: string | null;
 };
 
 function buildServerHeaders(googleIdToken: string, googleAccessToken: string) {
@@ -68,6 +104,21 @@ async function postCollectionPayload(payload: Record<string, unknown>) {
   return { ok: true as const };
 }
 
+async function getServerBaseUrl() {
+  const server = await effectiveServerSettings();
+  if (!server.enabled) return null;
+  const baseUrl = (server.localDebug ? server.localServerUrl : server.serverUrl).trim().replace(/\/+$/, '');
+  return baseUrl || null;
+}
+
+async function getServerAuthHeaders() {
+  const user = await effectiveUserData();
+  const googleIdToken = String(user.google_id_token ?? '').trim();
+  const googleAccessToken = String(user.google_access_token ?? '').trim();
+  if (!googleIdToken && !googleAccessToken) return null;
+  return buildServerHeaders(googleIdToken, googleAccessToken);
+}
+
 export async function syncCollectionSnapshot(snapshot: CollectionSnapshot): Promise<void> {
   try {
     await postCollectionPayload({ collections: [snapshot] });
@@ -83,12 +134,17 @@ export async function syncCollectionDeletion(input: {
   localCollectionId: number;
   name: string;
   createdAt: string | null;
+  serverCollectionId?: string | null;
+  sourceClientId?: string | null;
+  sourceClientCollectionId?: string | null;
 }): Promise<void> {
   try {
     await postCollectionPayload({
       collections: [
         {
-          client_collection_id: `set:${input.localCollectionId}`,
+          server_collection_id: input.serverCollectionId ?? undefined,
+          source_client_id: input.sourceClientId ?? undefined,
+          client_collection_id: input.sourceClientCollectionId ?? `set:${input.localCollectionId}`,
           local_collection_id: input.localCollectionId,
           name: input.name,
           created_at: input.createdAt,
@@ -103,4 +159,40 @@ export async function syncCollectionDeletion(input: {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export async function listCollectionsFromServer(): Promise<ServerCollectionSummary[]> {
+  const baseUrl = await getServerBaseUrl();
+  if (!baseUrl) return [];
+  const headers = await getServerAuthHeaders();
+  if (!headers) return [];
+  const response = await fetch(`${baseUrl}/api/v1/collections`, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300).trim();
+    throw new Error(`collection list failed status=${response.status}${detail ? ` detail=${detail}` : ''}`);
+  }
+  const payload = await response.json() as { collections?: ServerCollectionSummary[] };
+  return Array.isArray(payload.collections) ? payload.collections : [];
+}
+
+export async function getCollectionTracksFromServer(collectionId: string): Promise<ServerCollectionTrack[]> {
+  const baseUrl = await getServerBaseUrl();
+  if (!baseUrl) return [];
+  const headers = await getServerAuthHeaders();
+  if (!headers) return [];
+  const response = await fetch(`${baseUrl}/api/v1/collections/${encodeURIComponent(collectionId)}/tracks`, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300).trim();
+    throw new Error(`collection tracks failed status=${response.status}${detail ? ` detail=${detail}` : ''}`);
+  }
+  const payload = await response.json() as { tracks?: ServerCollectionTrack[] };
+  return Array.isArray(payload.tracks) ? payload.tracks : [];
 }

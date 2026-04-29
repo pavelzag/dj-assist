@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  getCollectionTracksFromServer,
+  listCollectionsFromServer,
   syncCollectionDeletion,
   syncCollectionSnapshot,
 } from '@/lib/server-collections';
@@ -133,6 +135,9 @@ function ensureSchema(): void {
     CREATE TABLE IF NOT EXISTS sets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      server_collection_id TEXT,
+      server_client_id TEXT,
+      server_client_collection_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -208,6 +213,19 @@ function ensureSchema(): void {
   for (const [name, definition] of trackColumns) {
     if (!trackExisting.has(name)) db.exec(`ALTER TABLE tracks ADD COLUMN ${name} ${definition}`);
   }
+
+  const setColumns = [
+    ['server_collection_id', 'TEXT'],
+    ['server_client_id', 'TEXT'],
+    ['server_client_collection_id', 'TEXT'],
+  ] as const;
+  const setExisting = new Set(
+    db.prepare("SELECT name FROM pragma_table_info('sets')").all().map((row) => String((row as Record<string, unknown>).name)),
+  );
+  for (const [name, definition] of setColumns) {
+    if (!setExisting.has(name)) db.exec(`ALTER TABLE sets ADD COLUMN ${name} ${definition}`);
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS sets_server_collection_idx ON sets(server_collection_id) WHERE server_collection_id IS NOT NULL');
 
   schemaEnsured = true;
 }
@@ -799,6 +817,9 @@ export async function resetLibraryData(): Promise<void> {
 export interface TrackSet {
   id: number;
   name: string;
+  server_collection_id?: string | null;
+  server_client_id?: string | null;
+  server_client_collection_id?: string | null;
   created_at: Date | null;
 }
 
@@ -815,13 +836,18 @@ function mapSet(row: Record<string, unknown>): TrackSet {
   return {
     id: Number(row.id),
     name: String(row.name ?? ''),
+    server_collection_id: row.server_collection_id == null ? null : String(row.server_collection_id),
+    server_client_id: row.server_client_id == null ? null : String(row.server_client_id),
+    server_client_collection_id: row.server_client_collection_id == null ? null : String(row.server_client_collection_id),
     created_at: parseDate(row.created_at),
   };
 }
 
 function serializeSetForServer(set: SetDetail) {
   return {
-    client_collection_id: `set:${set.id}`,
+    server_collection_id: set.server_collection_id ?? undefined,
+    source_client_id: set.server_client_id ?? undefined,
+    client_collection_id: set.server_client_collection_id ?? `set:${set.id}`,
     local_collection_id: set.id,
     name: set.name,
     created_at: set.created_at?.toISOString() ?? null,
@@ -879,6 +905,9 @@ export async function deleteSet(id: number): Promise<void> {
       localCollectionId: existing.id,
       name: existing.name,
       createdAt: existing.created_at?.toISOString() ?? null,
+      serverCollectionId: existing.server_collection_id ?? null,
+      sourceClientId: existing.server_client_id ?? null,
+      sourceClientCollectionId: existing.server_client_collection_id ?? null,
     });
   }
 }
@@ -910,6 +939,133 @@ export async function removeTrackFromSet(setId: number, position: number): Promi
     execute('UPDATE set_tracks SET position = position - 1 WHERE set_id = ? AND position > ?', setId, position);
   });
   await syncSetToServer(setId);
+}
+
+function normalizePath(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function matchLocalTrackIdForServerTrack(
+  track: Record<string, unknown>,
+  byFileHash: Map<string, number>,
+  bySpotifyId: Map<string, number>,
+  byPath: Map<string, number>,
+): number | null {
+  const fileHash = String(track.file_hash ?? '').trim();
+  if (fileHash && byFileHash.has(fileHash)) return byFileHash.get(fileHash) ?? null;
+
+  const spotifyId = String(track.spotify_id ?? '').trim();
+  if (spotifyId && bySpotifyId.has(spotifyId)) return bySpotifyId.get(spotifyId) ?? null;
+
+  const pathKey = normalizePath(track.path);
+  if (pathKey && byPath.has(pathKey)) return byPath.get(pathKey) ?? null;
+
+  return null;
+}
+
+export async function syncSetsFromServer(): Promise<{
+  collections: number;
+  imported: number;
+  updated: number;
+  matched_tracks: number;
+}> {
+  const collections = await listCollectionsFromServer();
+  if (!collections.length) {
+    return { collections: 0, imported: 0, updated: 0, matched_tracks: 0 };
+  }
+
+  const localTracks = queryAll<Record<string, unknown>>('SELECT id, file_hash, spotify_id, path FROM tracks');
+  const byFileHash = new Map<string, number>();
+  const bySpotifyId = new Map<string, number>();
+  const byPath = new Map<string, number>();
+  for (const row of localTracks) {
+    const trackId = Number(row.id ?? 0);
+    if (!trackId) continue;
+    const fileHash = String(row.file_hash ?? '').trim();
+    const spotifyId = String(row.spotify_id ?? '').trim();
+    const pathKey = normalizePath(row.path);
+    if (fileHash && !byFileHash.has(fileHash)) byFileHash.set(fileHash, trackId);
+    if (spotifyId && !bySpotifyId.has(spotifyId)) bySpotifyId.set(spotifyId, trackId);
+    if (pathKey && !byPath.has(pathKey)) byPath.set(pathKey, trackId);
+  }
+
+  let imported = 0;
+  let updated = 0;
+  let matchedTracks = 0;
+
+  for (const collection of collections) {
+    const remoteTracks = await getCollectionTracksFromServer(collection.id);
+    let existed = false;
+    transaction(() => {
+      const existing = queryOne<Record<string, unknown>>(
+        `SELECT *
+         FROM sets
+         WHERE server_collection_id = ?
+            OR (
+              server_client_id = ?
+              AND server_client_collection_id = ?
+            )
+         LIMIT 1`,
+        collection.id,
+        collection.client_id,
+        collection.client_collection_id,
+      );
+
+      let setId = Number(existing?.id ?? 0);
+      existed = Boolean(setId);
+      if (setId) {
+        execute(
+          `UPDATE sets
+           SET name = ?,
+               server_collection_id = ?,
+               server_client_id = ?,
+               server_client_collection_id = ?
+           WHERE id = ?`,
+          collection.name,
+          collection.id,
+          collection.client_id,
+          collection.client_collection_id,
+          setId,
+        );
+        execute('DELETE FROM set_tracks WHERE set_id = ?', setId);
+      } else {
+        execute(
+          `INSERT INTO sets (name, server_collection_id, server_client_id, server_client_collection_id)
+           VALUES (?, ?, ?, ?)`,
+          collection.name,
+          collection.id,
+          collection.client_id,
+          collection.client_collection_id,
+        );
+        const row = queryOne<Record<string, unknown>>('SELECT id FROM sets WHERE id = last_insert_rowid()');
+        setId = Number(row?.id ?? 0);
+      }
+
+      let position = 1;
+      for (const track of remoteTracks) {
+        const localTrackId = matchLocalTrackIdForServerTrack(track, byFileHash, bySpotifyId, byPath);
+        if (!localTrackId) continue;
+        execute(
+          'INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)',
+          setId,
+          localTrackId,
+          position,
+        );
+        position += 1;
+        matchedTracks += 1;
+      }
+    });
+
+    if (existed) updated += 1;
+    else imported += 1;
+  }
+
+  return {
+    collections: collections.length,
+    imported,
+    updated,
+    matched_tracks: matchedTracks,
+  };
 }
 
 export interface LibraryOverview {

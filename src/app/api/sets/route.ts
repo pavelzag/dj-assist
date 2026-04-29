@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllSets, createSet } from '@/lib/db';
+import { getAllSets, createSet, syncSetsFromServer } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const shouldSync = request.nextUrl.searchParams.get('sync') === '1';
+  let sync: Awaited<ReturnType<typeof syncSetsFromServer>> | null = null;
+  if (shouldSync) {
+    try {
+      sync = await syncSetsFromServer();
+    } catch (error) {
+      return NextResponse.json({
+        sets: await getAllSets(),
+        sync: null,
+        sync_error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   const sets = await getAllSets();
-  return NextResponse.json({ sets });
+  return NextResponse.json({ sets, sync });
 }
 
 export async function POST(request: NextRequest) {
