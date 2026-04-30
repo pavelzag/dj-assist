@@ -20,6 +20,7 @@ from .db import Database
 from .media import build_media_links
 
 SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aiff", ".aif"}
+IGNORED_FILENAMES = {".ds_store"}
 
 _EMPTY_PREVIEWS: dict = {
     "youtube_url": "", "spotify_url": "", "spotify_preview_url": "",
@@ -549,6 +550,18 @@ def _smart_capitalize(value: Optional[str]) -> Optional[str]:
     return "".join(convert_token(part) if part and not re.fullmatch(r"(\s+|[-/&()+[\]{}])", part) else part for part in parts)
 
 
+def _should_ignore_scan_file(filename: str) -> bool:
+    lowered = filename.strip().lower()
+    if not lowered:
+        return True
+    if lowered in IGNORED_FILENAMES:
+        return True
+    # Ignore AppleDouble sidecar files and other hidden dotfiles that should never be scanned as audio.
+    if lowered.startswith("._") or (lowered.startswith(".") and Path(lowered).suffix.lower() in SUPPORTED_EXTENSIONS):
+        return True
+    return False
+
+
 def _clean_title(artist: Optional[str], title: Optional[str]) -> Optional[str]:
     if not title:
         return title
@@ -925,6 +938,8 @@ def scan_directory(
 
     for root, _dirs, files in os.walk(directory):
         for filename in files:
+            if _should_ignore_scan_file(filename):
+                continue
             if Path(filename).suffix.lower() in SUPPORTED_EXTENSIONS:
                 audio_files.append(os.path.join(root, filename))
 
