@@ -170,7 +170,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       level: 'info' | 'warning' | 'error' | 'success';
       timestamp: string;
       timestampLabel: string;
+      eventType?: string;
     }> = [];
+    let activityLogFilter: 'all' | 'bpm-missing' = 'all';
     let recentServerCallEntries: Array<{
       message: string;
       level: 'info' | 'warning' | 'error' | 'success';
@@ -1814,15 +1816,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
     }
 
-    function flushPendingScanLogs() {
+    function shouldShowActivityLogEntry(item: {
+      message: string;
+      eventType?: string;
+    }) {
+      if (activityLogFilter === 'all') return true;
+      return item.eventType === 'bpm_missing' || item.message.includes('missing BPM (');
+    }
+
+    function renderActivityLogEntries() {
       const targetLogEl = document.getElementById('activity-log-list') as HTMLElement | null;
-      if (!targetLogEl || !pendingScanLogEntries.length) return;
-      const fragment = document.createDocumentFragment();
-      if (targetLogEl.children.length === 1 && targetLogEl.textContent?.includes('No scan activity.')) {
-        targetLogEl.innerHTML = '';
+      if (!targetLogEl) return;
+      const entries = pendingScanLogEntries.filter(shouldShowActivityLogEntry).slice(0, 80);
+      if (!entries.length) {
+        targetLogEl.innerHTML = `<div class="scan-log-entry info">${
+          activityLogFilter === 'bpm-missing'
+            ? 'No missing BPM logs yet.'
+            : 'No scan activity.'
+        }</div>`;
+        return;
       }
-      const entries = pendingScanLogEntries.splice(0);
-      for (const item of entries.reverse()) {
+      const fragment = document.createDocumentFragment();
+      for (const item of entries) {
         const entry = document.createElement('div');
         entry.className = `scan-log-entry ${item.level}`;
         const timestamp = document.createElement('time');
@@ -1833,11 +1848,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         entry.append(document.createTextNode(item.message));
         fragment.appendChild(entry);
       }
-      targetLogEl.prepend(fragment);
-      while (targetLogEl.children.length > 80) {
-        targetLogEl.removeChild(targetLogEl.lastElementChild!);
-      }
+      targetLogEl.innerHTML = '';
+      targetLogEl.appendChild(fragment);
       scanLogFlushTimer = null;
+    }
+
+    function flushPendingScanLogs() {
+      if (!pendingScanLogEntries.length) {
+        scanLogFlushTimer = null;
+        renderActivityLogEntries();
+        return;
+      }
+      pendingScanLogEntries = pendingScanLogEntries
+        .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+        .slice(0, 120);
+      renderActivityLogEntries();
     }
 
     function isServerCallLog(message: string) {
@@ -1897,7 +1922,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       message: string,
       level: 'info' | 'warning' | 'error' | 'success' = 'info',
       context?: Record<string, unknown>,
-      options?: { timestamp?: string },
+      options?: { timestamp?: string; eventType?: string },
     ) {
       const rawTimestamp = String(options?.timestamp ?? '').trim();
       const now = rawTimestamp ? new Date(rawTimestamp) : new Date();
@@ -1916,6 +1941,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         level,
         timestamp: now.toISOString(),
         timestampLabel: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        eventType: String(options?.eventType ?? ''),
       });
       updateServerCallSummary(
         message,
@@ -2098,6 +2124,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderServerCallSummary();
       const targetLogEl = document.getElementById('activity-log-list') as HTMLElement | null;
       if (targetLogEl) targetLogEl.innerHTML = '<div class="scan-log-entry info">No scan activity.</div>';
+    }
+
+    function syncActivityLogFilterUi() {
+      const allBtn = document.getElementById('activity-log-filter-all') as HTMLButtonElement | null;
+      const bpmBtn = document.getElementById('activity-log-filter-bpm-missing') as HTMLButtonElement | null;
+      const allActive = activityLogFilter === 'all';
+      allBtn?.setAttribute('aria-pressed', allActive ? 'true' : 'false');
+      bpmBtn?.setAttribute('aria-pressed', allActive ? 'false' : 'true');
+    }
+
+    function setActivityLogFilter(filter: 'all' | 'bpm-missing') {
+      activityLogFilter = filter;
+      syncActivityLogFilterUi();
+      renderActivityLogEntries();
     }
 
     function isScanRunning(): boolean {
@@ -4603,6 +4643,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="scan-preflight">Live backend activity appears here, including scan progress and server calls.</div>
             <div class="chips">
               <button type="button" class="chip nav-chip" id="refresh-activity-log-btn">Refresh Scan Log</button>
+              <button type="button" class="chip nav-chip" id="activity-log-filter-all" aria-pressed="true">All Logs</button>
+              <button type="button" class="chip nav-chip" id="activity-log-filter-bpm-missing" aria-pressed="false">BPM Failures Only</button>
               <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Collection</button>
             </div>
             <div class="collapsible-log-section" id="activity-log-section-body">
@@ -4676,6 +4718,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('refresh-activity-log-btn')?.addEventListener('click', () => {
         flushPendingScanLogs();
       });
+      document.getElementById('activity-log-filter-all')?.addEventListener('click', () => {
+        setActivityLogFilter('all');
+      });
+      document.getElementById('activity-log-filter-bpm-missing')?.addEventListener('click', () => {
+        setActivityLogFilter('bpm-missing');
+      });
       const toggleBackendLogs = () => {
         const collapsed = !readCollapsedState(activityScanLogCollapsedKey, preferences.collapseScanLog);
         writeCollapsedState(activityScanLogCollapsedKey, collapsed);
@@ -4708,6 +4756,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('activity-open-collection-btn')?.addEventListener('click', () => {
         openPanel('library');
       });
+      syncActivityLogFilterUi();
+      renderActivityLogEntries();
       document.getElementById('frontend-log-title')?.addEventListener('click', toggleFrontendLogs);
       document.getElementById('frontend-log-title')?.addEventListener('keydown', (event) => {
         toggleOnEnterOrSpace(event, toggleFrontendLogs);
@@ -4819,6 +4869,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const level = (rawLevel === 'error' || rawLevel === 'warning' || rawLevel === 'success' ? rawLevel : 'info') as 'info' | 'warning' | 'error' | 'success';
           appendScanLog(String(event.message ?? ''), level, undefined, {
             timestamp: typeof event.created_at === 'string' ? event.created_at : undefined,
+            eventType: typeof event.eventType === 'string' ? event.eventType : undefined,
           });
           return;
         }
@@ -4906,6 +4957,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             ? log.created_at
             : typeof log.createdAt === 'string'
               ? log.createdAt
+              : undefined,
+          eventType: typeof log.eventType === 'string'
+            ? log.eventType
+            : typeof log.event_type === 'string'
+              ? log.event_type
               : undefined,
         });
       }

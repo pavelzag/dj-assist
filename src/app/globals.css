@@ -317,6 +317,11 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   color: #ffb2b2;
 }
 .scan-log-entry.success { border-color: rgba(54,197,126,0.35); color: #9cf4c7; }
+.chip[aria-pressed="true"] {
+  background: rgba(255, 108, 0, 0.18);
+  border-color: rgba(255, 108, 0, 0.42);
+  color: #ffd7b6;
+}
 .scan-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

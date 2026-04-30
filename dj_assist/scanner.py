@@ -562,6 +562,48 @@ def _should_ignore_scan_file(filename: str) -> bool:
     return False
 
 
+def _describe_missing_bpm(
+    *,
+    bpm_error: str,
+    decode_failed: bool,
+    can_spotify: bool,
+    enrichment_enabled: bool,
+    spotify_scan_enabled: bool,
+    previews: dict,
+    metadata: dict,
+) -> tuple[str, str]:
+    spotify_id = str(previews.get("spotify_id") or "").strip()
+    spotify_tempo = float(previews.get("spotify_tempo") or 0.0)
+    acoustid_id = str(previews.get("acoustid_id") or "").strip()
+    has_metadata = bool(str(metadata.get("artist") or "").strip() or str(metadata.get("title") or "").strip())
+
+    if decode_failed or bpm_error in {"decode_failed", "analysis_subprocess_failed", "analysis_subprocess_error"}:
+        return "decode_failed", "audio decode/analysis failed before a tempo could be extracted"
+    if bpm_error == "analysis_timeout":
+        return "analysis_timeout", "tempo analysis timed out"
+    if bpm_error == "analysis_subprocess_invalid_json":
+        return "analysis_subprocess_invalid_json", "analysis subprocess returned invalid data"
+    if bpm_error == "no tempo candidates":
+        return "no_tempo_candidates", "audio was decoded but no stable tempo candidates were found"
+    if bpm_error == "unstable tempo":
+        return "unstable_tempo", "tempo candidates were found but too inconsistent to trust"
+    if not can_spotify:
+        return "spotify_disabled_by_mode", "local analysis found no BPM and Spotify fallback was disabled by scan mode"
+    if not enrichment_enabled:
+        return "enrichment_disabled", "local analysis found no BPM and metadata enrichment was disabled"
+    if not spotify_scan_enabled:
+        return "spotify_disabled_after_timeouts", "local analysis found no BPM and Spotify lookup was disabled after repeated timeouts"
+    if spotify_tempo > 0:
+        return "spotify_tempo_not_applied", "Spotify returned a tempo but it was not applied"
+    if spotify_id:
+        return "spotify_match_without_tempo", "Spotify matched the track but did not provide a tempo"
+    if acoustid_id and not has_metadata:
+        return "acoustid_match_without_tempo", "AcoustID helped identify the track but no BPM source returned a tempo"
+    if not has_metadata:
+        return "missing_metadata_and_no_match", "file metadata was too sparse and no external match supplied a tempo"
+    return "no_bpm_source", "no local or external BPM source produced a usable tempo"
+
+
 def _clean_title(artist: Optional[str], title: Optional[str]) -> Optional[str]:
     if not title:
         return title
@@ -1302,6 +1344,21 @@ def scan_directory(
                 if not key:
                     debug_parts.append("key=missing")
 
+                bpm_missing_reason = ""
+                bpm_missing_detail = ""
+                if not bpm:
+                    bpm_missing_reason, bpm_missing_detail = _describe_missing_bpm(
+                        bpm_error=bpm_error,
+                        decode_failed=decode_failed,
+                        can_spotify=can_spotify,
+                        enrichment_enabled=enrichment_enabled,
+                        spotify_scan_enabled=spotify_scan_enabled,
+                        previews=previews,
+                        metadata=metadata,
+                    )
+                    debug_parts.append(f"bpm_missing_reason={bpm_missing_reason}")
+                    debug_parts.append(f"bpm_missing_detail={bpm_missing_detail}")
+
                 album_art = _resolve_album_art(metadata, previews, fetch_album_art, album_art_cache, artist_art_cache)
                 album_art_url = str(album_art["album_art_url"] or "")
                 debug_parts.append(f"album_art_source={album_art['album_art_source'] or 'none'}")
@@ -1414,8 +1471,34 @@ def scan_directory(
                         "decode_failed": decode_failed,
                         "server_uploaded": uploaded,
                         "server_upload_log": upload_log,
+                        "bpm_missing_reason": bpm_missing_reason,
+                        "bpm_missing_detail": bpm_missing_detail,
                     }
                 )
+                if not bpm:
+                    _emit(
+                        {
+                            "event": "log",
+                            "eventType": "bpm_missing",
+                            "level": "warning",
+                            "message": (
+                                f"{Path(filepath).name}: missing BPM ({bpm_missing_reason}) - "
+                                f"{bpm_missing_detail}"
+                            ),
+                            "path": filepath,
+                            "file": Path(filepath).name,
+                            "artist": metadata["artist"],
+                            "title": metadata["title"],
+                            "analysis_error": bpm_error,
+                            "decode_failed": decode_failed,
+                            "bpm_missing_reason": bpm_missing_reason,
+                            "bpm_missing_detail": bpm_missing_detail,
+                            "spotify_id": previews["spotify_id"],
+                            "spotify_tempo": previews["spotify_tempo"],
+                            "acoustid_id": previews["acoustid_id"],
+                            "analysis_debug": " | ".join(debug_parts),
+                        }
+                    )
                 _emit(
                     {
                         "event": "log",

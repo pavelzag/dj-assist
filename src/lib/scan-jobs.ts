@@ -341,7 +341,8 @@ export async function startScanJob(jobId: string): Promise<void> {
           if (event.event === 'log') {
             const message = String(event.message ?? '');
             const level = classifyLogLevel(message, String(event.level ?? 'info'));
-            void pushLog(job, level, message, 'log', event);
+            const eventType = String(event.eventType ?? event.event_type ?? 'log');
+            void pushLog(job, level, message, eventType, event);
           }
         } catch {
           emit(job, { event: 'log', level: 'info', message: line, job_id: jobId });
