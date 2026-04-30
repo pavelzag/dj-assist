@@ -1142,6 +1142,11 @@ def scan_directory(
                     db.add_track(track_data)
                     bpm = float(track_data.get("bpm") or track_data.get("spotify_tempo") or 0.0)
                     key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
+                    bpm_missing_reason = ""
+                    bpm_missing_detail = ""
+                    if bpm <= 0:
+                        bpm_missing_reason = "server_match_without_bpm"
+                        bpm_missing_detail = "server matched the track by file hash but the server record has no BPM"
                     results["analyzed"] += 1
                     processed += 1
                     _emit(
@@ -1161,8 +1166,31 @@ def scan_directory(
                             "album_art_confidence": float(track_data.get("album_art_confidence") or 0.0),
                             "album_art_review_status": track_data.get("album_art_review_status"),
                             "decode_failed": track_data.get("decode_failed"),
+                            "bpm_missing_reason": bpm_missing_reason,
+                            "bpm_missing_detail": bpm_missing_detail,
                         }
                     )
+                    if bpm <= 0:
+                        _emit(
+                            {
+                                "event": "log",
+                                "eventType": "bpm_missing",
+                                "level": "warning",
+                                "message": (
+                                    f"{Path(filepath).name}: missing BPM ({bpm_missing_reason}) - "
+                                    f"{bpm_missing_detail}"
+                                ),
+                                "path": filepath,
+                                "file": Path(filepath).name,
+                                "artist": track_data.get("artist"),
+                                "title": track_data.get("title"),
+                                "bpm_missing_reason": bpm_missing_reason,
+                                "bpm_missing_detail": bpm_missing_detail,
+                                "spotify_id": track_data.get("spotify_id"),
+                                "analysis_status": track_data.get("analysis_status"),
+                                "analysis_debug": track_data.get("analysis_debug"),
+                            }
+                        )
                     _emit(
                         {
                             "event": "log",
