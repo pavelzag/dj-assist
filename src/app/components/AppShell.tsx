@@ -16,7 +16,7 @@ export default function AppShell({
             <span className="app-version-badge" title="Application version">{`v${appVersion}`}</span>
           </div>
           <div className="quick-actions">
-            <button type="button" className="btn" id="quick-choose-folder-btn">Choose Folder</button>
+            <button type="button" className="btn" id="quick-choose-folder-btn">Add Music</button>
             <span className="scan-status" id="scan-status">Idle</span>
             <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
             <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
@@ -46,7 +46,7 @@ export default function AppShell({
           </div>
         </div>
         <input id="scan-directory" type="hidden" />
-        <div className="scan-preflight" id="scan-preflight">Choose a music folder to check.</div>
+        <div className="scan-preflight" id="scan-preflight">Choose a music source to add tracks.</div>
         <div className="browse-scope" id="browse-scope">
           <span className="browse-scope-empty">Viewing full collection</span>
         </div>
@@ -80,9 +80,9 @@ export default function AppShell({
             <div className="detail" id="detail">
               <div className="empty empty-state">
                 <strong>Your collection is ready for a first scan.</strong>
-                <span>Choose a music folder, confirm diagnostics, and bring tracks into the app.</span>
+                <span>Choose a music source, confirm diagnostics, and bring tracks into the app.</span>
                 <div className="empty-actions">
-                  <button type="button" className="btn" id="empty-choose-folder-btn">Choose Folder</button>
+                  <button type="button" className="btn" id="empty-choose-folder-btn">Add Music</button>
                   <button type="button" className="btn" id="empty-start-scan-btn">Start First Scan</button>
                 </div>
               </div>
@@ -286,6 +286,28 @@ export default function AppShell({
             </div>
             <div className="scan-history" id="google-drive-folder-list">
               <div className="empty">Loading Google Drive folders…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="modal" id="add-music-source-modal" aria-hidden="true">
+        <div className="modal-card google-drive-folder-card">
+          <div className="modal-head">
+            <h3>Add Music</h3>
+            <button className="close" id="close-add-music-source-modal" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="scan-preflight">Choose where you want DJ Assist to add music from.</div>
+            <div className="shortcuts-list">
+              <button className="command-palette-item" id="add-music-source-local-btn" type="button">
+                <strong>This Mac</strong>
+                <span>Pick a local folder and run the regular desktop scan.</span>
+              </button>
+              <button className="command-palette-item" id="add-music-source-google-drive-btn" type="button">
+                <strong>Google Drive</strong>
+                <span>Pick a Drive folder with read-only access and import its audio metadata into the Songs list and server.</span>
+              </button>
             </div>
           </div>
         </div>

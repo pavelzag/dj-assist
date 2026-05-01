@@ -4,6 +4,8 @@ import {
   getClientId,
   getGoogleDriveAccessToken,
 } from '@/lib/runtime-settings';
+import { listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
+import { importGoogleDriveTracks } from '@/lib/db';
 
 export const runtime = 'nodejs';
 const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
@@ -47,6 +49,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Server URL is not configured.' }, { status: 400 });
     }
 
+    const localFiles: Awaited<ReturnType<typeof listGoogleDriveAudioFiles>>['files'] = [];
+    let nextPageToken: string | null = null;
+    do {
+      const page = await listGoogleDriveAudioFiles({
+        accessToken,
+        folderId: folderId || undefined,
+        limit: Math.min(200, maxFiles - localFiles.length),
+        pageToken: nextPageToken ?? undefined,
+      });
+      localFiles.push(...page.files);
+      nextPageToken = page.nextPageToken;
+    } while (nextPageToken && localFiles.length < maxFiles);
+
+    const localImport = await importGoogleDriveTracks({
+      files: localFiles,
+      folderId: folderId || undefined,
+      folderName: String(body.folderName ?? '').trim() || undefined,
+    });
+
     const response = await fetch(`${serverUrl}/api/v1/google-drive/import`, {
       method: 'POST',
       headers: buildServerHeaders({
@@ -73,7 +94,11 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      payload ?? { ok: response.ok },
+      {
+        ...(payload ?? { ok: response.ok }),
+        local_tracks_imported: localImport.imported,
+        local_tracks_updated: localImport.updated,
+      },
       { status: response.status },
     );
   } catch (error) {

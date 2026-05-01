@@ -764,6 +764,85 @@ export async function getTracksByIds(ids: number[]): Promise<Track[]> {
   return queryAll<Record<string, unknown>>(`SELECT * FROM tracks WHERE id IN (${placeholders})`, ...uniqueIds).map(mapTrack);
 }
 
+export async function importGoogleDriveTracks(input: {
+  files: Array<{
+    id: string;
+    name: string;
+    modifiedTime?: string | null;
+    size?: string | null;
+    md5Checksum?: string | null;
+  }>;
+  folderId?: string;
+  folderName?: string;
+}): Promise<{ imported: number; updated: number }> {
+  const files = input.files.filter((file) => String(file.id ?? '').trim());
+  if (!files.length) return { imported: 0, updated: 0 };
+  let imported = 0;
+  let updated = 0;
+  const folderTag = String(input.folderId ?? '').trim();
+  const folderName = String(input.folderName ?? '').trim();
+  transaction(() => {
+    for (const file of files) {
+      const fileId = String(file.id ?? '').trim();
+      const path = `gdrive:${fileId}`;
+      const derivedTitle = String(file.name ?? '').replace(/\.[^.]+$/, '').trim() || String(file.name ?? '').trim() || fileId;
+      const modifiedAt = String(file.modifiedTime ?? '').trim();
+      const fileMtime = modifiedAt ? new Date(modifiedAt).getTime() / 1000 : null;
+      const fileSize = Number(file.size ?? 0);
+      const existing = queryOne<Record<string, unknown>>('SELECT id, title, custom_tags FROM tracks WHERE path = ? LIMIT 1', path);
+      const tags = [
+        ...parseTags(String(existing?.custom_tags ?? '')),
+        'source:google_drive',
+        ...(folderTag ? [`gdrive-folder:${folderTag}`] : []),
+        ...(folderName ? [`gdrive-folder-name:${folderName}`] : []),
+      ];
+      const serializedTags = serializeTags(tags);
+      if (existing) {
+        execute(
+          `UPDATE tracks
+           SET title = ?,
+               file_hash = ?,
+               file_size = ?,
+               file_mtime = ?,
+               custom_tags = ?,
+               analysis_status = COALESCE(analysis_status, ?)
+           WHERE id = ?`,
+          String(existing.title ?? '').trim() || derivedTitle,
+          String(file.md5Checksum ?? '').trim() || null,
+          Number.isFinite(fileSize) && fileSize > 0 ? fileSize : null,
+          fileMtime,
+          serializedTags,
+          'google_drive_metadata',
+          Number(existing.id),
+        );
+        updated += 1;
+      } else {
+        execute(
+          `INSERT INTO tracks (
+             path, title, artist, album, duration, bitrate, bpm, bpm_override, bpm_confidence,
+             key, key_numeric, spotify_id, spotify_uri, spotify_url, spotify_preview_url,
+             spotify_tempo, spotify_key, spotify_mode, album_art_url, album_art_source,
+             album_art_confidence, album_art_review_status, album_art_review_notes, album_group_key,
+             embedded_album_art, album_art_match_debug, spotify_album_name, spotify_match_score,
+             spotify_high_confidence, youtube_url, bpm_source, analysis_status, analysis_error,
+             decode_failed, analysis_stage, analysis_debug, file_hash, file_size, file_mtime,
+             ignored, custom_tags, artist_canonical, album_canonical, manual_cues
+           ) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, NULL, NULL, '[]')`,
+          path,
+          derivedTitle,
+          'google_drive_metadata',
+          String(file.md5Checksum ?? '').trim() || null,
+          Number.isFinite(fileSize) && fileSize > 0 ? fileSize : null,
+          fileMtime,
+          serializedTags,
+        );
+        imported += 1;
+      }
+    }
+  });
+  return { imported, updated };
+}
+
 export async function bulkTrackAction(input: {
   ids: number[];
   action: 'ignore' | 'unignore' | 'add_tags' | 'remove_tags' | 'clear_tags' | 'add_to_set' | 'delete';

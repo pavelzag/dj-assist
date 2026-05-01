@@ -11,6 +11,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       skipped: number;
       errors: number;
     };
+    type ScanSourceMode = 'local' | 'google_drive';
 
     // ── DOM refs ──────────────────────────────────────────────────────────────
     const listEl = document.getElementById('track-list') as HTMLElement;
@@ -70,11 +71,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const tapBpmModal = document.getElementById('tap-bpm-modal') as HTMLElement | null;
     const googleAuthUpsellModal = document.getElementById('google-auth-upsell-modal') as HTMLElement | null;
     const googleDriveFolderModal = document.getElementById('google-drive-folder-modal') as HTMLElement | null;
+    const addMusicSourceModal = document.getElementById('add-music-source-modal') as HTMLElement | null;
     const googleAuthMainBtn = document.getElementById('google-auth-main-btn') as HTMLButtonElement | null;
     const googleAuthMainLabel = document.getElementById('google-auth-main-label') as HTMLElement | null;
     const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
     const closeGoogleAuthUpsellBtn = document.getElementById('close-google-auth-upsell') as HTMLButtonElement | null;
     const closeGoogleDriveFolderModalBtn = document.getElementById('close-google-drive-folder-modal') as HTMLButtonElement | null;
+    const closeAddMusicSourceModalBtn = document.getElementById('close-add-music-source-modal') as HTMLButtonElement | null;
     const tapBpmTrackLabelEl = document.getElementById('tap-bpm-track-label') as HTMLElement | null;
     const tapBpmValueEl = document.getElementById('tap-bpm-value') as HTMLElement | null;
     const tapBpmCountEl = document.getElementById('tap-bpm-count') as HTMLElement | null;
@@ -172,6 +175,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let scanLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let activityLogAutoRefreshTimer: ReturnType<typeof setInterval> | null = null;
     let googleAuthUpsellEvaluated = false;
+    let scanSourceMode: ScanSourceMode = 'local';
     let selectedGoogleDriveFolderId = '';
     let selectedGoogleDriveFolderName = '';
     let googleDriveFolderTrail: Array<{ id: string; name: string }> = [];
@@ -720,6 +724,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         : 'All audio files in Google Drive';
     }
 
+    function addMusicStartLabel() {
+      return scanSourceMode === 'google_drive' ? 'Import from Google Drive' : 'Start Scan';
+    }
+
+    function syncAddMusicUi() {
+      const chooseLabel = 'Add Music';
+      if (quickChooseFolderBtn) quickChooseFolderBtn.textContent = chooseLabel;
+      if (quickStartScanBtn) quickStartScanBtn.textContent = addMusicStartLabel();
+      for (const id of ['empty-choose-folder-btn', 'list-empty-choose-folder-btn']) {
+        const button = document.getElementById(id) as HTMLButtonElement | null;
+        if (button) button.textContent = chooseLabel;
+      }
+      for (const id of ['empty-start-scan-btn', 'list-empty-start-scan-btn', 'startup-empty-start-scan-btn']) {
+        const button = document.getElementById(id) as HTMLButtonElement | null;
+        if (button) button.textContent = addMusicStartLabel();
+      }
+    }
+
     function setGoogleDriveImportStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
       const statusEl = document.getElementById('google-drive-import-status') as HTMLElement | null;
       if (!statusEl) return;
@@ -964,6 +986,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         button.textContent = 'Importing…';
       }
       setGoogleDriveImportStatus('Fetching Google Drive metadata and sending it to the server…', 'saving');
+      setScanStatus('Importing Google Drive metadata…', 'running');
+      setScanProgress(0, 0, selectedGoogleDriveFolderLabel());
       try {
         const response = await fetch('/api/google-drive/import', {
           method: 'POST',
@@ -971,23 +995,39 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           body: JSON.stringify({
             maxFiles: 2000,
             folderId: selectedGoogleDriveFolderId || undefined,
+            folderName: selectedGoogleDriveFolderName || undefined,
           }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (!response.ok) {
           setGoogleDriveImportStatus(String(payload.error ?? 'Google Drive import failed.'), 'error');
+          setScanStatus('Google Drive import failed', 'error');
+          setScanProgress(0, 0, 'Google Drive import failed');
           return;
         }
         const imported = Number(payload.tracks_received ?? 0);
         const scanned = Number(payload.drive_files_scanned ?? imported);
+        const localImported = Number(payload.local_tracks_imported ?? 0);
+        const localUpdated = Number(payload.local_tracks_updated ?? 0);
         const truncated = payload.truncated === true;
         setGoogleDriveImportStatus(
           `Imported ${imported} Drive tracks to the server from ${selectedGoogleDriveFolderLabel()}${truncated ? ' (stopped at the import limit).' : '.'}`,
           'success',
         );
-        showToast(`Drive import complete: ${imported} tracks from ${scanned} files in ${selectedGoogleDriveFolderLabel()}.`, 'success');
+        setScanStatus('Google Drive import complete', 'success');
+        setScanProgress(scanned, scanned, selectedGoogleDriveFolderLabel());
+        await Promise.all([
+          loadTracks(searchEl.value.trim()),
+          loadLibraryOverview(),
+        ]);
+        showToast(
+          `Drive import complete: ${localImported} added, ${localUpdated} updated locally, ${imported} sent to server from ${scanned} files in ${selectedGoogleDriveFolderLabel()}.`,
+          'success',
+        );
       } catch (error) {
         setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
+        setScanStatus('Google Drive import failed', 'error');
+        setScanProgress(0, 0, 'Google Drive import failed');
       } finally {
         googleDriveImportBusy = false;
         if (button) {
@@ -1074,11 +1114,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function applySelectedGoogleDriveFolder(folderId: string, folderName: string) {
+      scanSourceMode = 'google_drive';
       selectedGoogleDriveFolderId = folderId.trim();
       selectedGoogleDriveFolderName = folderName.trim();
       googleDriveFiles = [];
       googleDriveFilesLoaded = false;
+      updateScanDirectoryDisplay();
       renderLibraryPanel();
+      syncAddMusicUi();
       closeModal(googleDriveFolderModal);
       showToast(
         selectedGoogleDriveFolderId
@@ -1220,13 +1263,36 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function updateScanDirectoryDisplay() {
       if (!scanPreflightEl) return;
+      if (scanSourceMode === 'google_drive') {
+        scanPreflightEl.textContent = `Google Drive source: ${selectedGoogleDriveFolderLabel()}`;
+        return;
+      }
       const directory = scanDirectoryEl?.value.trim() ?? '';
       if (!directory) {
-        scanPreflightEl.textContent = 'Choose a music folder to check.';
+        scanPreflightEl.textContent = 'Choose a music source to add tracks.';
         return;
       }
       const name = directory.split(/[\\/]/).filter(Boolean).pop() ?? directory;
       scanPreflightEl.textContent = `Music folder: ${name}`;
+    }
+
+    function openAddMusicSourceModal() {
+      openModal(addMusicSourceModal);
+    }
+
+    async function chooseLocalMusicSource() {
+      scanSourceMode = 'local';
+      closeModal(addMusicSourceModal);
+      syncAddMusicUi();
+      await pickDirectoryAndPrefill();
+    }
+
+    async function chooseGoogleDriveMusicSource() {
+      scanSourceMode = 'google_drive';
+      closeModal(addMusicSourceModal);
+      syncAddMusicUi();
+      updateScanDirectoryDisplay();
+      await openGoogleDriveFolderModal();
     }
 
     function setListDensity(density: string) {
@@ -1244,8 +1310,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!adapter.supportsNativeFolderPicker) return;
       const directory = await adapter.pickDirectory();
       if (!directory) return;
+      scanSourceMode = 'local';
       scanDirectoryEl.value = directory;
       updateScanDirectoryDisplay();
+      syncAddMusicUi();
       pushRecentDirectory(directory);
       await preflightDirectory(directory);
       showToast('Music folder selected.', 'success');
@@ -1306,8 +1374,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return null;
       })();
       const commands: Array<{ label: string; meta: string; run: () => void }> = [
-        { label: 'Choose Folder', meta: 'Scan', run: () => void pickDirectoryAndPrefill() },
-        { label: 'Start Scan', meta: 'Scan', run: () => void triggerScan() },
+        { label: 'Add Music', meta: 'Import', run: () => openAddMusicSourceModal() },
+        { label: 'Start Import', meta: 'Import', run: () => void triggerScan() },
         { label: 'View New Tracks', meta: 'Filter', run: () => setActiveQuickFilter('new') },
         { label: 'Needs Attention', meta: 'Review', run: () => startReviewMode('attention') },
         { label: 'Review Missing Art', meta: 'Review', run: () => startReviewMode('art') },
@@ -3455,19 +3523,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         listEl.innerHTML = `
           <div class="empty empty-state">
             <strong>Your collection is empty.</strong>
-            <span>Choose a music folder and run your first scan to bring tracks into the desktop app.</span>
+            <span>Choose a music source and import tracks into the desktop app.</span>
             <div class="empty-actions">
-              <button type="button" class="btn" id="list-empty-choose-folder-btn">Choose Folder</button>
-              <button type="button" class="btn" id="list-empty-start-scan-btn">Start First Scan</button>
+              <button type="button" class="btn" id="list-empty-choose-folder-btn">Add Music</button>
+              <button type="button" class="btn" id="list-empty-start-scan-btn">Start Scan</button>
             </div>
           </div>
         `;
         document.getElementById('list-empty-choose-folder-btn')?.addEventListener('click', () => {
-          void pickDirectoryAndPrefill();
+          openAddMusicSourceModal();
         });
         document.getElementById('list-empty-start-scan-btn')?.addEventListener('click', () => {
           void triggerScan();
         });
+        syncAddMusicUi();
         renderBulkToolbar();
         listEl.scrollTop = previousScrollTop;
         return;
@@ -4562,7 +4631,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           </section>
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
-            <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist Server. This does not download audio or add tracks to the local desktop library.</div>
+            <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist. Imported Drive items are added to the Songs list locally and synced to the server.</div>
             <div class="scan-preflight">Selected scope: ${esc(selectedGoogleDriveFolderLabel())}</div>
             <div class="scan-preflight" id="google-drive-import-status" data-state="idle">${esc(googleDriveRuntimeLabel())}</div>
             <div class="buttons">
@@ -5273,11 +5342,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     // ── Scanning ──────────────────────────────────────────────────────────────
     async function triggerScan() {
+      if (scanSourceMode === 'google_drive') {
+        if (!googleSignedInUser()) {
+          setScanStatus('Sign in with Google first', 'error');
+          setScanProgress(0, 0, 'Google Drive access required');
+          showToast('Sign in with Google before importing Drive tracks.', 'warning');
+          openGoogleAuthModal();
+          return;
+        }
+        await importGoogleDriveMetadata();
+        return;
+      }
       const directory = scanDirectoryEl.value.trim();
       if (!directory) {
-        setScanStatus('Choose a music folder', 'error');
-        setScanProgress(0, 0, 'Choose a music folder');
-        showToast('Choose a music folder first.', 'warning');
+        setScanStatus('Choose a music source', 'error');
+        setScanProgress(0, 0, 'Choose a music source');
+        showToast('Choose a music source first.', 'warning');
+        openAddMusicSourceModal();
         return;
       }
 
@@ -5772,6 +5853,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const savedDirectory = localStorage.getItem(scanDirectoryKey);
       if (savedDirectory) scanDirectoryEl.value = savedDirectory;
       updateScanDirectoryDisplay();
+      syncAddMusicUi();
       const savedNewTrackIds = JSON.parse(localStorage.getItem(recentNewTrackIdsKey) || '[]');
       if (Array.isArray(savedNewTrackIds)) {
         recentNewTrackIds = new Set(savedNewTrackIds.map((value) => Number(value)).filter((id) => Number.isFinite(id)));
@@ -5779,17 +5861,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       setListDensity((localStorage.getItem(listDensityKey) as 'comfortable' | 'compact' | null) || preferences.defaultListDensity);
     } catch {
       updateScanDirectoryDisplay();
+      syncAddMusicUi();
       preferences = { ...defaultPreferences };
       setListDensity(preferences.defaultListDensity);
     }
     document.getElementById('empty-choose-folder-btn')?.addEventListener('click', () => {
-      void pickDirectoryAndPrefill();
+      openAddMusicSourceModal();
     });
     document.getElementById('empty-start-scan-btn')?.addEventListener('click', () => {
       void triggerScan();
     });
     quickChooseFolderBtn?.addEventListener('click', () => {
-      void pickDirectoryAndPrefill();
+      openAddMusicSourceModal();
     });
     openCommandPaletteBtn?.addEventListener('click', () => {
       commandPaletteActiveIndex = 0;
@@ -5819,6 +5902,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     closeGoogleDriveFolderModalBtn?.addEventListener('click', () => {
       closeModal(googleDriveFolderModal);
+    });
+    closeAddMusicSourceModalBtn?.addEventListener('click', () => {
+      closeModal(addMusicSourceModal);
+    });
+    document.getElementById('add-music-source-local-btn')?.addEventListener('click', () => {
+      void chooseLocalMusicSource();
+    });
+    document.getElementById('add-music-source-google-drive-btn')?.addEventListener('click', () => {
+      void chooseGoogleDriveMusicSource();
     });
     commandPaletteModal?.addEventListener('click', (event) => {
       if (event.target === commandPaletteModal) closeModal(commandPaletteModal);
@@ -5851,6 +5943,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     googleDriveFolderModal?.addEventListener('click', (event) => {
       if (event.target === googleDriveFolderModal) closeModal(googleDriveFolderModal);
+    });
+    addMusicSourceModal?.addEventListener('click', (event) => {
+      if (event.target === addMusicSourceModal) closeModal(addMusicSourceModal);
     });
     deleteTrackModal?.addEventListener('keydown', (event) => {
       if (event.key !== 'Tab') return;
@@ -6090,6 +6185,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('startup-empty-start-scan-btn')?.addEventListener('click', () => {
         void triggerScan();
       });
+      syncAddMusicUi();
       return Promise.resolve();
     });
     void loadLibraryOverview();
