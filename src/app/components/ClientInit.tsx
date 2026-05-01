@@ -69,10 +69,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const confirmQuitAppBtn = document.getElementById('confirm-quit-app-btn') as HTMLButtonElement | null;
     const tapBpmModal = document.getElementById('tap-bpm-modal') as HTMLElement | null;
     const googleAuthUpsellModal = document.getElementById('google-auth-upsell-modal') as HTMLElement | null;
+    const googleDriveFolderModal = document.getElementById('google-drive-folder-modal') as HTMLElement | null;
     const googleAuthMainBtn = document.getElementById('google-auth-main-btn') as HTMLButtonElement | null;
     const googleAuthMainLabel = document.getElementById('google-auth-main-label') as HTMLElement | null;
     const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
     const closeGoogleAuthUpsellBtn = document.getElementById('close-google-auth-upsell') as HTMLButtonElement | null;
+    const closeGoogleDriveFolderModalBtn = document.getElementById('close-google-drive-folder-modal') as HTMLButtonElement | null;
     const tapBpmTrackLabelEl = document.getElementById('tap-bpm-track-label') as HTMLElement | null;
     const tapBpmValueEl = document.getElementById('tap-bpm-value') as HTMLElement | null;
     const tapBpmCountEl = document.getElementById('tap-bpm-count') as HTMLElement | null;
@@ -147,11 +149,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let watchFolders: Record<string, unknown>[] = [];
     let runtimeHealth: Record<string, unknown> | null = null;
     let googleDriveFiles: Record<string, unknown>[] = [];
+    let googleDriveFolders: Record<string, unknown>[] = [];
     let spotifySettingsBusy = false;
     let googleOauthSettingsBusy = false;
     let googleDriveImportBusy = false;
     let googleDriveFilesBusy = false;
     let googleDriveFilesLoaded = false;
+    let googleDriveFoldersBusy = false;
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
     let activeQuickFilter = '';
@@ -168,6 +172,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let scanLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let activityLogAutoRefreshTimer: ReturnType<typeof setInterval> | null = null;
     let googleAuthUpsellEvaluated = false;
+    let selectedGoogleDriveFolderId = '';
+    let selectedGoogleDriveFolderName = '';
+    let googleDriveFolderTrail: Array<{ id: string; name: string }> = [];
     let pendingScanLogEntries: Array<{
       message: string;
       level: 'info' | 'warning' | 'error' | 'success';
@@ -707,8 +714,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return `Ready to import Drive audio files for ${String(user.email ?? user.name ?? 'Google user')}.`;
     }
 
+    function selectedGoogleDriveFolderLabel() {
+      return selectedGoogleDriveFolderId
+        ? selectedGoogleDriveFolderName || 'Selected Google Drive folder'
+        : 'All audio files in Google Drive';
+    }
+
     function setGoogleDriveImportStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
       const statusEl = document.getElementById('google-drive-import-status') as HTMLElement | null;
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.state = state;
+    }
+
+    function setGoogleDriveFolderStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const statusEl = document.getElementById('google-drive-folder-status') as HTMLElement | null;
       if (!statusEl) return;
       statusEl.textContent = message;
       statusEl.dataset.state = state;
@@ -948,7 +968,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const response = await fetch('/api/google-drive/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ maxFiles: 2000 }),
+          body: JSON.stringify({
+            maxFiles: 2000,
+            folderId: selectedGoogleDriveFolderId || undefined,
+          }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (!response.ok) {
@@ -959,10 +982,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const scanned = Number(payload.drive_files_scanned ?? imported);
         const truncated = payload.truncated === true;
         setGoogleDriveImportStatus(
-          `Imported ${imported} Drive tracks to the server${truncated ? ' (stopped at the import limit).' : '.'}`,
+          `Imported ${imported} Drive tracks to the server from ${selectedGoogleDriveFolderLabel()}${truncated ? ' (stopped at the import limit).' : '.'}`,
           'success',
         );
-        showToast(`Drive import complete: ${imported} tracks from ${scanned} files.`, 'success');
+        showToast(`Drive import complete: ${imported} tracks from ${scanned} files in ${selectedGoogleDriveFolderLabel()}.`, 'success');
       } catch (error) {
         setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
       } finally {
@@ -972,6 +995,105 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           button.textContent = 'Import Google Drive Metadata';
         }
       }
+    }
+
+    function googleDriveFolderPathLabel() {
+      if (!googleDriveFolderTrail.length) return 'Current folder: My Drive';
+      return `Current folder: My Drive / ${googleDriveFolderTrail.map((item) => item.name).join(' / ')}`;
+    }
+
+    function renderGoogleDriveFolderPicker() {
+      const listEl = document.getElementById('google-drive-folder-list') as HTMLElement | null;
+      const pathEl = document.getElementById('google-drive-folder-path') as HTMLElement | null;
+      const backBtn = document.getElementById('google-drive-folder-back-btn') as HTMLButtonElement | null;
+      const useCurrentBtn = document.getElementById('google-drive-folder-use-current-btn') as HTMLButtonElement | null;
+      if (pathEl) pathEl.textContent = googleDriveFolderPathLabel();
+      if (backBtn) backBtn.disabled = googleDriveFoldersBusy || googleDriveFolderTrail.length === 0;
+      if (useCurrentBtn) {
+        useCurrentBtn.disabled = googleDriveFoldersBusy || googleDriveFolderTrail.length === 0;
+        useCurrentBtn.textContent = googleDriveFolderTrail.length
+          ? `Use "${googleDriveFolderTrail[googleDriveFolderTrail.length - 1]?.name ?? 'This Folder'}"`
+          : 'Use This Folder';
+      }
+      if (!listEl) return;
+      if (googleDriveFoldersBusy) {
+        listEl.innerHTML = '<div class="empty">Loading Google Drive folders…</div>';
+        return;
+      }
+      listEl.innerHTML = googleDriveFolders.length
+        ? googleDriveFolders.map((folder) => `
+          <button type="button" class="scan-history-item" data-drive-folder-id="${esc(String(folder.id ?? ''))}" data-drive-folder-name="${esc(String(folder.name ?? 'Untitled folder'))}">
+            <strong>${esc(String(folder.name ?? 'Untitled folder'))}</strong>
+            <span>Open folder</span>
+          </button>
+        `).join('')
+        : '<div class="empty">No child folders found here.</div>';
+      listEl.querySelectorAll('[data-drive-folder-id]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const element = button as HTMLElement;
+          const folderId = String(element.dataset.driveFolderId ?? '').trim();
+          const folderName = String(element.dataset.driveFolderName ?? 'Untitled folder').trim() || 'Untitled folder';
+          if (!folderId) return;
+          void loadGoogleDriveFolders({
+            parentId: folderId,
+            trail: [...googleDriveFolderTrail, { id: folderId, name: folderName }],
+          });
+        });
+      });
+    }
+
+    async function loadGoogleDriveFolders(options: {
+      parentId?: string;
+      trail?: Array<{ id: string; name: string }>;
+    } = {}) {
+      if (googleDriveFoldersBusy) return;
+      googleDriveFoldersBusy = true;
+      googleDriveFolderTrail = options.trail ?? [];
+      renderGoogleDriveFolderPicker();
+      setGoogleDriveFolderStatus('Loading Google Drive folders with read-only access…', 'saving');
+      try {
+        const parentId = String(options.parentId ?? '').trim();
+        const query = new URLSearchParams();
+        if (parentId) query.set('parentId', parentId);
+        const response = await fetch(`/api/google-drive/folders${query.toString() ? `?${query.toString()}` : ''}`);
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          setGoogleDriveFolderStatus(String(payload.error ?? 'Could not load Google Drive folders.'), 'error');
+          googleDriveFolders = [];
+          return;
+        }
+        googleDriveFolders = Array.isArray(payload.folders) ? payload.folders as Record<string, unknown>[] : [];
+        setGoogleDriveFolderStatus('Browse a folder and choose it for Drive preview/import. DJ Assist only has read access.', 'success');
+      } catch (error) {
+        googleDriveFolders = [];
+        setGoogleDriveFolderStatus(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        googleDriveFoldersBusy = false;
+        renderGoogleDriveFolderPicker();
+      }
+    }
+
+    function applySelectedGoogleDriveFolder(folderId: string, folderName: string) {
+      selectedGoogleDriveFolderId = folderId.trim();
+      selectedGoogleDriveFolderName = folderName.trim();
+      googleDriveFiles = [];
+      googleDriveFilesLoaded = false;
+      renderLibraryPanel();
+      closeModal(googleDriveFolderModal);
+      showToast(
+        selectedGoogleDriveFolderId
+          ? `Google Drive folder selected: ${selectedGoogleDriveFolderName || 'Selected folder'}.`
+          : 'Google Drive scope reset to all audio files.',
+        'success',
+      );
+    }
+
+    async function openGoogleDriveFolderModal() {
+      openModal(googleDriveFolderModal);
+      await loadGoogleDriveFolders({
+        parentId: '',
+        trail: [],
+      });
     }
 
     function formatDriveFileSize(value: unknown): string {
@@ -1005,10 +1127,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         button.textContent = 'Loading…';
       }
       if (!quiet) {
-        setGoogleDriveImportStatus('Loading Google Drive audio files…', 'saving');
+        setGoogleDriveImportStatus(`Loading Google Drive audio files from ${selectedGoogleDriveFolderLabel()}…`, 'saving');
       }
       try {
-        const response = await fetch(`/api/google-drive/files?limit=${encodeURIComponent(String(limit))}`);
+        const query = new URLSearchParams({ limit: String(limit) });
+        if (selectedGoogleDriveFolderId) query.set('folderId', selectedGoogleDriveFolderId);
+        const response = await fetch(`/api/google-drive/files?${query.toString()}`);
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (!response.ok) {
           setGoogleDriveImportStatus(String(payload.error ?? 'Could not load Google Drive files.'), 'error');
@@ -1019,8 +1143,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         renderLibraryPanel();
         setGoogleDriveImportStatus(
           googleDriveFiles.length
-            ? `Loaded ${googleDriveFiles.length} Google Drive audio files.`
-            : 'No Google Drive audio files were returned.',
+            ? `Loaded ${googleDriveFiles.length} Google Drive audio files from ${selectedGoogleDriveFolderLabel()}.`
+            : `No Google Drive audio files were returned for ${selectedGoogleDriveFolderLabel()}.`,
           'success',
         );
       } catch (error) {
@@ -4439,10 +4563,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
             <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist Server. This does not download audio or add tracks to the local desktop library.</div>
+            <div class="scan-preflight">Selected scope: ${esc(selectedGoogleDriveFolderLabel())}</div>
             <div class="scan-preflight" id="google-drive-import-status" data-state="idle">${esc(googleDriveRuntimeLabel())}</div>
             <div class="buttons">
               <button type="button" class="btn" id="google-drive-import-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Import Google Drive Metadata</button>
               <button type="button" class="btn secondary" id="google-drive-preview-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>${googleDriveFilesLoaded ? 'Refresh Drive Files' : 'Preview Drive Files'}</button>
+              <button type="button" class="btn secondary" id="google-drive-folder-picker-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Choose Drive Folder</button>
               <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleUser ? 'Refresh Google Access' : 'Sign in with Google'}</button>
             </div>
             <div class="scan-history">
@@ -4456,7 +4582,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                     </div>
                   `).join('')
                   : '<div class="empty">No Drive audio files loaded yet.</div>')
-                : '<div class="empty">Preview Google Drive files to inspect what the app can see before importing.</div>'}
+                : `<div class="empty">Preview Google Drive files from ${esc(selectedGoogleDriveFolderLabel())} to inspect what the app can see before importing.</div>`}
             </div>
           </section>
           <section class="library-card">
@@ -4689,6 +4815,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       document.getElementById('google-drive-preview-btn')?.addEventListener('click', () => {
         void loadGoogleDriveFiles();
+      });
+      document.getElementById('google-drive-folder-picker-btn')?.addEventListener('click', () => {
+        void openGoogleDriveFolderModal();
+      });
+      document.getElementById('google-drive-folder-back-btn')?.addEventListener('click', () => {
+        if (!googleDriveFolderTrail.length) return;
+        const nextTrail = googleDriveFolderTrail.slice(0, -1);
+        const parentId = nextTrail[nextTrail.length - 1]?.id ?? '';
+        void loadGoogleDriveFolders({
+          parentId,
+          trail: nextTrail,
+        });
+      });
+      document.getElementById('google-drive-folder-use-current-btn')?.addEventListener('click', () => {
+        const current = googleDriveFolderTrail[googleDriveFolderTrail.length - 1];
+        if (!current) return;
+        applySelectedGoogleDriveFolder(current.id, current.name);
+      });
+      document.getElementById('google-drive-folder-use-all-btn')?.addEventListener('click', () => {
+        applySelectedGoogleDriveFolder('', '');
       });
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
         void signInWithGoogle();
@@ -5671,6 +5817,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     closeGoogleAuthUpsellBtn?.addEventListener('click', () => {
       dismissGoogleAuthUpsell();
     });
+    closeGoogleDriveFolderModalBtn?.addEventListener('click', () => {
+      closeModal(googleDriveFolderModal);
+    });
     commandPaletteModal?.addEventListener('click', (event) => {
       if (event.target === commandPaletteModal) closeModal(commandPaletteModal);
     });
@@ -5699,6 +5848,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     googleAuthUpsellModal?.addEventListener('click', (event) => {
       if (event.target === googleAuthUpsellModal) dismissGoogleAuthUpsell();
+    });
+    googleDriveFolderModal?.addEventListener('click', (event) => {
+      if (event.target === googleDriveFolderModal) closeModal(googleDriveFolderModal);
     });
     deleteTrackModal?.addEventListener('keydown', (event) => {
       if (event.key !== 'Tab') return;

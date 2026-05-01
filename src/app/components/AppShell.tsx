@@ -270,6 +270,27 @@ export default function AppShell({
         </div>
       </div>
 
+      <div className="modal" id="google-drive-folder-modal" aria-hidden="true">
+        <div className="modal-card google-drive-folder-card">
+          <div className="modal-head">
+            <h3>Choose Google Drive Folder</h3>
+            <button className="close" id="close-google-drive-folder-modal" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="scan-preflight" id="google-drive-folder-status">Browse your Google Drive folders. DJ Assist only uses read access.</div>
+            <div className="scan-preflight" id="google-drive-folder-path">Current folder: My Drive</div>
+            <div className="buttons">
+              <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
+              <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
+              <button className="btn secondary" id="google-drive-folder-use-all-btn" type="button">Use All Audio Files</button>
+            </div>
+            <div className="scan-history" id="google-drive-folder-list">
+              <div className="empty">Loading Google Drive folders…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <datalist id="artist-suggestions" />
       <datalist id="album-suggestions" />
 

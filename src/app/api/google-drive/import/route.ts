@@ -6,6 +6,7 @@ import {
 } from '@/lib/runtime-settings';
 
 export const runtime = 'nodejs';
+const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
 
 function buildServerHeaders(input: {
   googleIdToken?: string;
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
         fallback_download_scan: fallbackDownloadScan,
         fallback_download_limit: fallbackDownloadScan ? fallbackDownloadLimit : undefined,
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(GOOGLE_DRIVE_IMPORT_TIMEOUT_MS),
     });
 
     const raw = await response.text();
@@ -76,8 +77,13 @@ export async function POST(request: NextRequest) {
       { status: response.status },
     );
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : String(error) },
+      {
+        error: message === 'The operation was aborted due to timeout'
+          ? 'Google Drive import exceeded the desktop timeout. Try importing a smaller folder, or preview and narrow the scope first.'
+          : message,
+      },
       { status: 400 },
     );
   }

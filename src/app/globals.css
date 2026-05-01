@@ -1245,11 +1245,13 @@ body[data-list-density="compact"] .row span {
 .edit-metadata-modal-card { max-width: 680px; }
 .command-palette-card,
 .shortcuts-card,
-.google-auth-upsell-card {
+.google-auth-upsell-card,
+.google-drive-folder-card {
   display: grid;
   gap: 12px;
 }
 .google-auth-upsell-card { max-width: 560px; }
+.google-drive-folder-card { max-width: 680px; }
 .google-auth-upsell-points div {
   align-items: flex-start;
 }
