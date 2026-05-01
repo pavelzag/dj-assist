@@ -769,14 +769,38 @@ export async function bulkTrackAction(input: {
   action: 'ignore' | 'unignore' | 'add_tags' | 'remove_tags' | 'clear_tags' | 'add_to_set' | 'delete';
   tags?: string[];
   setId?: number;
-}): Promise<{ updated: number }> {
+}): Promise<{
+  updated: number;
+  skipped?: number;
+  missingTrackIds?: number[];
+  missingSet?: boolean;
+}> {
   const ids = [...new Set(input.ids.filter((id) => Number.isFinite(id)))];
   if (!ids.length) return { updated: 0 };
 
   if (input.action === 'add_to_set') {
     if (!input.setId) return { updated: 0 };
-    for (const id of ids) await addTrackToSet(input.setId, id);
-    return { updated: ids.length };
+    const setExists = queryOne<Record<string, unknown>>('SELECT id FROM sets WHERE id = ? LIMIT 1', input.setId);
+    if (!setExists) {
+      return { updated: 0, skipped: ids.length, missingTrackIds: ids, missingSet: true };
+    }
+    const tracks = await getTracksByIds(ids);
+    const existingTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
+    const missingTrackIds = ids.filter((id) => !existingTrackIds.has(id));
+    let position = Number(queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', input.setId)?.count ?? 0);
+    transaction(() => {
+      for (const track of tracks) {
+        position += 1;
+        execute('INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)', input.setId as number, track.id, position);
+      }
+    });
+    if (tracks.length) await syncSetToServer(input.setId);
+    return {
+      updated: tracks.length,
+      skipped: missingTrackIds.length,
+      missingTrackIds,
+      missingSet: false,
+    };
   }
 
   const placeholders = ids.map(() => '?').join(', ');
@@ -935,6 +959,10 @@ export async function getSetById(id: number): Promise<SetDetail | null> {
 }
 
 export async function addTrackToSet(setId: number, trackId: number): Promise<void> {
+  const setExists = queryOne<Record<string, unknown>>('SELECT id FROM sets WHERE id = ? LIMIT 1', setId);
+  if (!setExists) throw new Error('Playlist not found.');
+  const trackExists = queryOne<Record<string, unknown>>('SELECT id FROM tracks WHERE id = ? LIMIT 1', trackId);
+  if (!trackExists) throw new Error('Track not found.');
   const countRow = queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', setId);
   const position = Number(countRow?.count ?? 0) + 1;
   execute('INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)', setId, trackId, position);

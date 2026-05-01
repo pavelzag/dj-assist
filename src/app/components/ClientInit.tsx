@@ -146,9 +146,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let libraryOverview: Record<string, unknown> | null = null;
     let watchFolders: Record<string, unknown>[] = [];
     let runtimeHealth: Record<string, unknown> | null = null;
+    let googleDriveFiles: Record<string, unknown>[] = [];
     let spotifySettingsBusy = false;
     let googleOauthSettingsBusy = false;
     let googleDriveImportBusy = false;
+    let googleDriveFilesBusy = false;
+    let googleDriveFilesLoaded = false;
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
     let activeQuickFilter = '';
@@ -854,7 +857,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         showToast('Could not sign out.', 'error');
         return false;
       }
+      googleDriveFiles = [];
+      googleDriveFilesLoaded = false;
       await loadRuntimeHealth();
+      closeModal(googleAuthUpsellModal);
       renderLibraryPanel();
       showToast('Signed out of Google.', 'success');
       return true;
@@ -964,6 +970,67 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (button) {
           button.disabled = false;
           button.textContent = 'Import Google Drive Metadata';
+        }
+      }
+    }
+
+    function formatDriveFileSize(value: unknown): string {
+      const bytes = Number(value);
+      if (!Number.isFinite(bytes) || bytes <= 0) return '--';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let size = bytes;
+      let unitIndex = 0;
+      while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+      }
+      return `${size >= 100 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
+    }
+
+    function formatDriveModifiedTime(value: unknown): string {
+      const raw = String(value ?? '').trim();
+      if (!raw) return '--';
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) return raw;
+      return parsed.toLocaleString();
+    }
+
+    async function loadGoogleDriveFiles(options: { limit?: number; quiet?: boolean } = {}) {
+      if (googleDriveFilesBusy) return;
+      googleDriveFilesBusy = true;
+      const { limit = 100, quiet = false } = options;
+      const button = document.getElementById('google-drive-preview-btn') as HTMLButtonElement | null;
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Loading…';
+      }
+      if (!quiet) {
+        setGoogleDriveImportStatus('Loading Google Drive audio files…', 'saving');
+      }
+      try {
+        const response = await fetch(`/api/google-drive/files?limit=${encodeURIComponent(String(limit))}`);
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          setGoogleDriveImportStatus(String(payload.error ?? 'Could not load Google Drive files.'), 'error');
+          return;
+        }
+        googleDriveFiles = Array.isArray(payload.files) ? payload.files as Record<string, unknown>[] : [];
+        googleDriveFilesLoaded = true;
+        renderLibraryPanel();
+        setGoogleDriveImportStatus(
+          googleDriveFiles.length
+            ? `Loaded ${googleDriveFiles.length} Google Drive audio files.`
+            : 'No Google Drive audio files were returned.',
+          'success',
+        );
+      } catch (error) {
+        setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        googleDriveFilesBusy = false;
+        const nextButton = document.getElementById('google-drive-preview-btn') as HTMLButtonElement | null;
+        if (nextButton) {
+          nextButton.disabled = false;
+          nextButton.textContent = googleDriveFilesLoaded ? 'Refresh Drive Files' : 'Preview Drive Files';
         }
       }
     }
@@ -2523,9 +2590,32 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ids: [...selectedTrackIds], action, ...extra }),
         });
-        if (!res.ok) return;
+        const payload = await res.json().catch(() => ({})) as Record<string, unknown>;
+        if (!res.ok) {
+          showToast(String(payload.error ?? 'Bulk update failed.'), 'error');
+          return;
+        }
         await loadTracks(searchEl.value.trim());
         await loadLibraryOverview();
+        if (action === 'add_to_set') {
+          const updated = Number(payload.updated ?? 0);
+          const skipped = Number(payload.skipped ?? 0);
+          if (Boolean(payload.missingSet)) {
+            showToast('Playlist no longer exists. Reloading playlists.', 'error');
+            await loadSets();
+            return;
+          }
+          if (updated > 0 && skipped > 0) {
+            showToast(`Added ${updated} tracks to the playlist. Skipped ${skipped} stale selections.`, 'warning');
+          } else if (updated > 0) {
+            showToast(updated === 1 ? 'Added 1 track to the playlist.' : `Added ${updated} tracks to the playlist.`, 'success');
+          } else if (skipped > 0) {
+            showToast('Selected tracks are no longer in the library. Reloading the list.', 'warning');
+            await loadTracks(searchEl.value.trim());
+          }
+          await loadSets();
+          if (currentPanel === 'sets') await renderSetsPanel();
+        }
       };
 
       document.getElementById('bulk-select-all-visible-btn')?.addEventListener('click', () => {
@@ -4256,6 +4346,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderLibraryPanel();
       renderActivityPanel();
       syncGoogleAuthEntryPoint();
+      if (googleSignedInUser()) {
+        closeModal(googleAuthUpsellModal);
+      }
       maybeOpenGoogleAuthUpsell();
     }
 
@@ -4349,7 +4442,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="scan-preflight" id="google-drive-import-status" data-state="idle">${esc(googleDriveRuntimeLabel())}</div>
             <div class="buttons">
               <button type="button" class="btn" id="google-drive-import-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Import Google Drive Metadata</button>
+              <button type="button" class="btn secondary" id="google-drive-preview-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>${googleDriveFilesLoaded ? 'Refresh Drive Files' : 'Preview Drive Files'}</button>
               <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleUser ? 'Refresh Google Access' : 'Sign in with Google'}</button>
+            </div>
+            <div class="scan-history">
+              ${googleDriveFilesLoaded
+                ? (googleDriveFiles.length
+                  ? googleDriveFiles.map((file) => `
+                    <div class="scan-history-item">
+                      <strong>${esc(String(file.name ?? 'Untitled'))}</strong>
+                      <span>${esc(formatDriveFileSize(file.size))} · ${esc(formatDriveModifiedTime(file.modifiedTime))}</span>
+                      <span>${esc(String(file.mimeType ?? 'audio'))}</span>
+                    </div>
+                  `).join('')
+                  : '<div class="empty">No Drive audio files loaded yet.</div>')
+                : '<div class="empty">Preview Google Drive files to inspect what the app can see before importing.</div>'}
             </div>
           </section>
           <section class="library-card">
@@ -4579,6 +4686,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       document.getElementById('google-drive-import-btn')?.addEventListener('click', () => {
         void importGoogleDriveMetadata();
+      });
+      document.getElementById('google-drive-preview-btn')?.addEventListener('click', () => {
+        void loadGoogleDriveFiles();
       });
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
         void signInWithGoogle();
@@ -5623,10 +5733,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void signInWithGoogle();
     });
     document.getElementById('google-auth-modal-sign-out-btn')?.addEventListener('click', () => {
-      void (async () => {
-        const signedOut = await logoutGoogleAuth();
-        if (signedOut) openGoogleAuthModal();
-      })();
+      void logoutGoogleAuth();
     });
     document.getElementById('google-auth-upsell-decline-btn')?.addEventListener('click', () => {
       dismissGoogleAuthUpsell();

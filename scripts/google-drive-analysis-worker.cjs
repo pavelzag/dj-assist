@@ -49,15 +49,16 @@ async function main() {
     serverUrl,
     folderId: options.folderId,
     batchSize: options.batchSize,
+    analysisReason: options.analysisReason,
   });
 
   if (jobs.length === 0) {
-    console.log('[google-drive-worker] no incomplete Drive tracks were returned');
+    console.log(`[google-drive-worker] no Drive tracks were returned for queue=${options.analysisReason || 'default'}`);
     return;
   }
 
   const selectedJobs = options.maxJobs > 0 ? jobs.slice(0, options.maxJobs) : jobs;
-  console.log(`[google-drive-worker] processing ${selectedJobs.length} Drive track(s) from ${serverUrl}`);
+  console.log(`[google-drive-worker] processing ${selectedJobs.length} Drive track(s) from ${serverUrl} queue=${options.analysisReason || 'default'}`);
 
   let processed = 0;
   let uploaded = 0;
@@ -94,6 +95,7 @@ async function main() {
     uploaded,
     failed,
     folder_id: options.folderId || null,
+    analysis_reason: options.analysisReason || null,
     server_url: serverUrl,
   }, null, 2));
 }
@@ -105,6 +107,7 @@ function parseArgs(argv) {
     maxJobs: 0,
     maxFiles: 2000,
     importFirst: false,
+    analysisReason: 'server_match_without_bpm',
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -132,6 +135,11 @@ function parseArgs(argv) {
       options.importFirst = true;
       continue;
     }
+    if (arg === '--analysis-reason') {
+      options.analysisReason = String(argv[index + 1] || '').trim() || options.analysisReason;
+      index += 1;
+      continue;
+    }
     if (arg === '--help' || arg === '-h') {
       printHelp();
       process.exit(0);
@@ -149,6 +157,7 @@ Options:
   --batch-size <n>      Number of incomplete Drive tracks to request from the server (default: 25)
   --max-jobs <n>        Max number of jobs to process from the returned batch (default: all returned)
   --max-files <n>       Max files to metadata-import when --import-first is used (default: 2000)
+  --analysis-reason <r> Restrict claimed jobs to one server analysis reason (default: server_match_without_bpm)
   --import-first        Refresh server-side Drive metadata before claiming analysis jobs
   -h, --help            Show this help`);
 }
@@ -331,7 +340,7 @@ async function runImport({ auth, clientId, userData, serverUrl, maxFiles, folder
   console.log(`[google-drive-worker] import completed imported=${Number(payload.imported ?? 0)} fallback_parsed=${Number(payload.fallback?.parsed_files ?? 0)}`);
 }
 
-async function fetchAnalysisJobs({ auth, clientId, userData, serverUrl, folderId, batchSize }) {
+async function fetchAnalysisJobs({ auth, clientId, userData, serverUrl, folderId, batchSize, analysisReason }) {
   const payload = await postJson(`${serverUrl}/api/v1/google-drive/analysis-jobs`, {
     headers: buildServerHeaders(auth, userData),
     body: {
@@ -339,6 +348,7 @@ async function fetchAnalysisJobs({ auth, clientId, userData, serverUrl, folderId
       user_data: userData,
       folder_id: folderId || undefined,
       fallback_download_limit: batchSize,
+      analysis_reason: analysisReason || undefined,
     },
     timeoutMs: 60_000,
   });

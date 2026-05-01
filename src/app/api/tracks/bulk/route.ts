@@ -88,12 +88,17 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const result = await bulkTrackAction({
-    ids,
-    action: action as Parameters<typeof bulkTrackAction>[0]['action'],
-    tags: Array.isArray(body.tags) ? body.tags.map((value: unknown) => String(value).trim()).filter(Boolean) : [],
-    setId: body.setId ? parseInt(String(body.setId), 10) : undefined,
-  });
+  try {
+    const result = await bulkTrackAction({
+      ids,
+      action: action as Parameters<typeof bulkTrackAction>[0]['action'],
+      tags: Array.isArray(body.tags) ? body.tags.map((value: unknown) => String(value).trim()).filter(Boolean) : [],
+      setId: body.setId ? parseInt(String(body.setId), 10) : undefined,
+    });
 
-  return NextResponse.json(result);
+    return NextResponse.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Bulk track action failed.';
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
 }
