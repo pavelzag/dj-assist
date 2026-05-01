@@ -28,6 +28,12 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const maxFiles = Math.min(Math.max(Math.trunc(Number(body.maxFiles ?? 2000) || 2000), 1), 5000);
+    const folderId = String(body.folderId ?? '').trim();
+    const fallbackDownloadScan = Boolean(body.fallbackDownloadScan);
+    const fallbackDownloadLimit = Math.min(
+      Math.max(Math.trunc(Number(body.fallbackDownloadLimit ?? 100) || 100), 1),
+      500,
+    );
     const { accessToken, userData } = await getGoogleDriveAccessToken();
     const clientId = await getClientId();
     const server = await effectiveServerSettings();
@@ -50,6 +56,9 @@ export async function POST(request: NextRequest) {
         client_id: clientId,
         user_data: userData,
         max_files: maxFiles,
+        folder_id: folderId || undefined,
+        fallback_download_scan: fallbackDownloadScan,
+        fallback_download_limit: fallbackDownloadScan ? fallbackDownloadLimit : undefined,
       }),
       signal: AbortSignal.timeout(60_000),
     });

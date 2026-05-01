@@ -379,7 +379,7 @@ export async function getGoogleDriveAccessToken(): Promise<{
     throw new Error('Google sign-in is required before importing from Google Drive.');
   }
   if (!hasGoogleDriveScope(auth)) {
-    throw new Error('Google Drive access has not been granted. Sign in with Google again to approve Drive metadata access.');
+    throw new Error('Google Drive file access has not been granted. Sign in with Google again to approve Drive access.');
   }
   if (!hasUsableGoogleAccessToken(auth)) {
     const refreshedAuth = await refreshGoogleAuth(auth);

@@ -699,9 +699,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function googleDriveRuntimeLabel() {
       const drive = googleDriveRuntimeSummary();
       const user = googleSignedInUser();
-      if (!user) return 'Sign in with Google to import Google Drive audio file metadata.';
-      if (!drive?.connected) return 'Google is connected, but Drive metadata access has not been granted yet.';
-      return `Ready to import Drive audio file metadata for ${String(user.email ?? user.name ?? 'Google user')}.`;
+      if (!user) return 'Sign in with Google to import Google Drive audio files.';
+      if (!drive?.connected) return 'Google is connected, but Drive file access has not been granted yet.';
+      return `Ready to import Drive audio files for ${String(user.email ?? user.name ?? 'Google user')}.`;
     }
 
     function setGoogleDriveImportStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
@@ -1697,6 +1697,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return true;
       } catch {
         showToast('Could not copy frontend logs.', 'error');
+        return false;
+      }
+    }
+
+    async function copyActivityLogs() {
+      const list = document.getElementById('activity-log-list');
+      if (!list) return false;
+      const text = list.innerText.trim();
+      if (!text) return false;
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('Backend logs copied.', 'success');
+        return true;
+      } catch {
+        showToast('Could not copy backend logs.', 'error');
         return false;
       }
     }
@@ -4643,6 +4658,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="scan-preflight">Live backend activity appears here, including scan progress and server calls.</div>
             <div class="chips">
               <button type="button" class="chip nav-chip" id="refresh-activity-log-btn">Refresh Scan Log</button>
+              <button type="button" class="chip nav-chip" id="copy-activity-log-btn">Copy Backend Logs (C)</button>
               <button type="button" class="chip nav-chip" id="activity-log-filter-all" aria-pressed="true">All Logs</button>
               <button type="button" class="chip nav-chip" id="activity-log-filter-bpm-missing" aria-pressed="false">BPM Failures Only</button>
               <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Collection</button>
@@ -4717,6 +4733,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       };
       document.getElementById('refresh-activity-log-btn')?.addEventListener('click', () => {
         flushPendingScanLogs();
+      });
+      document.getElementById('copy-activity-log-btn')?.addEventListener('click', () => {
+        void copyActivityLogs();
       });
       document.getElementById('activity-log-filter-all')?.addEventListener('click', () => {
         setActivityLogFilter('all');
@@ -5330,7 +5349,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'c') {
         if (currentPanel === 'activity') {
           event.preventDefault();
-          void copyFrontendLogs();
+          void copyActivityLogs();
           return;
         }
         event.preventDefault();

@@ -4,7 +4,7 @@ import https from 'node:https';
 
 type JsonRecord = Record<string, unknown>;
 
-export const GOOGLE_DRIVE_METADATA_SCOPE = 'https://www.googleapis.com/auth/drive.metadata.readonly';
+export const GOOGLE_DRIVE_METADATA_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 
 export class GoogleDesktopTokenExchangeError extends Error {
   readonly status: number;

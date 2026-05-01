@@ -396,6 +396,8 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
 #frontend-log-list .scan-log-entry {
   white-space: pre-wrap;
   word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .scan-progress-file.bottom {
   max-width: 100%;
