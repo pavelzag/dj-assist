@@ -205,6 +205,28 @@ def _server_track_to_local(server_track: dict, filepath: str, file_hash: str, fi
     }
 
 
+def _server_track_needs_local_analysis(server_track: dict) -> bool:
+    bpm = float(server_track.get("bpm") or server_track.get("spotify_tempo") or 0.0)
+    if bpm > 0:
+        return False
+    return True
+
+
+def _seed_metadata_from_server(metadata: dict, server_track: dict) -> dict:
+    seeded = dict(metadata)
+    if not seeded.get("artist") and server_track.get("artist"):
+        seeded["artist"] = server_track.get("artist")
+    if not seeded.get("title") and server_track.get("title"):
+        seeded["title"] = server_track.get("title")
+    if not seeded.get("album") and server_track.get("album"):
+        seeded["album"] = server_track.get("album")
+    if not seeded.get("duration") and server_track.get("duration") is not None:
+        seeded["duration"] = server_track.get("duration")
+    if not seeded.get("bitrate") and server_track.get("bitrate") is not None:
+        seeded["bitrate"] = server_track.get("bitrate")
+    return seeded
+
+
 def _server_album_art_url(track_data: dict) -> str:
     global _SERVER_ART_UPLOAD_WARNING
 
@@ -1139,69 +1161,85 @@ def scan_directory(
                     )
                 if server_track:
                     track_data = _server_track_to_local(server_track, filepath, file_hash, file_size, file_mtime)
-                    db.add_track(track_data)
                     bpm = float(track_data.get("bpm") or track_data.get("spotify_tempo") or 0.0)
                     key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
                     bpm_missing_reason = ""
                     bpm_missing_detail = ""
+                    server_needs_local_analysis = _server_track_needs_local_analysis(server_track)
                     if bpm <= 0:
                         bpm_missing_reason = "server_match_without_bpm"
                         bpm_missing_detail = "server matched the track by file hash but the server record has no BPM"
-                    results["analyzed"] += 1
-                    processed += 1
-                    _emit(
-                        {
-                            "event": "track_complete",
-                            "path": filepath,
-                            "file": Path(filepath).name,
-                            "status": "server_match",
-                            "artist": track_data.get("artist"),
-                            "title": track_data.get("title"),
-                            "bpm": bpm,
-                            "bpm_source": track_data.get("bpm_source") or "server",
-                            "key": key,
-                            "spotify_id": track_data.get("spotify_id"),
-                            "album_art_url": track_data.get("album_art_url"),
-                            "album_art_source": track_data.get("album_art_source"),
-                            "album_art_confidence": float(track_data.get("album_art_confidence") or 0.0),
-                            "album_art_review_status": track_data.get("album_art_review_status"),
-                            "decode_failed": track_data.get("decode_failed"),
-                            "bpm_missing_reason": bpm_missing_reason,
-                            "bpm_missing_detail": bpm_missing_detail,
-                        }
-                    )
-                    if bpm <= 0:
+                    if not server_needs_local_analysis:
+                        db.add_track(track_data)
+                        results["analyzed"] += 1
+                        processed += 1
+                        _emit(
+                            {
+                                "event": "track_complete",
+                                "path": filepath,
+                                "file": Path(filepath).name,
+                                "status": "server_match",
+                                "artist": track_data.get("artist"),
+                                "title": track_data.get("title"),
+                                "bpm": bpm,
+                                "bpm_source": track_data.get("bpm_source") or "server",
+                                "key": key,
+                                "spotify_id": track_data.get("spotify_id"),
+                                "album_art_url": track_data.get("album_art_url"),
+                                "album_art_source": track_data.get("album_art_source"),
+                                "album_art_confidence": float(track_data.get("album_art_confidence") or 0.0),
+                                "album_art_review_status": track_data.get("album_art_review_status"),
+                                "decode_failed": track_data.get("decode_failed"),
+                                "bpm_missing_reason": bpm_missing_reason,
+                                "bpm_missing_detail": bpm_missing_detail,
+                            }
+                        )
+                        if bpm <= 0:
+                            _emit(
+                                {
+                                    "event": "log",
+                                    "eventType": "bpm_missing",
+                                    "level": "warning",
+                                    "message": (
+                                        f"{Path(filepath).name}: missing BPM ({bpm_missing_reason}) - "
+                                        f"{bpm_missing_detail}"
+                                    ),
+                                    "path": filepath,
+                                    "file": Path(filepath).name,
+                                    "artist": track_data.get("artist"),
+                                    "title": track_data.get("title"),
+                                    "bpm_missing_reason": bpm_missing_reason,
+                                    "bpm_missing_detail": bpm_missing_detail,
+                                    "spotify_id": track_data.get("spotify_id"),
+                                    "analysis_status": track_data.get("analysis_status"),
+                                    "analysis_debug": track_data.get("analysis_debug"),
+                                }
+                            )
                         _emit(
                             {
                                 "event": "log",
-                                "eventType": "bpm_missing",
-                                "level": "warning",
+                                "level": "success",
                                 "message": (
-                                    f"{Path(filepath).name}: missing BPM ({bpm_missing_reason}) - "
-                                    f"{bpm_missing_detail}"
+                                    f"{Path(filepath).name}: server match bpm={bpm or 0:.1f} "
+                                    f"key={key or 'none'}"
                                 ),
-                                "path": filepath,
-                                "file": Path(filepath).name,
-                                "artist": track_data.get("artist"),
-                                "title": track_data.get("title"),
-                                "bpm_missing_reason": bpm_missing_reason,
-                                "bpm_missing_detail": bpm_missing_detail,
-                                "spotify_id": track_data.get("spotify_id"),
-                                "analysis_status": track_data.get("analysis_status"),
-                                "analysis_debug": track_data.get("analysis_debug"),
                             }
                         )
-                    _emit(
-                        {
-                            "event": "log",
-                            "level": "success",
-                            "message": (
-                                f"{Path(filepath).name}: server match bpm={bpm or 0:.1f} "
-                                f"key={key or 'none'}"
-                            ),
-                        }
-                    )
-                    continue
+                        continue
+
+                    metadata = _seed_metadata_from_server(metadata, track_data)
+                    if track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric"):
+                        key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
+                        key_numeric = str(track_data.get("key_numeric") or key)
+                    debug_parts = [f"file={filepath}"]
+                    if metadata["artist"] or metadata["title"]:
+                        debug_parts.append(f"metadata=artist:{metadata['artist'] or 'none'} title:{metadata['title'] or 'none'}")
+                    debug_parts.append("server_match=needs_local_analysis")
+                    debug_parts.append(f"server_bpm={bpm or 0.0}")
+                    debug_parts.append(f"server_key={key or 'none'}")
+                else:
+                    bpm_missing_reason = ""
+                    bpm_missing_detail = ""
 
                 bpm = 0.0
                 bpm_source = ""
@@ -1209,7 +1247,8 @@ def scan_directory(
                 decode_failed = False
                 bpm_confidence = 0.0
                 analysis_stage = "start"
-                debug_parts = [f"file={filepath}"]
+                if not server_track:
+                    debug_parts = [f"file={filepath}"]
                 can_local = bpm_lookup in {"auto", "local", "both"}
                 can_tag = bpm_lookup in {"auto", "local", "tag", "both"}
                 can_spotify = bpm_lookup in {"auto", "spotify", "both"}
