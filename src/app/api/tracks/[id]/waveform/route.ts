@@ -23,6 +23,12 @@ export async function GET(
   if (!track?.path) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
+  if (String(track.path).startsWith('gdrive:')) {
+    return NextResponse.json(
+      { error: 'Google Drive tracks do not have a local file path for waveform extraction yet.' },
+      { status: 400 },
+    );
+  }
 
   const requestedWidth = Number(request.nextUrl.searchParams.get('width') ?? '640');
   const width = Number.isFinite(requestedWidth) ? Math.max(64, Math.min(4096, Math.round(requestedWidth))) : 640;

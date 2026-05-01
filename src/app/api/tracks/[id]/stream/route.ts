@@ -60,6 +60,12 @@ export async function GET(
   if (!track?.path) {
     return Response.json({ error: 'not found' }, { status: 404 });
   }
+  if (String(track.path).startsWith('gdrive:')) {
+    return Response.json(
+      { error: 'Google Drive tracks do not have a local stream path yet.' },
+      { status: 400 },
+    );
+  }
 
   const filePath = resolveTrackPath(track.path);
   if (!existsSync(filePath)) {

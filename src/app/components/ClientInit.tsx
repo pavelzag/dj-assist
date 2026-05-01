@@ -728,6 +728,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return scanSourceMode === 'google_drive' ? 'Import from Google Drive' : 'Start Scan';
     }
 
+    function isGoogleDriveTrackPath(path: string) {
+      return String(path ?? '').trim().startsWith('gdrive:');
+    }
+
     function syncAddMusicUi() {
       const chooseLabel = 'Add Music';
       if (quickChooseFolderBtn) quickChooseFolderBtn.textContent = chooseLabel;
@@ -3184,6 +3188,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       src: string,
       cues: Array<{ time: number; label?: string }>,
       audio: HTMLAudioElement | null,
+      options: { sourceType?: 'local' | 'google_drive' } = {},
     ) {
       const canvas = document.getElementById(`waveform-${trackId}`) as HTMLCanvasElement | null;
       if (!canvas) return;
@@ -3261,6 +3266,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         audio.addEventListener('play', syncFallback);
         audio.addEventListener('pause', syncFallback);
       };
+
+      if (options.sourceType === 'google_drive' || !src.trim()) {
+        renderFallbackWaveform();
+        return;
+      }
 
       try {
         const waveformRes = await fetch(`/api/tracks/${trackId}/waveform?width=${width}`);
@@ -3809,7 +3819,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const coverLabel = (track.album ?? track.title ?? 'Unknown') as string;
       const trackId = track.id as number;
       const streamProbeUrl = `/api/tracks/${trackId}/stream`;
-      const playbackUrl = adapter.mediaUrlForPath?.(String(track.path ?? '')) || streamProbeUrl;
+      const trackPath = String(track.path ?? '');
+      const isGoogleDriveTrack = isGoogleDriveTrackPath(trackPath);
+      const playbackUrl = isGoogleDriveTrack ? null : (adapter.mediaUrlForPath?.(trackPath) || streamProbeUrl);
       nextTracksByTrackId[trackId] = Array.isArray(payload.next_tracks) ? payload.next_tracks as Record<string, unknown>[] : [];
       const mult = getMult(trackId);
       const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
@@ -3877,7 +3889,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <button type="button" class="detail-mode-tab ${currentDetailMode === 'related' ? 'active' : ''}" data-detail-mode="related">Related</button>
           </div>
           <div class="buttons">
-            <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
+            <button class="btn" id="play-btn" type="button" ${isGoogleDriveTrack ? 'disabled title="Google Drive tracks do not have a local playback file yet."' : ''}><span class="btn-icon">▶</span> ${isGoogleDriveTrack ? 'Drive track' : 'Play'}</button>
             <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
             <button class="btn" id="reanalyze-art-btn" type="button">Reanalyze Art</button>
             ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
@@ -3898,7 +3910,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             `}
           </div>
-          <audio id="local-audio" class="local-audio-hidden" preload="auto" data-track-id="${trackId}" data-probe-url="${esc(streamProbeUrl)}" src="${esc(playbackUrl)}"></audio>
+          <audio id="local-audio" class="local-audio-hidden" preload="auto" data-track-id="${trackId}" data-probe-url="${esc(streamProbeUrl)}" ${playbackUrl ? `src="${esc(playbackUrl)}"` : ''}></audio>
           <div class="waveform-panel detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview">
             <canvas class="waveform-canvas" id="waveform-${track.id}"></canvas>
           </div>
@@ -3910,6 +3922,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <span class="chip subtle">Score ${esc(coverConfidence.toFixed(1))}</span>
             ${track.analysis_error ? `<span class="chip warn">${esc(track.analysis_error)}</span>` : ''}
           </div>
+          ${isGoogleDriveTrack ? '<div class="scan-preflight warn">Google Drive tracks are metadata-only in the desktop app until a local file is available for playback.</div>' : ''}
           <section class="detail-section detail-mode-section ${currentDetailMode === 'match' ? 'hidden' : ''} ${nextCollapsed ? 'collapsed' : ''}" id="next-tracks-section" data-section="next-tracks" data-mode-section="overview">
             <div class="detail-section-head" id="next-tracks-head">
               <h3>Can play next</h3>
@@ -4206,7 +4219,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         updateNowPlayingBar(localAudio);
         const resumeState = loadResumeState();
         let resumeApplied = false;
-        localAudio.load();
+        if (!isGoogleDriveTrack) {
+          localAudio.load();
+        }
         localAudio.addEventListener('loadedmetadata', () => {
           if (!resumeApplied && resumeState.time > 0) {
             localAudio.currentTime = Math.min(resumeState.time, (localAudio.duration || 0) - 0.25);
@@ -4273,6 +4288,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             currentSrc: localAudio.currentSrc,
           });
 
+          if (isGoogleDriveTrack) {
+            appendScanLog(`Audio probe skipped for Google Drive track ${trackId}: no local playback file yet.`, 'warning', {
+              category: 'playback',
+              trackId,
+              path: trackPath,
+            });
+            return;
+          }
+
           const probeUrl = localAudio.dataset.probeUrl || streamProbeUrl;
           fetch(probeUrl, { headers: { Range: 'bytes=0-0' } })
             .then(async (response) => {
@@ -4298,7 +4322,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               });
             });
         });
-        playBtn.addEventListener('click', async () => {
+        if (!isGoogleDriveTrack) playBtn.addEventListener('click', async () => {
           try {
             if (localAudio.paused) {
               await localAudio.play();
@@ -4322,7 +4346,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           selectRelativeTrack(1);
         });
         // Sync global button to current state (e.g. resumed track)
-        setPlaying(!localAudio.paused);
+        if (!isGoogleDriveTrack) setPlaying(!localAudio.paused);
         updateNowPlayingBar(localAudio);
       }
       muteBtn?.addEventListener('click', () => {
@@ -4330,7 +4354,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       syncMuteButton(localAudio);
       if (localAudio) {
-        void drawWaveform(trackId, playbackUrl, [], localAudio);
+        void drawWaveform(trackId, playbackUrl ?? '', [], localAudio, {
+          sourceType: isGoogleDriveTrack ? 'google_drive' : 'local',
+        });
       }
       reanalyzeBpmBtn?.addEventListener('click', async () => {
         const previousLabel = reanalyzeBpmBtn.textContent ?? 'Reanalyze BPM';
