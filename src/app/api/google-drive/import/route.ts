@@ -10,6 +10,22 @@ import { importGoogleDriveTracks } from '@/lib/db';
 export const runtime = 'nodejs';
 const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
 
+function logGoogleDriveImport(
+  level: 'info' | 'warn' | 'error',
+  event: string,
+  context: Record<string, unknown>,
+) {
+  const line = `[google-drive-import] ${JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level,
+    event,
+    ...context,
+  })}`;
+  if (level === 'error') console.error(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
+}
+
 function buildServerHeaders(input: {
   googleIdToken?: string;
   googleAccessToken: string;
@@ -32,6 +48,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const maxFiles = Math.min(Math.max(Math.trunc(Number(body.maxFiles ?? 2000) || 2000), 1), 5000);
     const folderId = String(body.folderId ?? '').trim();
+    const folderName = String(body.folderName ?? '').trim();
     const fallbackDownloadScan = Boolean(body.fallbackDownloadScan);
     const fallbackDownloadLimit = Math.min(
       Math.max(Math.trunc(Number(body.fallbackDownloadLimit ?? 100) || 100), 1),
@@ -49,8 +66,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Server URL is not configured.' }, { status: 400 });
     }
 
+    logGoogleDriveImport('info', 'started', {
+      folderId: folderId || null,
+      folderName: folderName || null,
+      maxFiles,
+      fallbackDownloadScan,
+      fallbackDownloadLimit: fallbackDownloadScan ? fallbackDownloadLimit : null,
+      serverUrl,
+    });
+
     const localFiles: Awaited<ReturnType<typeof listGoogleDriveAudioFiles>>['files'] = [];
     let nextPageToken: string | null = null;
+    let pagesFetched = 0;
     do {
       const page = await listGoogleDriveAudioFiles({
         accessToken,
@@ -58,14 +85,26 @@ export async function POST(request: NextRequest) {
         limit: Math.min(200, maxFiles - localFiles.length),
         pageToken: nextPageToken ?? undefined,
       });
+      pagesFetched += 1;
       localFiles.push(...page.files);
       nextPageToken = page.nextPageToken;
+      logGoogleDriveImport('info', 'drive_page_loaded', {
+        page: pagesFetched,
+        fetchedThisPage: page.files.length,
+        totalBuffered: localFiles.length,
+        hasNextPage: Boolean(nextPageToken),
+      });
     } while (nextPageToken && localFiles.length < maxFiles);
 
     const localImport = await importGoogleDriveTracks({
       files: localFiles,
       folderId: folderId || undefined,
-      folderName: String(body.folderName ?? '').trim() || undefined,
+      folderName: folderName || undefined,
+    });
+    logGoogleDriveImport('info', 'local_import_completed', {
+      totalBuffered: localFiles.length,
+      localImported: localImport.imported,
+      localUpdated: localImport.updated,
     });
 
     const response = await fetch(`${serverUrl}/api/v1/google-drive/import`, {
@@ -86,6 +125,11 @@ export async function POST(request: NextRequest) {
     });
 
     const raw = await response.text();
+    logGoogleDriveImport(response.ok ? 'info' : 'warn', 'server_import_response', {
+      status: response.status,
+      ok: response.ok,
+      rawPreview: raw.slice(0, 500),
+    });
     let payload: Record<string, unknown> | null = null;
     try {
       payload = raw ? JSON.parse(raw) as Record<string, unknown> : null;
@@ -103,11 +147,20 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    logGoogleDriveImport('error', 'failed', {
+      error: message,
+    });
     return NextResponse.json(
       {
-        error: message === 'The operation was aborted due to timeout'
-          ? 'Google Drive import exceeded the desktop timeout. Try importing a smaller folder, or preview and narrow the scope first.'
-          : message,
+        error:
+          message === 'The operation was aborted due to timeout'
+            ? 'Google Drive import exceeded the desktop timeout. Try importing a smaller folder, or preview and narrow the scope first.'
+            : normalized.includes('database is locked')
+              ? 'Google Drive import could not update the local Songs list because the DJ Assist database was busy. Wait a moment and try again.'
+              : normalized.includes('database or disk is full')
+                ? 'Google Drive import could not update the local Songs list because the DJ Assist database disk is full.'
+                : message || 'Google Drive import failed.',
       },
       { status: 400 },
     );

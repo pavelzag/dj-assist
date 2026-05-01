@@ -63,12 +63,34 @@ function toBoolean(value: unknown): boolean | null {
 
 type SqlitePrimitive = string | number | bigint | null | Uint8Array;
 
+function isSqliteBusyError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: unknown; errcode?: unknown; errstr?: unknown; message?: unknown };
+  return (
+    candidate.code === 'ERR_SQLITE_ERROR'
+    && (
+      candidate.errcode === 5
+      || String(candidate.errstr ?? '').toLowerCase().includes('database is locked')
+      || String(candidate.message ?? '').toLowerCase().includes('database is locked')
+    )
+  );
+}
+
+function sleepSync(milliseconds: number): void {
+  const duration = Math.max(0, Math.trunc(milliseconds));
+  if (!duration) return;
+  const buffer = new SharedArrayBuffer(4);
+  const view = new Int32Array(buffer);
+  Atomics.wait(view, 0, 0, duration);
+}
+
 function getDb(): DatabaseSync {
   if (!global._sqliteConn) {
     const dbPath = resolveSqlitePath();
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     db.exec('PRAGMA foreign_keys = ON');
+    db.exec('PRAGMA busy_timeout = 5000');
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA synchronous = NORMAL');
     global._sqliteConn = db;
@@ -248,15 +270,28 @@ function execute(sql: string, ...params: SqlitePrimitive[]): void {
 function transaction<T>(fn: () => T): T {
   ensureSchema();
   const db = getDb();
-  db.exec('BEGIN');
-  try {
-    const result = fn();
-    db.exec('COMMIT');
-    return result;
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
+  const maxAttempts = 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const result = fn();
+        db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        try {
+          db.exec('ROLLBACK');
+        } catch {
+          // Ignore rollback errors after a failed write.
+        }
+        throw error;
+      }
+    } catch (error) {
+      if (!isSqliteBusyError(error) || attempt === maxAttempts) throw error;
+      sleepSync(attempt * 150);
+    }
   }
+  throw new Error('Unreachable transaction retry state.');
 }
 
 function canonicalizeText(value: string): string {

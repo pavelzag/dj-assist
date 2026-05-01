@@ -15,6 +15,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const parentId = String(searchParams.get('parentId') ?? '').trim();
     const pageSize = Math.min(Math.max(Math.trunc(Number(searchParams.get('limit') ?? 200) || 200), 1), 200);
+    console.log(`[google-drive-folders] ${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'started',
+      parentId: parentId || 'root',
+      pageSize,
+      hasAccessToken: Boolean(accessToken),
+    })}`);
     const query = parentId
       ? `trashed = false and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents`
       : "trashed = false and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents";
@@ -52,11 +59,23 @@ export async function GET(request: NextRequest) {
         }))
       : [];
 
+    console.log(`[google-drive-folders] ${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'completed',
+      parentId: parentId || 'root',
+      returned: folders.length,
+    })}`);
+
     return NextResponse.json({
       parentId: parentId || null,
       folders,
     });
   } catch (error) {
+    console.error(`[google-drive-folders] ${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    })}`);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },
       { status: 400 },

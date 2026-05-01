@@ -988,6 +988,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       setGoogleDriveImportStatus('Fetching Google Drive metadata and sending it to the server…', 'saving');
       setScanStatus('Importing Google Drive metadata…', 'running');
       setScanProgress(0, 0, selectedGoogleDriveFolderLabel());
+      appendScanLog(
+        `Google Drive import started: scope=${selectedGoogleDriveFolderLabel()}`,
+        'info',
+        {
+          category: 'google-drive-import',
+          folderId: selectedGoogleDriveFolderId || null,
+          folderName: selectedGoogleDriveFolderName || null,
+        },
+        { eventType: 'google_drive_import_started' },
+      );
       try {
         const response = await fetch('/api/google-drive/import', {
           method: 'POST',
@@ -999,10 +1009,31 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        appendScanLog(
+          `Google Drive import response: status=${response.status} ok=${response.ok ? 'yes' : 'no'}`,
+          response.ok ? 'info' : 'warning',
+          {
+            category: 'google-drive-import',
+            status: response.status,
+            ok: response.ok,
+            payload,
+          },
+          { eventType: 'google_drive_import_response' },
+        );
         if (!response.ok) {
           setGoogleDriveImportStatus(String(payload.error ?? 'Google Drive import failed.'), 'error');
           setScanStatus('Google Drive import failed', 'error');
           setScanProgress(0, 0, 'Google Drive import failed');
+          appendScanLog(
+            `Google Drive import failed: ${String(payload.error ?? 'Unknown import error.')}`,
+            'error',
+            {
+              category: 'google-drive-import',
+              status: response.status,
+              payload,
+            },
+            { eventType: 'google_drive_import_failed' },
+          );
           return;
         }
         const imported = Number(payload.tracks_received ?? 0);
@@ -1020,6 +1051,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           loadTracks(searchEl.value.trim()),
           loadLibraryOverview(),
         ]);
+        appendScanLog(
+          `Google Drive import finished: local_added=${localImported} local_updated=${localUpdated} server_received=${imported} scanned=${scanned}${truncated ? ' truncated=yes' : ''}`,
+          'success',
+          {
+            category: 'google-drive-import',
+            localImported,
+            localUpdated,
+            imported,
+            scanned,
+            truncated,
+          },
+          { eventType: 'google_drive_import_finished' },
+        );
         showToast(
           `Drive import complete: ${localImported} added, ${localUpdated} updated locally, ${imported} sent to server from ${scanned} files in ${selectedGoogleDriveFolderLabel()}.`,
           'success',
@@ -1028,6 +1072,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
         setScanStatus('Google Drive import failed', 'error');
         setScanProgress(0, 0, 'Google Drive import failed');
+        appendScanLog(
+          `Google Drive import exception: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          {
+            category: 'google-drive-import',
+            folderId: selectedGoogleDriveFolderId || null,
+            folderName: selectedGoogleDriveFolderName || null,
+          },
+          { eventType: 'google_drive_import_exception' },
+        );
       } finally {
         googleDriveImportBusy = false;
         if (button) {
@@ -1091,6 +1145,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       googleDriveFolderTrail = options.trail ?? [];
       renderGoogleDriveFolderPicker();
       setGoogleDriveFolderStatus('Loading Google Drive folders with read-only access…', 'saving');
+      appendScanLog(
+        `Google Drive folders loading: parent=${String(options.parentId ?? '').trim() || 'root'}`,
+        'info',
+        {
+          category: 'google-drive-folders',
+          parentId: String(options.parentId ?? '').trim() || null,
+          trail: googleDriveFolderTrail,
+        },
+        { eventType: 'google_drive_folders_loading' },
+      );
       try {
         const parentId = String(options.parentId ?? '').trim();
         const query = new URLSearchParams();
@@ -1100,13 +1164,42 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (!response.ok) {
           setGoogleDriveFolderStatus(String(payload.error ?? 'Could not load Google Drive folders.'), 'error');
           googleDriveFolders = [];
+          appendScanLog(
+            `Google Drive folders failed: ${String(payload.error ?? 'Could not load folders.')}`,
+            'error',
+            {
+              category: 'google-drive-folders',
+              status: response.status,
+              payload,
+            },
+            { eventType: 'google_drive_folders_failed' },
+          );
           return;
         }
         googleDriveFolders = Array.isArray(payload.folders) ? payload.folders as Record<string, unknown>[] : [];
         setGoogleDriveFolderStatus('Browse a folder and choose it for Drive preview/import. DJ Assist only has read access.', 'success');
+        appendScanLog(
+          `Google Drive folders loaded: count=${googleDriveFolders.length} parent=${parentId || 'root'}`,
+          'success',
+          {
+            category: 'google-drive-folders',
+            parentId: parentId || null,
+            count: googleDriveFolders.length,
+          },
+          { eventType: 'google_drive_folders_loaded' },
+        );
       } catch (error) {
         googleDriveFolders = [];
         setGoogleDriveFolderStatus(error instanceof Error ? error.message : String(error), 'error');
+        appendScanLog(
+          `Google Drive folders exception: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          {
+            category: 'google-drive-folders',
+            parentId: String(options.parentId ?? '').trim() || null,
+          },
+          { eventType: 'google_drive_folders_exception' },
+        );
       } finally {
         googleDriveFoldersBusy = false;
         renderGoogleDriveFolderPicker();
@@ -1172,6 +1265,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!quiet) {
         setGoogleDriveImportStatus(`Loading Google Drive audio files from ${selectedGoogleDriveFolderLabel()}…`, 'saving');
       }
+      appendScanLog(
+        `Google Drive preview started: scope=${selectedGoogleDriveFolderLabel()} limit=${limit}`,
+        'info',
+        {
+          category: 'google-drive-preview',
+          folderId: selectedGoogleDriveFolderId || null,
+          folderName: selectedGoogleDriveFolderName || null,
+          limit,
+        },
+        { eventType: 'google_drive_preview_started' },
+      );
       try {
         const query = new URLSearchParams({ limit: String(limit) });
         if (selectedGoogleDriveFolderId) query.set('folderId', selectedGoogleDriveFolderId);
@@ -1179,6 +1283,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (!response.ok) {
           setGoogleDriveImportStatus(String(payload.error ?? 'Could not load Google Drive files.'), 'error');
+          appendScanLog(
+            `Google Drive preview failed: ${String(payload.error ?? 'Could not load Drive files.')}`,
+            'error',
+            {
+              category: 'google-drive-preview',
+              status: response.status,
+              payload,
+            },
+            { eventType: 'google_drive_preview_failed' },
+          );
           return;
         }
         googleDriveFiles = Array.isArray(payload.files) ? payload.files as Record<string, unknown>[] : [];
@@ -1190,8 +1304,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             : `No Google Drive audio files were returned for ${selectedGoogleDriveFolderLabel()}.`,
           'success',
         );
+        appendScanLog(
+          `Google Drive preview loaded: count=${googleDriveFiles.length} scope=${selectedGoogleDriveFolderLabel()}`,
+          'success',
+          {
+            category: 'google-drive-preview',
+            count: googleDriveFiles.length,
+            nextPageToken: payload.nextPageToken ?? null,
+          },
+          { eventType: 'google_drive_preview_loaded' },
+        );
       } catch (error) {
         setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
+        appendScanLog(
+          `Google Drive preview exception: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          {
+            category: 'google-drive-preview',
+            folderId: selectedGoogleDriveFolderId || null,
+            folderName: selectedGoogleDriveFolderName || null,
+          },
+          { eventType: 'google_drive_preview_exception' },
+        );
       } finally {
         googleDriveFilesBusy = false;
         const nextButton = document.getElementById('google-drive-preview-btn') as HTMLButtonElement | null;
