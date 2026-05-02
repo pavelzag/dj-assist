@@ -33,6 +33,67 @@ function extensionFromMimeType(mimeType: string): string {
   return '.bin';
 }
 
+function readSynchsafeInteger(buffer: Buffer, offset: number): number {
+  return (
+    ((buffer[offset] ?? 0) & 0x7f) << 21
+    | ((buffer[offset + 1] ?? 0) & 0x7f) << 14
+    | ((buffer[offset + 2] ?? 0) & 0x7f) << 7
+    | ((buffer[offset + 3] ?? 0) & 0x7f)
+  );
+}
+
+async function normalizeGoogleDriveAudioFile(
+  filePath: string,
+  mimeType: string,
+): Promise<{ normalized: boolean; mimeType: string }> {
+  const header = await fs.readFile(filePath, { encoding: null, flag: 'r' });
+  if (header.length < 16 || header.subarray(0, 3).toString('ascii') !== 'ID3') {
+    return { normalized: false, mimeType };
+  }
+
+  const id3Size = readSynchsafeInteger(header, 6);
+  const payloadOffset = 10 + id3Size;
+  if (header.length < payloadOffset + 8 || header.subarray(payloadOffset + 4, payloadOffset + 8).toString('ascii') !== 'ftyp') {
+    return { normalized: false, mimeType };
+  }
+
+  const stripped = header.subarray(payloadOffset);
+  if (!stripped.length) {
+    throw new Error('Google Drive cached file normalization produced an empty payload.');
+  }
+
+  const tempPath = `${filePath}.normalize-${Date.now()}.tmp`;
+  await fs.writeFile(tempPath, stripped);
+  await fs.rename(tempPath, filePath).catch(async () => {
+    await fs.copyFile(tempPath, filePath);
+    await fs.unlink(tempPath).catch(() => {});
+  });
+
+  return { normalized: true, mimeType: 'audio/mp4' };
+}
+
+async function prepareGoogleDriveAudioFile(input: {
+  filePath: string;
+  mimeType: string;
+  expectedSize: number | null;
+}): Promise<{ cached: boolean; mimeType: string } | null> {
+  try {
+    const stats = await fs.stat(input.filePath);
+    if (!stats.isFile() || stats.size <= 0) return null;
+    if (input.expectedSize && stats.size !== input.expectedSize) {
+      await fs.unlink(input.filePath).catch(() => {});
+      return null;
+    }
+    const normalized = await normalizeGoogleDriveAudioFile(input.filePath, input.mimeType);
+    return {
+      cached: true,
+      mimeType: normalized.mimeType,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchGoogleDriveFileMetadata(fileId: string, accessToken: string) {
   const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
   url.searchParams.set('fields', 'id,name,mimeType,modifiedTime,md5Checksum,size');
@@ -72,19 +133,20 @@ export async function ensureLocalGoogleDriveTrackFile(fileId: string): Promise<{
   const baseName = path.basename(metadata.name, path.extname(metadata.name) || ext);
   const fileName = `${fileId}-${safeBasename(baseName)}${ext}`;
   const finalPath = path.join(cacheDirectory(), fileName);
+  const expectedSize = Number.isFinite(metadata.size) && metadata.size && metadata.size > 0 ? metadata.size : null;
 
-  try {
-    const stats = await fs.stat(finalPath);
-    if (stats.isFile() && stats.size > 0) {
+  const preparedCachedFile = await prepareGoogleDriveAudioFile({
+    filePath: finalPath,
+    mimeType: metadata.mimeType,
+    expectedSize,
+  });
+  if (preparedCachedFile) {
       return {
         localPath: finalPath,
         cached: true,
         name: metadata.name,
-        mimeType: metadata.mimeType,
+        mimeType: preparedCachedFile.mimeType,
       };
-    }
-  } catch {
-    // Cache miss; continue to download.
   }
 
   await fs.mkdir(cacheDirectory(), { recursive: true });
@@ -109,12 +171,21 @@ export async function ensureLocalGoogleDriveTrackFile(fileId: string): Promise<{
     await fs.copyFile(tempPath, finalPath);
     await fs.unlink(tempPath).catch(() => {});
   });
+  const preparedDownloadedFile = await prepareGoogleDriveAudioFile({
+    filePath: finalPath,
+    mimeType: metadata.mimeType,
+    expectedSize,
+  });
+  if (!preparedDownloadedFile) {
+    await fs.unlink(finalPath).catch(() => {});
+    throw new Error('Google Drive file download produced an invalid or incomplete cached file.');
+  }
 
   return {
     localPath: finalPath,
     cached: false,
     name: metadata.name,
-    mimeType: metadata.mimeType,
+    mimeType: preparedDownloadedFile.mimeType,
   };
 }
 

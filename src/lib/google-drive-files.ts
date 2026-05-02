@@ -8,6 +8,11 @@ export type GoogleDriveAudioFile = {
   md5Checksum: string | null;
 };
 
+export function isIgnoredGoogleDriveAudioFileName(name: string): boolean {
+  const normalized = String(name ?? '').trim();
+  return normalized.startsWith('._');
+}
+
 export async function listGoogleDriveAudioFiles(input: {
   accessToken: string;
   folderId?: string;
@@ -54,6 +59,7 @@ export async function listGoogleDriveAudioFiles(input: {
         parents: Array.isArray(file.parents) ? file.parents.map((value) => String(value)).filter(Boolean) : [],
         md5Checksum: String(file.md5Checksum ?? '').trim() || null,
       }))
+      .filter((file) => file.id && !isIgnoredGoogleDriveAudioFileName(file.name))
     : [];
 
   return {

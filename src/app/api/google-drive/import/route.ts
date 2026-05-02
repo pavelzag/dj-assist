@@ -5,7 +5,7 @@ import {
   getGoogleDriveAccessToken,
 } from '@/lib/runtime-settings';
 import { listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
-import { importGoogleDriveTracks, updateGoogleDriveTrackLocalMetadata } from '@/lib/db';
+import { importGoogleDriveTracks, purgeIgnoredGoogleDriveTracks, updateGoogleDriveTrackLocalMetadata } from '@/lib/db';
 import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
 import { ensureLocalGoogleDriveTrackFile, readLocalAudioMetadata } from '@/lib/google-drive-cache';
 
@@ -140,6 +140,21 @@ export async function POST(request: NextRequest) {
         },
       );
     } while (nextPageToken && localFiles.length < maxFiles);
+
+    const purgedIgnoredTracks = await purgeIgnoredGoogleDriveTracks();
+    if (purgedIgnoredTracks > 0) {
+      logGoogleDriveImport('info', 'purged_ignored_tracks', {
+        removed: purgedIgnoredTracks,
+      });
+      await logGoogleDriveProgress(
+        'info',
+        `Removed ${purgedIgnoredTracks} previously imported Google Drive sidecar entries.`,
+        {
+          event: 'purged_ignored_tracks',
+          removed: purgedIgnoredTracks,
+        },
+      );
+    }
 
     const localImport = await importGoogleDriveTracks({
       files: localFiles,

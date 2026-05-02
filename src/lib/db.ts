@@ -1049,6 +1049,17 @@ export async function updateGoogleDriveTrackLocalMetadata(
   );
 }
 
+export async function purgeIgnoredGoogleDriveTracks(): Promise<number> {
+  const before = Number(
+    queryOne<Record<string, unknown>>(
+      "SELECT COUNT(*) AS count FROM tracks WHERE path LIKE 'gdrive:%' AND title LIKE '._%'",
+    )?.count ?? 0,
+  );
+  if (!before) return 0;
+  execute("DELETE FROM tracks WHERE path LIKE 'gdrive:%' AND title LIKE '._%'");
+  return before;
+}
+
 export async function getTracksByIds(ids: number[]): Promise<Track[]> {
   const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
   if (!uniqueIds.length) return [];
@@ -1067,7 +1078,11 @@ export async function importGoogleDriveTracks(input: {
   folderId?: string;
   folderName?: string;
 }): Promise<{ imported: number; updated: number }> {
-  const files = input.files.filter((file) => String(file.id ?? '').trim());
+  const files = input.files.filter((file) => {
+    const fileId = String(file.id ?? '').trim();
+    const name = String(file.name ?? '').trim();
+    return fileId && !name.startsWith('._');
+  });
   if (!files.length) return { imported: 0, updated: 0 };
   let imported = 0;
   let updated = 0;
