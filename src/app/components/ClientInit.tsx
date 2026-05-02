@@ -3452,7 +3452,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       src: string,
       cues: Array<{ time: number; label?: string }>,
       audio: HTMLAudioElement | null,
-      options: { sourceType?: 'local' | 'google_drive' } = {},
     ) {
       const canvas = document.getElementById(`waveform-${trackId}`) as HTMLCanvasElement | null;
       if (!canvas) return;
@@ -3531,7 +3530,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         audio.addEventListener('pause', syncFallback);
       };
 
-      if (options.sourceType === 'google_drive' || !src.trim()) {
+      if (!src.trim()) {
         renderFallbackWaveform();
         return;
       }
@@ -4624,9 +4623,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       syncMuteButton(localAudio);
       if (localAudio) {
-        void drawWaveform(trackId, playbackUrl ?? '', [], localAudio, {
-          sourceType: isGoogleDriveTrack ? 'google_drive' : 'local',
-        });
+        void drawWaveform(trackId, playbackUrl ?? '', [], localAudio);
       }
       reanalyzeBpmBtn?.addEventListener('click', async () => {
         const previousLabel = reanalyzeBpmBtn.textContent ?? 'Reanalyze BPM';
@@ -5370,9 +5367,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const current = googleDriveFolderTrail[googleDriveFolderTrail.length - 1];
         if (!current) return;
         applySelectedGoogleDriveFolder(current.id, current.name);
-      });
-      document.getElementById('google-drive-folder-use-all-btn')?.addEventListener('click', () => {
-        applySelectedGoogleDriveFolder('', '');
       });
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
         void signInWithGoogle();

@@ -62,11 +62,13 @@ export async function GET(
     return Response.json({ error: 'not found' }, { status: 404 });
   }
   let filePath: string;
+  let mimeTypeOverride: string | null = null;
   if (String(track.path).startsWith('gdrive:')) {
     const fileId = String(track.path).slice('gdrive:'.length);
     try {
       const localFile = await ensureLocalGoogleDriveTrackFile(fileId);
       filePath = localFile.localPath;
+      mimeTypeOverride = localFile.mimeType || null;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return Response.json({ error: `Google Drive download failed: ${message}` }, { status: 502 });
@@ -79,7 +81,7 @@ export async function GET(
   }
 
   const { size } = statSync(filePath);
-  const mimeType = getMimeType(filePath);
+  const mimeType = mimeTypeOverride ?? getMimeType(filePath);
   const rangeHeader = request.headers.get('range');
 
   if (rangeHeader) {

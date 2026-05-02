@@ -282,7 +282,6 @@ export default function AppShell({
             <div className="buttons">
               <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
               <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
-              <button className="btn secondary" id="google-drive-folder-use-all-btn" type="button">Use All Audio Files</button>
             </div>
             <div className="scan-history" id="google-drive-folder-list">
               <div className="empty">Loading Google Drive folders…</div>
