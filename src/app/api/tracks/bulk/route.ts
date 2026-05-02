@@ -3,11 +3,13 @@ import { rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { bulkTrackAction, getTracksByIds } from '@/lib/db';
+import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
 import { resolveWorkingPython } from '@/lib/scan';
 
 export const runtime = 'nodejs';
 const execFileAsync = promisify(execFile);
 const BULK_REANALYZE_ART_TIMEOUT_MS = 45000;
+const BULK_REANALYZE_BPM_TIMEOUT_MS = 45000;
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
@@ -17,7 +19,7 @@ export async function POST(request: NextRequest) {
   if (!ids.length) {
     return NextResponse.json({ error: 'ids required' }, { status: 400 });
   }
-  if (!['ignore', 'unignore', 'add_tags', 'remove_tags', 'clear_tags', 'add_to_set', 'delete', 'reanalyze_art'].includes(action)) {
+  if (!['ignore', 'unignore', 'add_tags', 'remove_tags', 'clear_tags', 'add_to_set', 'delete', 'reanalyze_art', 'reanalyze_bpm'].includes(action)) {
     return NextResponse.json({ error: 'invalid action' }, { status: 400 });
   }
 
@@ -67,6 +69,93 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+    const successCount = results.filter((item) => item.ok).length;
+    return NextResponse.json({
+      ok: successCount > 0,
+      results,
+      processed: results.length,
+      succeeded: successCount,
+      failed: results.length - successCount,
+    });
+  }
+
+  if (action === 'reanalyze_bpm') {
+    const python = await resolveWorkingPython();
+    const tracks = await getTracksByIds(ids);
+    const trackById = new Map(tracks.map((track) => [Number(track.id), track]));
+    const results: Array<Record<string, unknown>> = [];
+
+    for (const id of ids) {
+      const track = trackById.get(id);
+      if (!track) {
+        results.push({ id, ok: false, message: 'Track not found.' });
+        continue;
+      }
+      try {
+        let pathOverride = '';
+        let googleDriveDownload: Record<string, unknown> | null = null;
+        if (String(track.path ?? '').startsWith('gdrive:')) {
+          const fileId = String(track.path ?? '').slice('gdrive:'.length).trim();
+          if (!fileId) throw new Error('Google Drive track is missing its file ID.');
+          const downloaded = await ensureLocalGoogleDriveTrackFile(fileId);
+          pathOverride = downloaded.localPath;
+          googleDriveDownload = {
+            fileId,
+            localPath: downloaded.localPath,
+            cached: downloaded.cached,
+            name: downloaded.name,
+            mimeType: downloaded.mimeType,
+          };
+        }
+
+        const args = ['-m', 'dj_assist.cli', 'reanalyze-bpm', String(id), '--json-output'];
+        if (pathOverride) args.push('--path-override', pathOverride);
+        const { stdout, stderr } = await execFileAsync(
+          python,
+          args,
+          {
+            cwd: process.cwd(),
+            env: {
+              ...process.env,
+              DJ_ASSIST_LIVE_SPOTIFY_DEBUG: '1',
+              DJ_ASSIST_FAIL_FAST_ON_SPOTIFY_429: '1',
+            },
+            timeout: BULK_REANALYZE_BPM_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024,
+          },
+        );
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
+        } catch {
+          parsed = { ok: true, track_id: id, message: String(stdout || '').trim() };
+        }
+        results.push({
+          id,
+          ok: true,
+          message: `BPM ${String(parsed.bpm ?? parsed.effective_bpm ?? '') || 'updated'}`,
+          debug: {
+            stdout: parsed,
+            stderr: String(stderr || '').trim(),
+            googleDriveDownload,
+          },
+        });
+      } catch (error) {
+        const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
+        results.push({
+          id,
+          ok: false,
+          message: execError.message || 'Unable to reanalyze BPM.',
+          debug: {
+            code: execError?.code ?? null,
+            signal: execError?.signal ?? null,
+            stdout: String(execError?.stdout ?? '').trim(),
+            stderr: String(execError?.stderr ?? '').trim(),
+          },
+        });
+      }
+    }
+
     const successCount = results.filter((item) => item.ok).length;
     return NextResponse.json({
       ok: successCount > 0,

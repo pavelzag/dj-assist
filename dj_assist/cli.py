@@ -347,7 +347,8 @@ def debug(track_id: int) -> None:
 @main.command(name="reanalyze-bpm")
 @click.argument("track_id", type=int)
 @click.option("--json-output", is_flag=True, help="Emit JSON with the updated BPM analysis.")
-def reanalyze_bpm(track_id: int, json_output: bool) -> None:
+@click.option("--path-override", type=str, default="", help="Optional local file path to analyze instead of the stored track path.")
+def reanalyze_bpm(track_id: int, json_output: bool, path_override: str) -> None:
     started_at = time.perf_counter()
     timeline: list[dict[str, object]] = []
 
@@ -364,9 +365,10 @@ def reanalyze_bpm(track_id: int, json_output: bool) -> None:
         raise click.ClickException(f"Track {track_id} not found")
     if not track.path:
         raise click.ClickException(f"Track {track_id} has no file path")
+    analysis_path = path_override.strip() or track.path
 
-    mark("detect_bpm_start", path=track.path)
-    bpm, bpm_source, analysis_error, bpm_confidence = detect_bpm(track.path)
+    mark("detect_bpm_start", path=analysis_path, stored_path=track.path)
+    bpm, bpm_source, analysis_error, bpm_confidence = detect_bpm(analysis_path)
     mark(
         "detect_bpm_done",
         bpm=bpm or 0.0,
@@ -379,6 +381,7 @@ def reanalyze_bpm(track_id: int, json_output: bool) -> None:
     reanalyze_debug: dict[str, object] = {
         "track_id": track_id,
         "path": track.path,
+        "analysis_path": analysis_path,
         "artist": track.artist or "",
         "title": track.title or "",
         "album": track.album or "",

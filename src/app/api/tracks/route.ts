@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllTracks, getDatabasePath, searchTracks, serializeTrack } from '@/lib/db';
+import { aggregateTracks, getAllTrackRows, getDatabasePath, searchTrackRows, serializeTrackGroup } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -42,10 +42,10 @@ export async function GET(request: NextRequest) {
 
     const hasFilter = query || bpmMin != null || bpmMax != null || key;
     const tracks = hasFilter
-      ? await searchTracks({ query, bpmMin, bpmMax, key })
-      : await getAllTracks();
+      ? await searchTrackRows({ query, bpmMin, bpmMax, key })
+      : await getAllTrackRows();
 
-    let payload = tracks.map((track) => serializeTrack(track, { includeEmbeddedArtwork: false }));
+    let payload = aggregateTracks(tracks).map((group) => serializeTrackGroup(group, { includeEmbeddedArtwork: false }));
     if (highConfidenceOnly) {
       payload = payload.filter((t) => t.spotify_high_confidence);
     }

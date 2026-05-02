@@ -2,6 +2,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrackById, serializeTrack } from '@/lib/db';
+import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
 import { resolveWorkingPython } from '@/lib/scan';
 
 export const runtime = 'nodejs';
@@ -21,11 +22,31 @@ export async function POST(
   if (!currentTrack) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
   try {
+    let pathOverride = '';
+    let googleDriveDownload: Record<string, unknown> | null = null;
+    if (String(currentTrack.path ?? '').startsWith('gdrive:')) {
+      const fileId = String(currentTrack.path ?? '').slice('gdrive:'.length).trim();
+      if (!fileId) {
+        return NextResponse.json({ error: 'Google Drive track is missing its file ID.' }, { status: 400 });
+      }
+      const downloaded = await ensureLocalGoogleDriveTrackFile(fileId);
+      pathOverride = downloaded.localPath;
+      googleDriveDownload = {
+        fileId,
+        localPath: downloaded.localPath,
+        cached: downloaded.cached,
+        name: downloaded.name,
+        mimeType: downloaded.mimeType,
+      };
+    }
+
     const python = await resolveWorkingPython();
     const startedAt = Date.now();
+    const args = ['-m', 'dj_assist.cli', 'reanalyze-bpm', String(trackId), '--json-output'];
+    if (pathOverride) args.push('--path-override', pathOverride);
     const { stdout, stderr } = await execFileAsync(
       python,
-      ['-m', 'dj_assist.cli', 'reanalyze-bpm', String(trackId), '--json-output'],
+      args,
       {
         cwd: process.cwd(),
         env: {
@@ -45,6 +66,7 @@ export async function POST(
           track: serializeTrack((await getTrackById(trackId)) ?? currentTrack),
           debug: {
             durationMs,
+            googleDriveDownload,
             stdout: parsed,
             stderr: String(stderr || '').trim(),
           },
@@ -55,6 +77,7 @@ export async function POST(
         track: serializeTrack((await getTrackById(trackId)) ?? currentTrack),
         debug: {
           durationMs,
+          googleDriveDownload,
           stdout: String(stdout || '').trim(),
           stderr: String(stderr || '').trim(),
         },

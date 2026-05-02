@@ -367,6 +367,21 @@ function serializeTags(tags: string[]): string {
   return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].join(', ');
 }
 
+type PreferredSourceKind = 'local' | 'google_drive' | null;
+
+function preferredSourceTagValue(track: Pick<Track, 'custom_tags'>): PreferredSourceKind {
+  const tags = parseTags(track.custom_tags);
+  if (tags.includes('preferred_source:local')) return 'local';
+  if (tags.includes('preferred_source:google_drive')) return 'google_drive';
+  return null;
+}
+
+function withPreferredSourceTag(existingTags: string | null, preferredSource: PreferredSourceKind): string {
+  const nextTags = parseTags(existingTags).filter((tag) => tag !== 'preferred_source:local' && tag !== 'preferred_source:google_drive');
+  if (preferredSource) nextTags.push(`preferred_source:${preferredSource}`);
+  return serializeTags(nextTags);
+}
+
 export interface Track {
   id: number;
   path: string | null;
@@ -415,6 +430,14 @@ export interface Track {
   manual_cues: Array<{ time: number; label?: string }> | null;
   created_at: Date | null;
 }
+
+export type SerializedTrackSource = {
+  kind: 'local' | 'google_drive';
+  label: string;
+  path: string | null;
+  track_id: number;
+  file_hash: string | null;
+};
 
 export interface ScanRun {
   id: string;
@@ -674,11 +697,148 @@ export function serializeTrack(
     manual_cues: Array.isArray(track.manual_cues) ? track.manual_cues : [],
     effective_bpm: effectiveBpm,
     effective_key: effectiveKey,
+    sources: buildTrackSources([track]),
+    source_kinds: [isGoogleDriveTrackPathValue(track.path) ? 'google_drive' : 'local'],
+    has_local_source: !isGoogleDriveTrackPathValue(track.path),
+    has_google_drive_source: isGoogleDriveTrackPathValue(track.path),
   };
 }
 
 function trackIdentity(track: Track): string {
   return track.spotify_id || track.file_hash || `${track.artist ?? ''}|${track.title ?? ''}|${Math.round(track.duration ?? 0)}`;
+}
+
+function isGoogleDriveTrackPathValue(pathValue: string | null): boolean {
+  return String(pathValue ?? '').trim().startsWith('gdrive:');
+}
+
+function preferredTrackOrder(a: Track, b: Track): number {
+  const preferredSource = preferredSourceTagValue(a) ?? preferredSourceTagValue(b);
+  if (preferredSource) {
+    const aMatchesPreference = preferredSource === 'google_drive' ? isGoogleDriveTrackPathValue(a.path) : !isGoogleDriveTrackPathValue(a.path);
+    const bMatchesPreference = preferredSource === 'google_drive' ? isGoogleDriveTrackPathValue(b.path) : !isGoogleDriveTrackPathValue(b.path);
+    if (aMatchesPreference !== bMatchesPreference) return aMatchesPreference ? -1 : 1;
+  }
+  const aLocal = !isGoogleDriveTrackPathValue(a.path);
+  const bLocal = !isGoogleDriveTrackPathValue(b.path);
+  if (aLocal !== bLocal) return aLocal ? -1 : 1;
+  const aHasBpm = Number(a.bpm_override ?? a.bpm ?? a.spotify_tempo ?? 0) > 0;
+  const bHasBpm = Number(b.bpm_override ?? b.bpm ?? b.spotify_tempo ?? 0) > 0;
+  if (aHasBpm !== bHasBpm) return aHasBpm ? -1 : 1;
+  return Number(a.id) - Number(b.id);
+}
+
+function preferValue<T>(tracks: Track[], pick: (track: Track) => T | null | undefined, fallback: T | null = null): T | null {
+  for (const track of tracks) {
+    const value = pick(track);
+    if (value == null) continue;
+    if (typeof value === 'string' && !value.trim()) continue;
+    return value;
+  }
+  return fallback;
+}
+
+function buildTrackSources(tracks: Track[]): SerializedTrackSource[] {
+  const seen = new Set<string>();
+  return [...tracks]
+    .sort(preferredTrackOrder)
+    .flatMap((track) => {
+      const kind: SerializedTrackSource['kind'] = isGoogleDriveTrackPathValue(track.path) ? 'google_drive' : 'local';
+      const key = `${kind}:${track.path ?? ''}:${track.id}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{
+        kind,
+        label: kind === 'google_drive' ? 'Google Drive' : 'Local',
+        path: track.path,
+        track_id: track.id,
+        file_hash: track.file_hash ?? null,
+      }];
+    });
+}
+
+export function aggregateTracks(tracks: Track[]): Track[][] {
+  const groups = new Map<string, Track[]>();
+  for (const track of tracks) {
+    const key = trackIdentity(track);
+    const bucket = groups.get(key) ?? [];
+    bucket.push(track);
+    groups.set(key, bucket);
+  }
+  return [...groups.values()]
+    .map((group) => [...group].sort(preferredTrackOrder))
+    .sort((a, b) => compareAggregateTrackOrder(a[0], b[0]));
+}
+
+function compareAggregateTrackOrder(a: Track, b: Track): number {
+  return String(a.artist ?? '').localeCompare(String(b.artist ?? ''))
+    || String(a.title ?? '').localeCompare(String(b.title ?? ''))
+    || Number(a.id) - Number(b.id);
+}
+
+export function serializeTrackGroup(
+  trackGroup: Track[],
+  options?: { includeEmbeddedArtwork?: boolean },
+) {
+  const tracks = [...trackGroup].sort(preferredTrackOrder);
+  const primary = tracks[0];
+  const combinedTags = [...new Set(tracks.flatMap((track) => parseTags(track.custom_tags)))];
+  const combinedSources = buildTrackSources(tracks);
+  const base = serializeTrack(primary, options);
+  return {
+    ...base,
+    path: preferValue(tracks, (track) => track.path, primary.path),
+    title: preferValue(tracks, (track) => smartCapitalize(track.title), base.title),
+    artist: preferValue(tracks, (track) => smartCapitalize(track.artist), base.artist),
+    album: preferValue(tracks, (track) => smartCapitalize(track.album), base.album),
+    duration: preferValue(tracks, (track) => track.duration, base.duration),
+    bitrate: preferValue(tracks, (track) => track.bitrate, base.bitrate),
+    bpm: preferValue(tracks, (track) => track.bpm, base.bpm),
+    bpm_override: preferValue(tracks, (track) => track.bpm_override, base.bpm_override),
+    bpm_confidence: preferValue(tracks, (track) => track.bpm_confidence, base.bpm_confidence),
+    key: preferValue(tracks, (track) => track.key, base.key),
+    key_numeric: preferValue(tracks, (track) => track.key_numeric, base.key_numeric),
+    spotify_id: preferValue(tracks, (track) => track.spotify_id, base.spotify_id),
+    spotify_uri: preferValue(tracks, (track) => track.spotify_uri, base.spotify_uri),
+    spotify_url: preferValue(tracks, (track) => track.spotify_url, base.spotify_url),
+    spotify_preview_url: preferValue(tracks, (track) => track.spotify_preview_url, base.spotify_preview_url),
+    spotify_tempo: preferValue(tracks, (track) => track.spotify_tempo, base.spotify_tempo),
+    spotify_key: preferValue(tracks, (track) => track.spotify_key, base.spotify_key),
+    spotify_mode: preferValue(tracks, (track) => track.spotify_mode, base.spotify_mode),
+    album_art_url: preferValue(tracks, (track) => sanitizeAlbumArtUrl(track.id, track.album_art_url, options), base.album_art_url),
+    album_art_source: preferValue(tracks, (track) => track.album_art_source, base.album_art_source),
+    album_art_confidence: preferValue(tracks, (track) => track.album_art_confidence, base.album_art_confidence),
+    album_art_review_status: preferValue(tracks, (track) => track.album_art_review_status, base.album_art_review_status),
+    album_art_review_notes: preferValue(tracks, (track) => track.album_art_review_notes, base.album_art_review_notes),
+    album_group_key: preferValue(tracks, (track) => track.album_group_key, base.album_group_key),
+    embedded_album_art: tracks.some((track) => Boolean(track.embedded_album_art)),
+    album_art_match_debug: preferValue(tracks, (track) => track.album_art_match_debug, base.album_art_match_debug),
+    spotify_album_name: preferValue(tracks, (track) => smartCapitalize(track.spotify_album_name), base.spotify_album_name),
+    spotify_match_score: preferValue(tracks, (track) => track.spotify_match_score, base.spotify_match_score),
+    spotify_high_confidence: tracks.some((track) => (track.spotify_high_confidence ?? '').toLowerCase() === 'true'),
+    youtube_url: preferValue(tracks, (track) => track.youtube_url, base.youtube_url),
+    bpm_source: preferValue(tracks, (track) => track.bpm_override != null ? 'manual' : track.bpm_source, base.bpm_source),
+    analysis_status: preferValue(tracks, (track) => track.analysis_status, base.analysis_status),
+    analysis_error: preferValue(tracks, (track) => track.analysis_error, base.analysis_error),
+    decode_failed: preferValue(tracks, (track) => track.decode_failed, base.decode_failed),
+    analysis_stage: preferValue(tracks, (track) => track.analysis_stage, base.analysis_stage),
+    analysis_debug: preferValue(tracks, (track) => track.analysis_debug, base.analysis_debug),
+    file_hash: preferValue(tracks, (track) => track.file_hash, base.file_hash),
+    ignored: tracks.some((track) => Boolean(track.ignored)),
+    custom_tags: combinedTags,
+    artist_canonical: preferValue(tracks, (track) => track.artist_canonical, base.artist_canonical),
+    album_canonical: preferValue(tracks, (track) => track.album_canonical, base.album_canonical),
+    manual_cues: preferValue(tracks, (track) => Array.isArray(track.manual_cues) && track.manual_cues.length ? track.manual_cues : null, base.manual_cues),
+    effective_bpm: preferValue(tracks, (track) => track.bpm_override ?? track.bpm ?? track.spotify_tempo, base.effective_bpm),
+    effective_key: preferValue(tracks, (track) => track.key || track.spotify_key || track.key_numeric, base.effective_key),
+    sources: combinedSources,
+    source_kinds: [...new Set(combinedSources.map((source) => source.kind))],
+    has_local_source: combinedSources.some((source) => source.kind === 'local'),
+    has_google_drive_source: combinedSources.some((source) => source.kind === 'google_drive'),
+    source_track_ids: tracks.map((track) => track.id),
+    source_count: combinedSources.length,
+    source_preference: preferredSourceTagValue(primary),
+  };
 }
 
 function uniqueTracks(tracks: Track[]): Track[] {
@@ -695,9 +855,22 @@ export async function getAllTracks(): Promise<Track[]> {
   return uniqueTracks(queryAll<Record<string, unknown>>('SELECT * FROM tracks ORDER BY artist, title, id').map(mapTrack));
 }
 
+export async function getAllTrackRows(): Promise<Track[]> {
+  return queryAll<Record<string, unknown>>('SELECT * FROM tracks ORDER BY artist, title, id').map(mapTrack);
+}
+
 export async function getTrackById(id: number): Promise<Track | null> {
   const row = queryOne<Record<string, unknown>>('SELECT * FROM tracks WHERE id = ?', id);
   return row ? mapTrack(row) : null;
+}
+
+export async function getTrackGroupMembers(trackId: number): Promise<Track[]> {
+  const current = await getTrackById(trackId);
+  if (!current) return [];
+  const identity = trackIdentity(current);
+  return (await getAllTrackRows())
+    .filter((track) => trackIdentity(track) === identity)
+    .sort(preferredTrackOrder);
 }
 
 export interface SearchParams {
@@ -708,6 +881,10 @@ export interface SearchParams {
 }
 
 export async function searchTracks(params: SearchParams): Promise<Track[]> {
+  return uniqueTracks(await searchTrackRows(params));
+}
+
+export async function searchTrackRows(params: SearchParams): Promise<Track[]> {
   const clauses = ['1=1'];
   const values: SqlitePrimitive[] = [];
   const query = params.query?.trim();
@@ -733,7 +910,7 @@ export async function searchTracks(params: SearchParams): Promise<Track[]> {
     `SELECT * FROM tracks WHERE ${clauses.join(' AND ')} ORDER BY artist, title, id`,
     ...values,
   ).map(mapTrack);
-  return uniqueTracks(rows);
+  return rows;
 }
 
 export async function updateTrackBpm(id: number, bpm: number): Promise<void> {
@@ -755,6 +932,7 @@ export async function updateTrackMetadata(
     album_art_confidence?: number | null;
     album_art_review_status?: string | null;
     album_art_review_notes?: string | null;
+    source_preference?: PreferredSourceKind;
   },
 ): Promise<void> {
   const current = await getTrackById(id);
@@ -778,7 +956,12 @@ export async function updateTrackMetadata(
     artist_canonical: canonicalizeArtistName(artist),
     album_canonical: canonicalizeAlbumName(album),
     manual_cues: patch.manual_cues !== undefined ? JSON.stringify(patch.manual_cues) : JSON.stringify(current.manual_cues ?? []),
+    source_preference: patch.source_preference !== undefined ? patch.source_preference : preferredSourceTagValue(current),
   };
+
+  const nextCustomTags = patch.custom_tags !== undefined
+    ? withPreferredSourceTag(serializeTags(patch.custom_tags), values.source_preference)
+    : withPreferredSourceTag(current.custom_tags, values.source_preference);
 
   execute(
     `UPDATE tracks
@@ -792,7 +975,7 @@ export async function updateTrackMetadata(
     values.album,
     values.key,
     boolInt(Boolean(values.ignored)),
-    values.custom_tags,
+    nextCustomTags,
     values.album_art_url,
     values.album_art_source,
     values.album_art_confidence,

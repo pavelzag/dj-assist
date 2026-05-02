@@ -6,6 +6,7 @@ import {
 } from '@/lib/runtime-settings';
 import { listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
 import { importGoogleDriveTracks } from '@/lib/db';
+import { appendClientDiagnosticLog } from '@/lib/app-log';
 
 export const runtime = 'nodejs';
 const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
@@ -24,6 +25,21 @@ function logGoogleDriveImport(
   if (level === 'error') console.error(line);
   else if (level === 'warn') console.warn(line);
   else console.log(line);
+}
+
+async function logGoogleDriveProgress(
+  level: 'info' | 'warning' | 'error' | 'success',
+  message: string,
+  context: Record<string, unknown>,
+) {
+  await appendClientDiagnosticLog({
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    source: 'renderer',
+    category: 'google-drive-import',
+    context,
+  }).catch(() => {});
 }
 
 function buildServerHeaders(input: {
@@ -74,6 +90,18 @@ export async function POST(request: NextRequest) {
       fallbackDownloadLimit: fallbackDownloadScan ? fallbackDownloadLimit : null,
       serverUrl,
     });
+    await logGoogleDriveProgress(
+      'info',
+      `Google Drive import backend started for ${folderName || folderId || 'all audio files'} (max ${maxFiles} files).`,
+      {
+        event: 'started',
+        folderId: folderId || null,
+        folderName: folderName || null,
+        maxFiles,
+        fallbackDownloadScan,
+        fallbackDownloadLimit: fallbackDownloadScan ? fallbackDownloadLimit : null,
+      },
+    );
 
     const localFiles: Awaited<ReturnType<typeof listGoogleDriveAudioFiles>>['files'] = [];
     let nextPageToken: string | null = null;
@@ -94,6 +122,17 @@ export async function POST(request: NextRequest) {
         totalBuffered: localFiles.length,
         hasNextPage: Boolean(nextPageToken),
       });
+      await logGoogleDriveProgress(
+        'info',
+        `Google Drive page ${pagesFetched} loaded: ${page.files.length} files, ${localFiles.length} buffered${nextPageToken ? ', more remaining.' : '.'}`,
+        {
+          event: 'drive_page_loaded',
+          page: pagesFetched,
+          fetchedThisPage: page.files.length,
+          totalBuffered: localFiles.length,
+          hasNextPage: Boolean(nextPageToken),
+        },
+      );
     } while (nextPageToken && localFiles.length < maxFiles);
 
     const localImport = await importGoogleDriveTracks({
@@ -106,6 +145,16 @@ export async function POST(request: NextRequest) {
       localImported: localImport.imported,
       localUpdated: localImport.updated,
     });
+    await logGoogleDriveProgress(
+      'info',
+      `Local Google Drive import completed: ${localImport.imported} added, ${localImport.updated} updated from ${localFiles.length} buffered files.`,
+      {
+        event: 'local_import_completed',
+        totalBuffered: localFiles.length,
+        localImported: localImport.imported,
+        localUpdated: localImport.updated,
+      },
+    );
 
     const response = await fetch(`${serverUrl}/api/v1/google-drive/import`, {
       method: 'POST',
@@ -130,6 +179,16 @@ export async function POST(request: NextRequest) {
       ok: response.ok,
       rawPreview: raw.slice(0, 500),
     });
+    await logGoogleDriveProgress(
+      response.ok ? 'success' : 'warning',
+      `Google Drive server import response: status=${response.status} ok=${response.ok ? 'yes' : 'no'}.`,
+      {
+        event: 'server_import_response',
+        status: response.status,
+        ok: response.ok,
+        rawPreview: raw.slice(0, 500),
+      },
+    );
     let payload: Record<string, unknown> | null = null;
     try {
       payload = raw ? JSON.parse(raw) as Record<string, unknown> : null;
@@ -151,6 +210,14 @@ export async function POST(request: NextRequest) {
     logGoogleDriveImport('error', 'failed', {
       error: message,
     });
+    await logGoogleDriveProgress(
+      'error',
+      `Google Drive import failed: ${message}`,
+      {
+        event: 'failed',
+        error: message,
+      },
+    );
     return NextResponse.json(
       {
         error:

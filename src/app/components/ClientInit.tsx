@@ -1621,8 +1621,56 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (preferences.listShowBitrate) parts.push(formatBitrate(track.bitrate));
       if (preferences.listShowTags && Array.isArray(track.custom_tags) && track.custom_tags.length) parts.push(esc((track.custom_tags as string[]).join(', ')));
       if (preferences.listShowBpmSource && track.bpm_source) parts.push(`BPM ${esc(track.bpm_source)}`);
-      parts.push(esc(track.path));
+      parts.push(esc(trackSourceSummary(track)));
       return parts;
+    }
+
+    function trackSourceSummary(track: Record<string, unknown>): string {
+      const sources = Array.isArray(track.sources) ? track.sources as Record<string, unknown>[] : [];
+      if (!sources.length) return String(track.path ?? '');
+      const labels = [...new Set(sources.map((source) => String(source.label ?? '').trim()).filter(Boolean))];
+      const localPath = sources.find((source) => String(source.kind ?? '') === 'local' && String(source.path ?? '').trim())?.path;
+      if (labels.length === 1) {
+        return localPath ? `${labels[0]} · ${String(localPath)}` : labels[0];
+      }
+      return `${labels.join(' + ')} · ${sources.length} sources`;
+    }
+
+    function trackSourcesMarkup(track: Record<string, unknown>): string {
+      const sources = Array.isArray(track.sources) ? track.sources as Record<string, unknown>[] : [];
+      if (!sources.length) return '<span class="chip subtle">Unknown source</span>';
+      return sources.map((source) => {
+        const kind = String(source.kind ?? '');
+        const label = String(source.label ?? kind ?? 'Source');
+        const path = String(source.path ?? '').trim();
+        const title = path ? `${label}: ${path}` : label;
+        const chipClass = kind === 'google_drive' ? 'warn' : 'success';
+        return `<span class="chip ${chipClass}" title="${esc(title)}">${esc(label)}</span>`;
+      }).join('');
+    }
+
+    function trackSourceDetailMarkup(track: Record<string, unknown>): string {
+      const sources = Array.isArray(track.sources) ? track.sources as Record<string, unknown>[] : [];
+      const sourcePreference = String(track.source_preference ?? '').trim();
+      if (!sources.length) {
+        return `<div class="scan-preflight">Source path: ${esc(String(track.path ?? ''))}</div>`;
+      }
+      return `
+        <div class="scan-preflight"><strong>Sources</strong></div>
+        <div class="chips">
+          <button type="button" class="chip nav-chip ${sourcePreference === 'local' ? 'active' : ''}" id="prefer-local-source-btn">Prefer Local</button>
+          <button type="button" class="chip nav-chip ${sourcePreference === 'google_drive' ? 'active' : ''}" id="prefer-drive-source-btn">Prefer Google Drive</button>
+          <button type="button" class="chip nav-chip ${!sourcePreference ? 'active' : ''}" id="clear-source-preference-btn">Auto</button>
+        </div>
+        <div class="suggestions compact">
+          ${sources.map((source) => `
+            <div class="suggestion compact">
+              <strong>${esc(String(source.label ?? 'Source'))}</strong><br>
+              <small>${esc(String(source.path ?? 'No path available'))}</small>
+            </div>
+          `).join('')}
+        </div>
+      `;
     }
 
     function rowMetricTemplate(track: Record<string, unknown>): string {
@@ -1746,7 +1794,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         .filter((track) => matchesMainPaneFilters(track))
         .filter((track) => matchesBrowseScope(track))
         .filter((track) => matchesQuickFilter(track))
-        .filter((track) => showOnlyNoBpmEl?.checked ? !hasBpm(track) : hasBpm(track));
+        .filter((track) => showOnlyNoBpmEl?.checked ? !hasBpm(track) : true);
 
       if (!frozenTrackIdsDuringScan?.length || !['queued', 'running'].includes(activeScanStatus)) {
         return filtered.sort(compareTracks);
@@ -1917,6 +1965,39 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderList(tracks);
       renderBulkToolbar();
       showToast(visibleIds.length === 1 ? 'Selected 1 visible track.' : `Selected ${visibleIds.length} visible tracks.`, 'success');
+    }
+
+    function selectVisibleGoogleDriveTracksMissingBpm() {
+      const visibleIds = visibleTracksOrdered()
+        .filter((track) => isGoogleDriveTrackPath(String(track.path ?? '')) && !hasBpm(track))
+        .map((track) => Number(track.id))
+        .filter((id) => Number.isFinite(id));
+      for (const id of visibleIds) selectedTrackIds.add(id);
+      renderList(tracks);
+      renderBulkToolbar();
+      showToast(
+        visibleIds.length
+          ? (visibleIds.length === 1
+            ? 'Selected 1 visible Google Drive track missing BPM.'
+            : `Selected ${visibleIds.length} visible Google Drive tracks missing BPM.`)
+          : 'No visible Google Drive tracks are missing BPM.',
+        visibleIds.length ? 'success' : 'info',
+      );
+    }
+
+    async function analyzeVisibleGoogleDriveTracksMissingBpm() {
+      const visibleIds = visibleTracksOrdered()
+        .filter((track) => isGoogleDriveTrackPath(String(track.path ?? '')) && !hasBpm(track))
+        .map((track) => Number(track.id))
+        .filter((id) => Number.isFinite(id));
+      if (!visibleIds.length) {
+        showToast('No visible Google Drive tracks are missing BPM.', 'info');
+        return;
+      }
+      for (const id of visibleIds) selectedTrackIds.add(id);
+      renderList(tracks);
+      renderBulkToolbar();
+      await reanalyzeBpmBulk(visibleIds, { label: 'visible Google Drive tracks missing BPM' });
     }
 
     function toggleTrackSelection(trackId: number) {
@@ -2898,7 +2979,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         <div class="bulk-toolbar-main">
           <strong>${selected.length} selected</strong>
           <button type="button" class="btn" id="bulk-select-all-visible-btn">Select All Visible</button>
+          <button type="button" class="btn" id="bulk-select-drive-missing-bpm-btn">Select Drive Missing BPM</button>
+          <button type="button" class="btn" id="bulk-analyze-drive-missing-bpm-btn">Analyze Visible Drive Missing BPM</button>
           <button type="button" class="btn danger" id="bulk-delete-btn">Delete</button>
+          <button type="button" class="btn" id="bulk-reanalyze-bpm-btn">Analyze BPM</button>
           <button type="button" class="btn" id="bulk-reanalyze-art-btn">Fill Missing Art</button>
           <button type="button" class="btn" id="bulk-ignore-btn">Ignore</button>
           <button type="button" class="btn" id="bulk-unignore-btn">Unignore</button>
@@ -2951,9 +3035,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('bulk-select-all-visible-btn')?.addEventListener('click', () => {
         selectAllVisibleTracks();
       });
+      document.getElementById('bulk-select-drive-missing-bpm-btn')?.addEventListener('click', () => {
+        selectVisibleGoogleDriveTracksMissingBpm();
+      });
+      document.getElementById('bulk-analyze-drive-missing-bpm-btn')?.addEventListener('click', () => {
+        void analyzeVisibleGoogleDriveTracksMissingBpm();
+      });
       document.getElementById('bulk-ignore-btn')?.addEventListener('click', () => { void runBulkAction('ignore'); });
       document.getElementById('bulk-unignore-btn')?.addEventListener('click', () => { void runBulkAction('unignore'); });
       document.getElementById('bulk-delete-btn')?.addEventListener('click', () => { openDeleteTracksModal([...selectedTrackIds], 'bulk'); });
+      document.getElementById('bulk-reanalyze-bpm-btn')?.addEventListener('click', () => {
+        void reanalyzeBpmBulk([...selectedTrackIds], { label: 'selected tracks' });
+      });
       document.getElementById('bulk-reanalyze-art-btn')?.addEventListener('click', () => {
         void reanalyzeArtBulk([...selectedTrackIds], { label: 'selected tracks' });
       });
@@ -3131,6 +3224,63 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const succeeded = Number(payload.succeeded ?? 0);
       const failed = Number(payload.failed ?? 0);
       showToast(`Fill Missing Art finished: ${succeeded} succeeded, ${failed} failed.`, failed ? 'warning' : 'success');
+    }
+
+    async function reanalyzeBpmBulk(ids: number[], options: { label?: string } = {}) {
+      const { label = 'tracks' } = options;
+      if (!ids.length) {
+        showToast('No tracks to analyze BPM for.', 'info');
+        return;
+      }
+      appendScanLog(`Bulk BPM analysis started for ${ids.length} ${label}.`, 'info', {
+        category: 'reanalyze-bpm-bulk',
+        trackIds: ids,
+      });
+      const response = await fetch('/api/tracks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, action: 'reanalyze_bpm' }),
+      });
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok) {
+        appendScanLog(`Bulk BPM analysis failed: ${String(payload.error ?? 'Bulk BPM analysis failed.')}`, 'error', {
+          category: 'reanalyze-bpm-bulk',
+          debug: payload,
+        });
+        showToast(String(payload.error ?? 'Bulk BPM analysis failed.'), 'error');
+        return;
+      }
+      const results = Array.isArray(payload.results) ? payload.results as Record<string, unknown>[] : [];
+      for (const item of results) {
+        const debug = item.debug && typeof item.debug === 'object' ? item.debug as Record<string, unknown> : undefined;
+        const googleDriveDownload = debug?.googleDriveDownload && typeof debug.googleDriveDownload === 'object'
+          ? debug.googleDriveDownload as Record<string, unknown>
+          : undefined;
+        if (googleDriveDownload) {
+          appendScanLog(
+            `Track ${item.id}: Google Drive cache ${googleDriveDownload.cached ? 'reused' : 'downloaded'} for ${String(googleDriveDownload.name ?? 'file')}.`,
+            'info',
+            { category: 'reanalyze-bpm-bulk', trackId: Number(item.id ?? 0), googleDriveDownload },
+          );
+        }
+        appendScanLog(
+          `BPM analysis track ${item.id}: ${String(item.message ?? '')}`,
+          item.ok ? 'success' : 'error',
+          {
+            category: 'reanalyze-bpm-bulk',
+            trackId: Number(item.id ?? 0),
+            debug,
+          },
+        );
+      }
+      await loadTracks(searchEl.value.trim());
+      await loadLibraryOverview();
+      if (selectedDetailTrackId != null) {
+        await loadTrackDetail(String(selectedDetailTrackId), false);
+      }
+      const succeeded = Number(payload.succeeded ?? 0);
+      const failed = Number(payload.failed ?? 0);
+      showToast(`Analyze BPM finished: ${succeeded} succeeded, ${failed} failed.`, failed ? 'warning' : 'success');
     }
 
     async function readFileAsDataUrl(file: File): Promise<string> {
@@ -3520,6 +3670,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         title: track.title ?? '',
         album: albumNameFor(track),
         path: track.path ?? '',
+        sourceSummary: trackSourceSummary(track),
+        sourceCount: Number(track.source_count ?? 0),
         bitrate: track.bitrate ?? '',
         bpm: track.effective_bpm ?? '',
         key: track.effective_key ?? '',
@@ -3871,10 +4023,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <span>${formatBitrate(track.bitrate)}</span>
             </div>
             <div class="meta meta-path">
-              <span id="detail-track-path" title="${esc(track.path ?? '')}">${esc(track.path ?? '')}</span>
+              <span id="detail-track-path" title="${esc(trackSourceSummary(track))}">${esc(trackSourceSummary(track))}</span>
             </div>
             <div class="chips">
               ${albumNameFor(track) ? `<button type="button" class="chip nav-chip" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>` : ''}
+              ${trackSourcesMarkup(track)}
               ${track.album_art_url ? '<span class="chip success">Album art</span>' : '<span class="chip subtle">No album art</span>'}
               ${track.analysis_status ? `<span class="chip subtle">${esc(track.analysis_status)}</span>` : ''}
               ${track.bpm_source ? `<span class="chip subtle">BPM ${esc(track.bpm_source)}</span>` : ''}
@@ -3909,6 +4062,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
               </div>
             `}
+          </div>
+          <div class="detail-sources">
+            ${trackSourceDetailMarkup(track)}
           </div>
           <audio id="local-audio" class="local-audio-hidden" preload="auto" data-track-id="${trackId}" data-probe-url="${esc(streamProbeUrl)}" ${playbackUrl ? `src="${esc(playbackUrl)}"` : ''}></audio>
           <div class="waveform-panel detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview">
@@ -4369,12 +4525,29 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           title: String(track.title ?? ''),
           path: String(track.path ?? ''),
         });
+        if (isGoogleDriveTrack) {
+          appendScanLog(`Google Drive track ${trackId}: downloading a local cache copy before BPM analysis.`, 'info', {
+            category: 'reanalyze-bpm',
+            trackId,
+            path: String(track.path ?? ''),
+          });
+        }
         try {
           const response = await fetch(`/api/tracks/${trackId}/reanalyze-bpm`, { method: 'POST' });
           const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
           const debugInfo = payload.debug && typeof payload.debug === 'object' ? payload.debug as Record<string, unknown> : undefined;
+          const googleDriveDownload = debugInfo?.googleDriveDownload && typeof debugInfo.googleDriveDownload === 'object'
+            ? debugInfo.googleDriveDownload as Record<string, unknown>
+            : undefined;
           appendSpotifyDebugLog('Reanalyze BPM', debugInfo, { trackId, category: 'reanalyze-bpm' });
           appendSpotifyStderrLog('Reanalyze BPM', debugInfo?.stderr, { trackId, category: 'reanalyze-bpm' });
+          if (googleDriveDownload) {
+            appendScanLog(
+              `Google Drive cache ready for track ${trackId}: ${String(googleDriveDownload.name ?? 'file')} (${googleDriveDownload.cached ? 'cached copy reused' : 'downloaded now'}).`,
+              'info',
+              { category: 'reanalyze-bpm', trackId, googleDriveDownload },
+            );
+          }
           if (!response.ok) {
             const stderr = String(debugInfo?.stderr ?? '').trim();
             const stdout = String(debugInfo?.stdout ?? '').trim();
@@ -4537,6 +4710,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (!youtubeUrl) return;
         const opened = await adapter.openExternal(youtubeUrl);
         if (!opened) showToast('Could not open YouTube.', 'error');
+      });
+      document.getElementById('prefer-local-source-btn')?.addEventListener('click', async () => {
+        await saveTrackMetadata(trackId, { source_preference: 'local' });
+        showToast('Track now prefers the local source.', 'success');
+      });
+      document.getElementById('prefer-drive-source-btn')?.addEventListener('click', async () => {
+        await saveTrackMetadata(trackId, { source_preference: 'google_drive' });
+        showToast('Track now prefers the Google Drive source.', 'success');
+      });
+      document.getElementById('clear-source-preference-btn')?.addEventListener('click', async () => {
+        await saveTrackMetadata(trackId, { source_preference: null });
+        showToast('Track source preference cleared.', 'success');
       });
     }
 

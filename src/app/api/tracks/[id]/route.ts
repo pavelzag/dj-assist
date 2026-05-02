@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getAllTracks, getTrackById, serializeTrack, updateTrackBpm, updateTrackMetadata } from '@/lib/db';
+import { aggregateTracks, getAllTrackRows, getTrackById, getTrackGroupMembers, serializeTrack, serializeTrackGroup, updateTrackBpm, updateTrackMetadata } from '@/lib/db';
 import { getRecommendedNextTracks, type RecommendationIntent } from '@/lib/analyzer';
 import { resolveWorkingPython } from '@/lib/scan';
 
@@ -24,18 +24,21 @@ export async function GET(
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
 
-  const allTracks = await getAllTracks();
+  const allTracks = await getAllTrackRows();
+  const groupedTracks = aggregateTracks(allTracks);
+  const trackGroup = await getTrackGroupMembers(track.id);
+  const groupedTrack = trackGroup[0];
   const rawIntent = request.nextUrl.searchParams.get('intent');
   const intent: RecommendationIntent = rawIntent === 'up' || rawIntent === 'down' || rawIntent === 'same' ? rawIntent : 'safe';
   const recommendations = getRecommendedNextTracks(
-    track,
-    allTracks,
-    [track.id],
+    groupedTrack,
+    groupedTracks.map((group) => group[0]),
+    [groupedTrack.id],
     intent,
   ).slice(0, 50);
 
   return NextResponse.json({
-    track: serializeTrack(track),
+    track: serializeTrackGroup(trackGroup),
     next_tracks: recommendations.map(({ track: t, reason, score }) => ({
       ...serializeTrack(t as Parameters<typeof serializeTrack>[0], { includeEmbeddedArtwork: false }),
       reason,
@@ -55,11 +58,13 @@ export async function PATCH(
   const body = await request.json();
   const currentTrack = await getTrackById(trackId);
   if (!currentTrack) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  const trackGroup = await getTrackGroupMembers(trackId);
+  const groupIds = trackGroup.map((track) => track.id);
 
   if (body.bpm !== undefined) {
     const bpm = parseFloat(body.bpm);
     if (isNaN(bpm) || bpm <= 0) return NextResponse.json({ error: 'invalid bpm' }, { status: 400 });
-    await updateTrackBpm(trackId, bpm);
+    await Promise.all(groupIds.map((id) => updateTrackBpm(id, bpm)));
   }
 
   const shouldWriteFileMetadata = Boolean(
@@ -70,27 +75,34 @@ export async function PATCH(
     body.custom_tags !== undefined,
   );
 
-  if (shouldWriteFileMetadata && currentTrack.path && String(currentTrack.path).toLowerCase().endsWith('.mp3')) {
+  if (shouldWriteFileMetadata) {
     try {
       const python = await resolveWorkingPython();
-      const args = [
-        '-m',
-        'dj_assist.cli',
-        'write-tags',
-        currentTrack.path,
-      ];
-      if (body.artist !== undefined) args.push('--artist', String(body.artist ?? ''));
-      if (body.title !== undefined) args.push('--title', String(body.title ?? ''));
-      if (body.album !== undefined) args.push('--album', String(body.album ?? ''));
-      if (body.key !== undefined) args.push('--key', String(body.key ?? ''));
-      if (body.custom_tags !== undefined) {
-        const tags = Array.isArray(body.custom_tags) ? body.custom_tags.map((item: unknown) => String(item).trim()).filter(Boolean) : [];
-        args.push('--tags', tags.join(', '));
+      const writablePaths = [...new Set(
+        trackGroup
+          .map((track) => String(track.path ?? '').trim())
+          .filter((path) => path && !path.startsWith('gdrive:') && path.toLowerCase().endsWith('.mp3')),
+      )];
+      for (const writablePath of writablePaths) {
+        const args = [
+          '-m',
+          'dj_assist.cli',
+          'write-tags',
+          writablePath,
+        ];
+        if (body.artist !== undefined) args.push('--artist', String(body.artist ?? ''));
+        if (body.title !== undefined) args.push('--title', String(body.title ?? ''));
+        if (body.album !== undefined) args.push('--album', String(body.album ?? ''));
+        if (body.key !== undefined) args.push('--key', String(body.key ?? ''));
+        if (body.custom_tags !== undefined) {
+          const tags = Array.isArray(body.custom_tags) ? body.custom_tags.map((item: unknown) => String(item).trim()).filter(Boolean) : [];
+          args.push('--tags', tags.join(', '));
+        }
+        await execFileAsync(python, args, {
+          cwd: process.cwd(),
+          env: process.env,
+        });
       }
-      await execFileAsync(python, args, {
-        cwd: process.cwd(),
-        env: process.env,
-      });
     } catch (error) {
       const message =
         error instanceof Error
@@ -100,8 +112,13 @@ export async function PATCH(
     }
   }
 
-  if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined || body.album_art_url !== undefined || body.album_art_source !== undefined || body.album_art_confidence !== undefined || body.album_art_review_status !== undefined || body.album_art_review_notes !== undefined) {
-    await updateTrackMetadata(trackId, {
+  if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined || body.album_art_url !== undefined || body.album_art_source !== undefined || body.album_art_confidence !== undefined || body.album_art_review_status !== undefined || body.album_art_review_notes !== undefined || body.source_preference !== undefined) {
+    const sourcePreference = body.source_preference === 'local' || body.source_preference === 'google_drive'
+      ? body.source_preference
+      : body.source_preference === null || body.source_preference === ''
+        ? null
+        : undefined;
+    const patch = {
       artist: body.artist,
       title: body.title,
       album: body.album,
@@ -117,9 +134,11 @@ export async function PATCH(
       album_art_confidence: body.album_art_confidence !== undefined ? Number(body.album_art_confidence ?? 0) : undefined,
       album_art_review_status: body.album_art_review_status !== undefined ? String(body.album_art_review_status ?? '') : undefined,
       album_art_review_notes: body.album_art_review_notes !== undefined ? String(body.album_art_review_notes ?? '') : undefined,
-    });
+      source_preference: sourcePreference,
+    };
+    await Promise.all(groupIds.map((id) => updateTrackMetadata(id, patch)));
   }
 
-  const track = await getTrackById(trackId);
-  return NextResponse.json({ track: serializeTrack(track!) });
+  const refreshedGroup = await getTrackGroupMembers(trackId);
+  return NextResponse.json({ track: serializeTrackGroup(refreshedGroup) });
 }
