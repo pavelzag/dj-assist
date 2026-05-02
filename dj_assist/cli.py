@@ -316,8 +316,9 @@ def analyze_file(file_path: Path, bpm_lookup: str, auto_double: bool) -> None:
 
 @main.command(name="inspect-file")
 @click.argument("file_path", type=click.Path(dir_okay=False, path_type=Path))
-def inspect_file(file_path: Path) -> None:
-    click.echo(json.dumps(extract_metadata(str(file_path))))
+@click.option("--original-name", default=None, help="Original filename to use for metadata fallback instead of the cached path.")
+def inspect_file(file_path: Path, original_name: str | None) -> None:
+    click.echo(json.dumps(extract_metadata(str(file_path), original_name=original_name)))
 
 
 @main.command()

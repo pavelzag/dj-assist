@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
           },
         );
         const localFile = await ensureLocalGoogleDriveTrackFile(fileId);
-        const metadata = await readLocalAudioMetadata(localFile.localPath);
+        const metadata = await readLocalAudioMetadata(localFile.localPath, localFile.name);
         await updateGoogleDriveTrackLocalMetadata(fileId, {
           title: metadata.title,
           artist: metadata.artist,

@@ -736,7 +736,7 @@ def _album_group_key(artist: Optional[str], album: Optional[str]) -> str:
     return f"{normalized_artist}::{normalized_album}"
 
 
-def extract_metadata(filepath: str) -> dict:
+def extract_metadata(filepath: str, original_name: Optional[str] = None) -> dict:
     metadata = {
         "title": None,
         "artist": None,
@@ -782,11 +782,14 @@ def extract_metadata(filepath: str) -> dict:
     except Exception:
         pass
 
-    filename_metadata = _parse_filename_metadata(filepath)
+    # Use original_name (e.g. the Google Drive filename) for filename fallback so that
+    # cache-path prefixes like fileId don't pollute artist/title.
+    fallback_path = original_name if original_name else filepath
+    filename_metadata = _parse_filename_metadata(fallback_path)
     if not metadata["artist"]:
         metadata["artist"] = _normalize_artist(filename_metadata["artist"])
     if not metadata["title"]:
-        metadata["title"] = filename_metadata["title"] or Path(filepath).stem
+        metadata["title"] = filename_metadata["title"] or Path(fallback_path).stem
 
     metadata["artist"] = _normalize_artist(metadata["artist"])
     cleaned_title = _clean_title(metadata["artist"], metadata["title"])

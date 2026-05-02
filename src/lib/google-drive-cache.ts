@@ -132,11 +132,15 @@ export type LocalAudioMetadata = {
   embedded_album_art_mime: string;
 };
 
-export async function readLocalAudioMetadata(filePath: string): Promise<LocalAudioMetadata> {
+export async function readLocalAudioMetadata(filePath: string, originalName?: string): Promise<LocalAudioMetadata> {
   const python = await resolveWorkingPython();
+  const args = ['-m', 'dj_assist.cli', 'inspect-file', filePath];
+  if (originalName) {
+    args.push('--original-name', originalName);
+  }
   const { stdout } = await execFileAsync(
     python,
-    ['-m', 'dj_assist.cli', 'inspect-file', filePath],
+    args,
     {
       cwd: process.cwd(),
       env: process.env,

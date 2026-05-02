@@ -5,6 +5,7 @@ import { NextRequest } from 'next/server';
 import { createReadStream, existsSync, statSync } from 'fs';
 import path from 'path';
 import { getTrackById } from '@/lib/db';
+import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
 
 export const runtime = 'nodejs';
 
@@ -60,14 +61,19 @@ export async function GET(
   if (!track?.path) {
     return Response.json({ error: 'not found' }, { status: 404 });
   }
+  let filePath: string;
   if (String(track.path).startsWith('gdrive:')) {
-    return Response.json(
-      { error: 'Google Drive tracks do not have a local stream path yet.' },
-      { status: 400 },
-    );
+    const fileId = String(track.path).slice('gdrive:'.length);
+    try {
+      const localFile = await ensureLocalGoogleDriveTrackFile(fileId);
+      filePath = localFile.localPath;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: `Google Drive download failed: ${message}` }, { status: 502 });
+    }
+  } else {
+    filePath = resolveTrackPath(track.path);
   }
-
-  const filePath = resolveTrackPath(track.path);
   if (!existsSync(filePath)) {
     return Response.json({ error: 'file missing' }, { status: 404 });
   }
