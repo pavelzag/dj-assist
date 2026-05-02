@@ -6,6 +6,7 @@ import {
 
 type CollectionTrackReference = {
   position: number;
+  client_entry_id?: string;
   local_track_id: number;
   file_hash: string | null;
   path: string | null;
@@ -19,6 +20,8 @@ type CollectionSnapshot = {
   local_collection_id: number;
   name: string;
   created_at: string | null;
+  base_revision?: number | null;
+  base_updated_at?: string | null;
   deleted_at?: string;
   tracks: CollectionTrackReference[];
 };
@@ -31,6 +34,8 @@ export type ServerCollectionSummary = {
   name: string;
   track_count: number;
   created_at: string | null;
+  revision?: number | null;
+  updated_at?: string | null;
   synced_at: string | null;
 };
 
@@ -52,10 +57,37 @@ export type ServerCollectionTrack = {
   album_art_url: string | null;
   custom_tags: string[] | unknown;
   updated_at: string | null;
+  client_entry_id?: string | null;
   spotify_id?: string | null;
   file_hash?: string | null;
   path?: string | null;
 };
+
+type SyncedCollectionInfo = {
+  id?: string | null;
+  client_id?: string | null;
+  client_collection_id?: string | null;
+  revision?: number | null;
+  updated_at?: string | null;
+} | null;
+
+export type CollectionSyncResult = {
+  ok: true;
+  collection?: SyncedCollectionInfo;
+} | {
+  ok: false;
+  skipped: 'server disabled' | 'server url missing';
+};
+
+export class CollectionSyncConflictError extends Error {
+  latestCollection: Record<string, unknown> | null;
+
+  constructor(message: string, latestCollection: Record<string, unknown> | null = null) {
+    super(message);
+    this.name = 'CollectionSyncConflictError';
+    this.latestCollection = latestCollection;
+  }
+}
 
 function buildServerHeaders(googleIdToken: string, googleAccessToken: string) {
   const headers = new Headers({
@@ -72,7 +104,7 @@ function buildServerHeaders(googleIdToken: string, googleAccessToken: string) {
   return headers;
 }
 
-async function postCollectionPayload(payload: Record<string, unknown>) {
+async function postCollectionPayload(payload: Record<string, unknown>): Promise<CollectionSyncResult> {
   const server = await effectiveServerSettings();
   if (!server.enabled) return { ok: false, skipped: 'server disabled' as const };
 
@@ -96,12 +128,44 @@ async function postCollectionPayload(payload: Record<string, unknown>) {
     signal: AbortSignal.timeout(5_000),
   });
 
+  if (response.status === 409) {
+    let conflictPayload: Record<string, unknown> | null = null;
+    try {
+      conflictPayload = await response.json() as Record<string, unknown>;
+    } catch {
+      conflictPayload = null;
+    }
+    throw new CollectionSyncConflictError(
+      'collection sync conflict',
+      (
+        (conflictPayload?.collection as Record<string, unknown> | undefined)
+        ?? (conflictPayload?.latest_collection as Record<string, unknown> | undefined)
+        ?? conflictPayload
+        ?? null
+      ),
+    );
+  }
+
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 300).trim();
     throw new Error(`collection sync failed status=${response.status}${detail ? ` detail=${detail}` : ''}`);
   }
 
-  return { ok: true as const };
+  let resultPayload: Record<string, unknown> | null = null;
+  try {
+    resultPayload = await response.json() as Record<string, unknown>;
+  } catch {
+    resultPayload = null;
+  }
+
+  return {
+    ok: true,
+    collection: (
+      (resultPayload?.collection as SyncedCollectionInfo | undefined)
+      ?? (resultPayload?.synced_collection as SyncedCollectionInfo | undefined)
+      ?? null
+    ),
+  };
 }
 
 async function getServerBaseUrl() {
@@ -119,15 +183,8 @@ async function getServerAuthHeaders() {
   return buildServerHeaders(googleIdToken, googleAccessToken);
 }
 
-export async function syncCollectionSnapshot(snapshot: CollectionSnapshot): Promise<void> {
-  try {
-    await postCollectionPayload({ collections: [snapshot] });
-  } catch (error) {
-    console.warn('[dj-assist] collection sync snapshot failed', {
-      collectionId: snapshot.local_collection_id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+export async function syncCollectionSnapshot(snapshot: CollectionSnapshot): Promise<CollectionSyncResult> {
+  return postCollectionPayload({ collections: [snapshot] });
 }
 
 export async function syncCollectionDeletion(input: {
@@ -137,28 +194,25 @@ export async function syncCollectionDeletion(input: {
   serverCollectionId?: string | null;
   sourceClientId?: string | null;
   sourceClientCollectionId?: string | null;
+  baseRevision?: number | null;
+  baseUpdatedAt?: string | null;
 }): Promise<void> {
-  try {
-    await postCollectionPayload({
-      collections: [
-        {
-          server_collection_id: input.serverCollectionId ?? undefined,
-          source_client_id: input.sourceClientId ?? undefined,
-          client_collection_id: input.sourceClientCollectionId ?? `set:${input.localCollectionId}`,
-          local_collection_id: input.localCollectionId,
-          name: input.name,
-          created_at: input.createdAt,
-          deleted_at: new Date().toISOString(),
-          tracks: [],
-        },
-      ],
-    });
-  } catch (error) {
-    console.warn('[dj-assist] collection sync delete failed', {
-      collectionId: input.localCollectionId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  await postCollectionPayload({
+    collections: [
+      {
+        server_collection_id: input.serverCollectionId ?? undefined,
+        source_client_id: input.sourceClientId ?? undefined,
+        client_collection_id: input.sourceClientCollectionId ?? `set:${input.localCollectionId}`,
+        local_collection_id: input.localCollectionId,
+        name: input.name,
+        created_at: input.createdAt,
+        base_revision: input.baseRevision ?? null,
+        base_updated_at: input.baseUpdatedAt ?? null,
+        deleted_at: new Date().toISOString(),
+        tracks: [],
+      },
+    ],
+  });
 }
 
 export async function listCollectionsFromServer(): Promise<ServerCollectionSummary[]> {

@@ -4595,20 +4595,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             return;
           }
           tracksDiv.innerHTML = set.tracks.map((t: Record<string, unknown>) => `
-            <div class="set-track-row" data-set-id="${setId}" data-position="${t.position}">
+            <div class="set-track-row" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}">
               <div>
                 <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(t.artist ?? 'Unknown')}">${esc(t.artist ?? 'Unknown')}</button> - ${esc(t.title ?? 'Untitled')}</strong>
                 <span>${albumNameFor(t) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(t))}" data-nav-artist="${esc(t.artist ?? '')}">${esc(albumNameFor(t))}</button> · ` : ''}${t.bpm ? displayBpm(t.bpm, t.id as number) + ' BPM' : '--'} · ${esc(t.key ?? '--')}</span>
               </div>
-              <button class="icon-btn danger remove-track-btn" data-set-id="${setId}" data-position="${t.position}" title="Remove">✕</button>
+              <button class="icon-btn danger remove-track-btn" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}" title="Remove">✕</button>
             </div>
           `).join('') + `<div class="set-suggestions" id="set-suggestions-${setId}"><div class="scan-log-entry info">Loading intelligent suggestions…</div></div>`;
           bindLibraryNavLinks(tracksDiv);
           tracksDiv.querySelectorAll('.remove-track-btn').forEach((btn) => {
             btn.addEventListener('click', async () => {
               const sid = parseInt((btn as HTMLElement).dataset.setId!, 10);
-              const pos = parseInt((btn as HTMLElement).dataset.position!, 10);
-              await fetch(`/api/sets/${sid}/tracks/${pos}`, { method: 'DELETE' });
+              const entryId = String((btn as HTMLElement).dataset.entryId ?? '').trim();
+              if (!entryId) return;
+              await fetch(`/api/sets/${sid}/tracks/${encodeURIComponent(entryId)}`, { method: 'DELETE' });
               renderSetsPanel();
             });
           });

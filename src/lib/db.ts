@@ -1,8 +1,10 @@
 import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  CollectionSyncConflictError,
   getCollectionTracksFromServer,
   listCollectionsFromServer,
   syncCollectionDeletion,
@@ -160,6 +162,8 @@ function ensureSchema(): void {
       server_collection_id TEXT,
       server_client_id TEXT,
       server_client_collection_id TEXT,
+      server_revision INTEGER,
+      server_updated_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -167,6 +171,7 @@ function ensureSchema(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       set_id INTEGER NOT NULL REFERENCES sets(id) ON DELETE CASCADE,
       track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      client_entry_id TEXT,
       position INTEGER NOT NULL,
       UNIQUE(set_id, position)
     );
@@ -240,6 +245,8 @@ function ensureSchema(): void {
     ['server_collection_id', 'TEXT'],
     ['server_client_id', 'TEXT'],
     ['server_client_collection_id', 'TEXT'],
+    ['server_revision', 'INTEGER'],
+    ['server_updated_at', 'TEXT'],
   ] as const;
   const setExisting = new Set(
     db.prepare("SELECT name FROM pragma_table_info('sets')").all().map((row) => String((row as Record<string, unknown>).name)),
@@ -247,7 +254,13 @@ function ensureSchema(): void {
   for (const [name, definition] of setColumns) {
     if (!setExisting.has(name)) db.exec(`ALTER TABLE sets ADD COLUMN ${name} ${definition}`);
   }
+  const setTrackExisting = new Set(
+    db.prepare("SELECT name FROM pragma_table_info('set_tracks')").all().map((row) => String((row as Record<string, unknown>).name)),
+  );
+  if (!setTrackExisting.has('client_entry_id')) db.exec('ALTER TABLE set_tracks ADD COLUMN client_entry_id TEXT');
+  db.exec("UPDATE set_tracks SET client_entry_id = lower(hex(randomblob(16))) WHERE client_entry_id IS NULL OR trim(client_entry_id) = ''");
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS sets_server_collection_idx ON sets(server_collection_id) WHERE server_collection_id IS NOT NULL');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS set_tracks_client_entry_idx ON set_tracks(client_entry_id) WHERE client_entry_id IS NOT NULL');
 
   schemaEnsured = true;
 }
@@ -901,14 +914,24 @@ export async function bulkTrackAction(input: {
     const tracks = await getTracksByIds(ids);
     const existingTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
     const missingTrackIds = ids.filter((id) => !existingTrackIds.has(id));
-    let position = Number(queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', input.setId)?.count ?? 0);
-    transaction(() => {
-      for (const track of tracks) {
-        position += 1;
-        execute('INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)', input.setId as number, track.id, position);
-      }
-    });
-    if (tracks.length) await syncSetToServer(input.setId);
+    if (tracks.length) {
+      const setId = input.setId;
+      await mutateSetWithRebase(setId, () => {
+        let position = Number(queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', setId)?.count ?? 0);
+        transaction(() => {
+          for (const track of tracks) {
+            position += 1;
+            execute(
+              'INSERT INTO set_tracks (set_id, track_id, client_entry_id, position) VALUES (?, ?, ?, ?)',
+              setId,
+              track.id,
+              randomUUID(),
+              position,
+            );
+          }
+        });
+      });
+    }
     return {
       updated: tracks.length,
       skipped: missingTrackIds.length,
@@ -958,6 +981,8 @@ export interface TrackSet {
   server_collection_id?: string | null;
   server_client_id?: string | null;
   server_client_collection_id?: string | null;
+  server_revision?: number | null;
+  server_updated_at?: Date | null;
   created_at: Date | null;
 }
 
@@ -967,7 +992,7 @@ export interface SetSummary extends TrackSet {
 }
 
 export interface SetDetail extends TrackSet {
-  tracks: (Track & { position: number })[];
+  tracks: (Track & { position: number; client_entry_id: string | null })[];
 }
 
 function mapSet(row: Record<string, unknown>): TrackSet {
@@ -977,6 +1002,8 @@ function mapSet(row: Record<string, unknown>): TrackSet {
     server_collection_id: row.server_collection_id == null ? null : String(row.server_collection_id),
     server_client_id: row.server_client_id == null ? null : String(row.server_client_id),
     server_client_collection_id: row.server_client_collection_id == null ? null : String(row.server_client_collection_id),
+    server_revision: row.server_revision == null ? null : Number(row.server_revision),
+    server_updated_at: parseDate(row.server_updated_at),
     created_at: parseDate(row.created_at),
   };
 }
@@ -989,8 +1016,11 @@ function serializeSetForServer(set: SetDetail) {
     local_collection_id: set.id,
     name: set.name,
     created_at: set.created_at?.toISOString() ?? null,
+    base_revision: set.server_revision ?? null,
+    base_updated_at: set.server_updated_at?.toISOString() ?? null,
     tracks: set.tracks.map((track) => ({
       position: track.position,
+      client_entry_id: track.client_entry_id ?? undefined,
       local_track_id: track.id,
       file_hash: track.file_hash ?? null,
       path: track.path ?? null,
@@ -999,32 +1029,190 @@ function serializeSetForServer(set: SetDetail) {
   };
 }
 
+function updateLocalSetSyncMetadata(
+  setId: number,
+  patch: {
+    server_collection_id?: string | null;
+    server_client_id?: string | null;
+    server_client_collection_id?: string | null;
+    server_revision?: number | null;
+    server_updated_at?: string | null;
+  },
+): void {
+  execute(
+    `UPDATE sets
+     SET server_collection_id = COALESCE(?, server_collection_id),
+         server_client_id = COALESCE(?, server_client_id),
+         server_client_collection_id = COALESCE(?, server_client_collection_id),
+         server_revision = COALESCE(?, server_revision),
+         server_updated_at = COALESCE(?, server_updated_at)
+     WHERE id = ?`,
+    patch.server_collection_id ?? null,
+    patch.server_client_id ?? null,
+    patch.server_client_collection_id ?? null,
+    patch.server_revision ?? null,
+    patch.server_updated_at ?? null,
+    setId,
+  );
+}
+
+function applyRemoteCollectionToLocalSet(
+  localSetId: number,
+  summary: {
+    id?: string | null;
+    client_id?: string | null;
+    client_collection_id?: string | null;
+    name?: string | null;
+    created_at?: string | null;
+    revision?: number | null;
+    updated_at?: string | null;
+  },
+  remoteTracks: Record<string, unknown>[],
+  byFileHash: Map<string, number>,
+  bySpotifyId: Map<string, number>,
+  byPath: Map<string, number>,
+): void {
+  transaction(() => {
+    execute(
+      `UPDATE sets
+       SET name = ?,
+           server_collection_id = ?,
+           server_client_id = ?,
+           server_client_collection_id = ?,
+           server_revision = ?,
+           server_updated_at = ?,
+           created_at = COALESCE(?, created_at)
+       WHERE id = ?`,
+      String(summary.name ?? ''),
+      summary.id ?? null,
+      summary.client_id ?? null,
+      summary.client_collection_id ?? null,
+      summary.revision ?? null,
+      summary.updated_at ?? null,
+      summary.created_at ?? null,
+      localSetId,
+    );
+    execute('DELETE FROM set_tracks WHERE set_id = ?', localSetId);
+
+    let position = 1;
+    for (const track of remoteTracks) {
+      const localTrackId = matchLocalTrackIdForServerTrack(track, byFileHash, bySpotifyId, byPath);
+      if (!localTrackId) continue;
+      execute(
+        'INSERT INTO set_tracks (set_id, track_id, client_entry_id, position) VALUES (?, ?, ?, ?)',
+        localSetId,
+        localTrackId,
+        String(track.client_entry_id ?? '').trim() || randomUUID(),
+        position,
+      );
+      position += 1;
+    }
+  });
+}
+
+function buildLocalTrackIndexes() {
+  const localTracks = queryAll<Record<string, unknown>>('SELECT id, file_hash, spotify_id, path FROM tracks');
+  const byFileHash = new Map<string, number>();
+  const bySpotifyId = new Map<string, number>();
+  const byPath = new Map<string, number>();
+  for (const row of localTracks) {
+    const trackId = Number(row.id ?? 0);
+    if (!trackId) continue;
+    const fileHash = String(row.file_hash ?? '').trim();
+    const spotifyId = String(row.spotify_id ?? '').trim();
+    const pathKey = normalizePath(row.path);
+    if (fileHash && !byFileHash.has(fileHash)) byFileHash.set(fileHash, trackId);
+    if (spotifyId && !bySpotifyId.has(spotifyId)) bySpotifyId.set(spotifyId, trackId);
+    if (pathKey && !byPath.has(pathKey)) byPath.set(pathKey, trackId);
+  }
+  return { byFileHash, bySpotifyId, byPath };
+}
+
+async function syncSingleSetFromServer(setId: number): Promise<SetDetail | null> {
+  const set = await getSetById(setId);
+  if (!set) return null;
+
+  let collections: Awaited<ReturnType<typeof listCollectionsFromServer>>;
+  try {
+    collections = await listCollectionsFromServer();
+  } catch {
+    return set;
+  }
+  const remote = collections.find((collection) => (
+    (set.server_collection_id && collection.id === set.server_collection_id)
+    || (
+      set.server_client_id
+      && set.server_client_collection_id
+      && collection.client_id === set.server_client_id
+      && collection.client_collection_id === set.server_client_collection_id
+    )
+  ));
+  if (!remote) return set;
+
+  let remoteTracks: Awaited<ReturnType<typeof getCollectionTracksFromServer>>;
+  try {
+    remoteTracks = await getCollectionTracksFromServer(remote.id);
+  } catch {
+    return set;
+  }
+  const { byFileHash, bySpotifyId, byPath } = buildLocalTrackIndexes();
+  applyRemoteCollectionToLocalSet(setId, remote, remoteTracks, byFileHash, bySpotifyId, byPath);
+  return getSetById(setId);
+}
+
 async function syncSetToServer(setId: number): Promise<void> {
   const set = await getSetById(setId);
   if (!set) return;
-  await syncCollectionSnapshot(serializeSetForServer(set));
+  const result = await syncCollectionSnapshot(serializeSetForServer(set));
+  if (!result.ok) return;
+  const collection = result.collection;
+  if (!collection) return;
+  updateLocalSetSyncMetadata(setId, {
+    server_collection_id: collection.id ?? null,
+    server_client_id: collection.client_id ?? null,
+    server_client_collection_id: collection.client_collection_id ?? null,
+    server_revision: collection.revision ?? null,
+    server_updated_at: collection.updated_at ?? null,
+  });
+}
+
+async function mutateSetWithRebase(
+  setId: number,
+  applyMutation: () => void,
+): Promise<void> {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await syncSingleSetFromServer(setId);
+    applyMutation();
+    try {
+      await syncSetToServer(setId);
+      return;
+    } catch (error) {
+      if (!(error instanceof CollectionSyncConflictError) || attempt === maxAttempts) throw error;
+    }
+  }
 }
 
 export async function getAllSets(): Promise<SetSummary[]> {
   return queryAll<Record<string, unknown>>(
-    `SELECT s.id, s.name, s.created_at,
+    `SELECT s.id, s.name, s.server_collection_id, s.server_client_id, s.server_client_collection_id,
+            s.server_revision, s.server_updated_at, s.created_at,
             COUNT(st.id) AS track_count,
             COALESCE(SUM(t.duration), 0) AS total_duration
      FROM sets s
      LEFT JOIN set_tracks st ON st.set_id = s.id
      LEFT JOIN tracks t ON t.id = st.track_id
      GROUP BY s.id
-     ORDER BY datetime(s.created_at) DESC`,
+      ORDER BY datetime(s.created_at) DESC`,
   ).map((row) => ({
-    id: Number(row.id),
-    name: String(row.name ?? ''),
-    created_at: parseDate(row.created_at),
+    ...mapSet(row),
     track_count: Number(row.track_count ?? 0),
     total_duration: Number(row.total_duration ?? 0),
   }));
 }
 
 export async function createSet(name: string): Promise<TrackSet> {
+  await syncSetsFromServer().catch(() => ({ collections: 0, imported: 0, updated: 0, matched_tracks: 0 }));
   const normalizedName = name.trim();
   const existing = queryOne<Record<string, unknown>>(
     'SELECT * FROM sets WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1',
@@ -1041,34 +1229,51 @@ export async function createSet(name: string): Promise<TrackSet> {
 }
 
 export async function deleteSet(id: number): Promise<void> {
-  const existing = await getSetById(id);
-  transaction(() => {
-    execute('DELETE FROM set_tracks WHERE set_id = ?', id);
-    execute('DELETE FROM sets WHERE id = ?', id);
-  });
-  if (existing) {
-    await syncCollectionDeletion({
-      localCollectionId: existing.id,
+  let existing = await syncSingleSetFromServer(id);
+  if (!existing) existing = await getSetById(id);
+  if (!existing) return;
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await syncCollectionDeletion({
+        localCollectionId: existing.id,
       name: existing.name,
       createdAt: existing.created_at?.toISOString() ?? null,
       serverCollectionId: existing.server_collection_id ?? null,
       sourceClientId: existing.server_client_id ?? null,
       sourceClientCollectionId: existing.server_client_collection_id ?? null,
+      baseRevision: existing.server_revision ?? null,
+      baseUpdatedAt: existing.server_updated_at?.toISOString() ?? null,
     });
+      break;
+    } catch (error) {
+      if (!(error instanceof CollectionSyncConflictError) || attempt === maxAttempts) throw error;
+      const refreshed = await syncSingleSetFromServer(id);
+      if (!refreshed) break;
+      existing = refreshed;
+    }
   }
+  transaction(() => {
+    execute('DELETE FROM set_tracks WHERE set_id = ?', id);
+    execute('DELETE FROM sets WHERE id = ?', id);
+  });
 }
 
 export async function getSetById(id: number): Promise<SetDetail | null> {
   const set = queryOne<Record<string, unknown>>('SELECT * FROM sets WHERE id = ?', id);
   if (!set) return null;
   const tracks = queryAll<Record<string, unknown>>(
-    `SELECT t.*, st.position
+    `SELECT t.*, st.position, st.client_entry_id
      FROM tracks t
      JOIN set_tracks st ON st.track_id = t.id
      WHERE st.set_id = ?
      ORDER BY st.position`,
     id,
-  ).map((row) => ({ ...mapTrack(row), position: Number(row.position ?? 0) }));
+  ).map((row) => ({
+    ...mapTrack(row),
+    position: Number(row.position ?? 0),
+    client_entry_id: row.client_entry_id == null ? null : String(row.client_entry_id),
+  }));
   return { ...mapSet(set), tracks };
 }
 
@@ -1077,18 +1282,27 @@ export async function addTrackToSet(setId: number, trackId: number): Promise<voi
   if (!setExists) throw new Error('Playlist not found.');
   const trackExists = queryOne<Record<string, unknown>>('SELECT id FROM tracks WHERE id = ? LIMIT 1', trackId);
   if (!trackExists) throw new Error('Track not found.');
-  const countRow = queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', setId);
-  const position = Number(countRow?.count ?? 0) + 1;
-  execute('INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)', setId, trackId, position);
-  await syncSetToServer(setId);
+  await mutateSetWithRebase(setId, () => {
+    const countRow = queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', setId);
+    const position = Number(countRow?.count ?? 0) + 1;
+    execute('INSERT INTO set_tracks (set_id, track_id, client_entry_id, position) VALUES (?, ?, ?, ?)', setId, trackId, randomUUID(), position);
+  });
 }
 
-export async function removeTrackFromSet(setId: number, position: number): Promise<void> {
-  transaction(() => {
-    execute('DELETE FROM set_tracks WHERE set_id = ? AND position = ?', setId, position);
-    execute('UPDATE set_tracks SET position = position - 1 WHERE set_id = ? AND position > ?', setId, position);
+export async function removeTrackFromSet(setId: number, clientEntryId: string): Promise<void> {
+  await mutateSetWithRebase(setId, () => {
+    const row = queryOne<Record<string, unknown>>(
+      'SELECT position FROM set_tracks WHERE set_id = ? AND client_entry_id = ? LIMIT 1',
+      setId,
+      clientEntryId,
+    );
+    if (!row) throw new Error('Playlist entry not found.');
+    const position = Number(row.position ?? 0);
+    transaction(() => {
+      execute('DELETE FROM set_tracks WHERE set_id = ? AND client_entry_id = ?', setId, clientEntryId);
+      execute('UPDATE set_tracks SET position = position - 1 WHERE set_id = ? AND position > ?', setId, position);
+    });
   });
-  await syncSetToServer(setId);
 }
 
 function normalizePath(value: unknown): string {
@@ -1124,20 +1338,7 @@ export async function syncSetsFromServer(): Promise<{
     return { collections: 0, imported: 0, updated: 0, matched_tracks: 0 };
   }
 
-  const localTracks = queryAll<Record<string, unknown>>('SELECT id, file_hash, spotify_id, path FROM tracks');
-  const byFileHash = new Map<string, number>();
-  const bySpotifyId = new Map<string, number>();
-  const byPath = new Map<string, number>();
-  for (const row of localTracks) {
-    const trackId = Number(row.id ?? 0);
-    if (!trackId) continue;
-    const fileHash = String(row.file_hash ?? '').trim();
-    const spotifyId = String(row.spotify_id ?? '').trim();
-    const pathKey = normalizePath(row.path);
-    if (fileHash && !byFileHash.has(fileHash)) byFileHash.set(fileHash, trackId);
-    if (spotifyId && !bySpotifyId.has(spotifyId)) bySpotifyId.set(spotifyId, trackId);
-    if (pathKey && !byPath.has(pathKey)) byPath.set(pathKey, trackId);
-  }
+  const { byFileHash, bySpotifyId, byPath } = buildLocalTrackIndexes();
 
   let imported = 0;
   let updated = 0;
@@ -1169,23 +1370,30 @@ export async function syncSetsFromServer(): Promise<{
            SET name = ?,
                server_collection_id = ?,
                server_client_id = ?,
-               server_client_collection_id = ?
+               server_client_collection_id = ?,
+               server_revision = ?,
+               server_updated_at = ?
            WHERE id = ?`,
           collection.name,
           collection.id,
           collection.client_id,
           collection.client_collection_id,
+          collection.revision ?? null,
+          collection.updated_at ?? collection.synced_at ?? null,
           setId,
         );
         execute('DELETE FROM set_tracks WHERE set_id = ?', setId);
       } else {
         execute(
-          `INSERT INTO sets (name, server_collection_id, server_client_id, server_client_collection_id)
-           VALUES (?, ?, ?, ?)`,
+          `INSERT INTO sets (name, server_collection_id, server_client_id, server_client_collection_id, server_revision, server_updated_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))`,
           collection.name,
           collection.id,
           collection.client_id,
           collection.client_collection_id,
+          collection.revision ?? null,
+          collection.updated_at ?? collection.synced_at ?? null,
+          collection.created_at ?? null,
         );
         const row = queryOne<Record<string, unknown>>('SELECT id FROM sets WHERE id = last_insert_rowid()');
         setId = Number(row?.id ?? 0);
@@ -1196,9 +1404,10 @@ export async function syncSetsFromServer(): Promise<{
         const localTrackId = matchLocalTrackIdForServerTrack(track, byFileHash, bySpotifyId, byPath);
         if (!localTrackId) continue;
         execute(
-          'INSERT INTO set_tracks (set_id, track_id, position) VALUES (?, ?, ?)',
+          'INSERT INTO set_tracks (set_id, track_id, client_entry_id, position) VALUES (?, ?, ?, ?)',
           setId,
           localTrackId,
+          String(track.client_entry_id ?? '').trim() || randomUUID(),
           position,
         );
         position += 1;

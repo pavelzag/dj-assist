@@ -7,7 +7,13 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string; position: string }> },
 ) {
-  const { id, position } = await params;
-  await removeTrackFromSet(parseInt(id, 10), parseInt(position, 10));
-  return NextResponse.json({ ok: true });
+  const { id, position: entryId } = await params;
+  try {
+    await removeTrackFromSet(parseInt(id, 10), entryId);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not remove track from playlist.';
+    const status = message.includes('not found') ? 404 : message.includes('conflict') ? 409 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
