@@ -113,6 +113,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       loadLibraryOnStartup: boolean;
       defaultListDensity: 'comfortable' | 'compact';
       collapseScanLog: boolean;
+      scanProgressToasts: boolean;
       listShowAlbum: boolean;
       listShowBitrate: boolean;
       listShowTags: boolean;
@@ -126,6 +127,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       loadLibraryOnStartup: true,
       defaultListDensity: 'comfortable',
       collapseScanLog: true,
+      scanProgressToasts: true,
       listShowAlbum: true,
       listShowBitrate: true,
       listShowTags: true,
@@ -204,6 +206,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let commandPaletteActiveIndex = 0;
     let currentRenderedList: Record<string, unknown>[] = [];
     let frozenTrackIdsDuringScan: number[] | null = null;
+    let googleDriveImportToastTimer: number | null = null;
+    let googleDriveImportToastSignature = '';
+    let localScanToastLastAt = 0;
+    let localScanToastLastPercentBucket = -1;
+    let localScanToastLastLabel = '';
     let listIsVirtualized = false;
     let listScrollRaf = 0;
     let activeKeyboardPane: 'list' | 'detail' = 'list';
@@ -267,6 +274,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           loadLibraryOnStartup: parsed.loadLibraryOnStartup !== false,
           defaultListDensity: parsed.defaultListDensity === 'compact' ? 'compact' : 'comfortable',
           collapseScanLog: parsed.collapseScanLog !== false,
+          scanProgressToasts: parsed.scanProgressToasts !== false,
           listShowAlbum: parsed.listShowAlbum !== false,
           listShowBitrate: parsed.listShowBitrate !== false,
           listShowTags: parsed.listShowTags !== false,
@@ -492,10 +500,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       message: string,
       tone: 'info' | 'success' | 'warning' | 'error' = 'info',
       action?: { label: string; onClick: () => void },
+      options: { toastKey?: string; autoHideMs?: number | null } = {},
     ) {
       if (!toastStack) return;
-      const toast = document.createElement('div');
+      const toastKey = String(options.toastKey ?? '').trim();
+      const existing = toastKey
+        ? toastStack.querySelector<HTMLElement>(`.toast[data-toast-key="${CSS.escape(toastKey)}"]`)
+        : null;
+      const toast = existing ?? document.createElement('div');
       toast.className = `toast ${tone}`;
+      if (toastKey) toast.dataset.toastKey = toastKey;
       if (action) {
         toast.innerHTML = `<span>${esc(message)}</span><button type="button" class="toast-action">${esc(action.label)}</button>`;
         toast.querySelector('.toast-action')?.addEventListener('click', (event) => {
@@ -506,14 +520,117 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       } else {
         toast.textContent = message;
       }
-      toastStack.appendChild(toast);
+      if (!existing) toastStack.appendChild(toast);
       requestAnimationFrame(() => toast.classList.add('visible'));
       const remove = () => {
         toast.classList.remove('visible');
         setTimeout(() => toast.remove(), 180);
       };
       toast.addEventListener('click', remove);
-      setTimeout(remove, 3400);
+      const priorTimer = Number(toast.dataset.timerId ?? 0);
+      if (priorTimer) window.clearTimeout(priorTimer);
+      const autoHideMs = options.autoHideMs === undefined ? 3400 : options.autoHideMs;
+      if (autoHideMs != null && autoHideMs > 0) {
+        const timerId = window.setTimeout(remove, autoHideMs);
+        toast.dataset.timerId = String(timerId);
+      } else {
+        delete toast.dataset.timerId;
+      }
+    }
+
+    function removeToastByKey(toastKey: string) {
+      if (!toastStack) return;
+      const toast = toastStack.querySelector<HTMLElement>(`.toast[data-toast-key="${CSS.escape(toastKey)}"]`);
+      if (!toast) return;
+      const priorTimer = Number(toast.dataset.timerId ?? 0);
+      if (priorTimer) window.clearTimeout(priorTimer);
+      toast.classList.remove('visible');
+      setTimeout(() => toast.remove(), 180);
+    }
+
+    function syncProgressToastPreference() {
+      if (preferences.scanProgressToasts) return;
+      removeToastByKey('local-scan-progress');
+      removeToastByKey('google-drive-import-progress');
+    }
+
+    function showProgressToast(
+      toastKey: 'local-scan-progress' | 'google-drive-import-progress',
+      message: string,
+      tone: 'info' | 'success' | 'warning' | 'error' = 'info',
+      done = false,
+    ) {
+      if (!preferences.scanProgressToasts) {
+        removeToastByKey(toastKey);
+        return;
+      }
+      showToast(message, tone, undefined, {
+        toastKey,
+        autoHideMs: done ? 2600 : null,
+      });
+    }
+
+    function maybeShowLocalScanProgressToast(current: number, total: number, label: string) {
+      if (!preferences.scanProgressToasts) return;
+      const now = Date.now();
+      const percentBucket = total > 0 ? Math.floor((Math.max(0, current) / Math.max(1, total)) * 20) : -1;
+      const normalizedLabel = String(label ?? '').trim();
+      const shouldUpdate = (
+        now - localScanToastLastAt >= 2500
+        || percentBucket !== localScanToastLastPercentBucket
+        || normalizedLabel !== localScanToastLastLabel
+      );
+      if (!shouldUpdate) return;
+      localScanToastLastAt = now;
+      localScanToastLastPercentBucket = percentBucket;
+      localScanToastLastLabel = normalizedLabel;
+      const progressLabel = total > 0
+        ? `Scanning collection ${current}/${total}${normalizedLabel ? ` · ${normalizedLabel}` : ''}`
+        : `Scanning collection${normalizedLabel ? ` · ${normalizedLabel}` : ''}`;
+      showProgressToast('local-scan-progress', progressLabel, 'info', false);
+    }
+
+    async function pollGoogleDriveImportProgressToast() {
+      if (!googleDriveImportBusy || !preferences.scanProgressToasts) return;
+      try {
+        const response = await fetch('/api/logs/client?limit=120');
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const entries = Array.isArray(payload.entries) ? payload.entries as Record<string, unknown>[] : [];
+        const latest = entries.find((entry) => String(entry.category ?? '') === 'google-drive-import');
+        if (!latest) return;
+        const signature = JSON.stringify([
+          String(latest.timestamp ?? ''),
+          String(latest.level ?? 'info'),
+          String(latest.message ?? ''),
+        ]);
+        if (signature === googleDriveImportToastSignature) return;
+        googleDriveImportToastSignature = signature;
+        const level = String(latest.level ?? 'info');
+        const tone = level === 'error' ? 'error' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'info';
+        showProgressToast('google-drive-import-progress', String(latest.message ?? 'Google Drive import in progress.'), tone, tone === 'success');
+      } catch {
+        // Ignore progress polling failures.
+      }
+    }
+
+    function stopGoogleDriveImportProgressToasts() {
+      if (googleDriveImportToastTimer) {
+        window.clearInterval(googleDriveImportToastTimer);
+        googleDriveImportToastTimer = null;
+      }
+      googleDriveImportToastSignature = '';
+      removeToastByKey('google-drive-import-progress');
+    }
+
+    function startGoogleDriveImportProgressToasts() {
+      if (!preferences.scanProgressToasts) return;
+      stopGoogleDriveImportProgressToasts();
+      showProgressToast('google-drive-import-progress', `Google Drive import started · ${selectedGoogleDriveFolderLabel()}`, 'info', false);
+      void pollGoogleDriveImportProgressToast();
+      googleDriveImportToastTimer = window.setInterval(() => {
+        void pollGoogleDriveImportProgressToast();
+      }, 2500);
     }
 
     function updateTapBpmUi() {
@@ -984,6 +1101,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function importGoogleDriveMetadata() {
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
+      startGoogleDriveImportProgressToasts();
       const button = document.getElementById('google-drive-import-btn') as HTMLButtonElement | null;
       if (button) {
         button.disabled = true;
@@ -1028,6 +1146,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           setGoogleDriveImportStatus(String(payload.error ?? 'Google Drive import failed.'), 'error');
           setScanStatus('Google Drive import failed', 'error');
           setScanProgress(0, 0, 'Google Drive import failed');
+          showProgressToast('google-drive-import-progress', `Google Drive import failed: ${String(payload.error ?? 'Unknown import error.')}`, 'error', true);
           appendScanLog(
             `Google Drive import failed: ${String(payload.error ?? 'Unknown import error.')}`,
             'error',
@@ -1051,6 +1170,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         );
         setScanStatus('Google Drive import complete', 'success');
         setScanProgress(scanned, scanned, selectedGoogleDriveFolderLabel());
+        showProgressToast('google-drive-import-progress', `Google Drive import complete: ${localImported} added, ${localUpdated} updated locally, ${imported} sent to server.`, 'success', true);
         await Promise.all([
           loadTracks(searchEl.value.trim()),
           loadLibraryOverview(),
@@ -1076,6 +1196,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
         setScanStatus('Google Drive import failed', 'error');
         setScanProgress(0, 0, 'Google Drive import failed');
+        showProgressToast('google-drive-import-progress', `Google Drive import failed: ${error instanceof Error ? error.message : String(error)}`, 'error', true);
         appendScanLog(
           `Google Drive import exception: ${error instanceof Error ? error.message : String(error)}`,
           'error',
@@ -1088,6 +1209,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         );
       } finally {
         googleDriveImportBusy = false;
+        if (googleDriveImportToastTimer) {
+          window.setTimeout(() => {
+            stopGoogleDriveImportProgressToasts();
+          }, 3000);
+        }
         if (button) {
           button.disabled = false;
           button.textContent = 'Import Google Drive Metadata';
@@ -5006,6 +5132,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <label class="preference-row"><input id="pref-autoplay-on-select" type="checkbox" ${preferences.autoplayOnSelect ? 'checked' : ''} /><span>Autoplay when selecting tracks</span></label>
               <label class="preference-row"><input id="pref-load-library-on-startup" type="checkbox" ${preferences.loadLibraryOnStartup ? 'checked' : ''} /><span>Load existing library on startup</span></label>
               <label class="preference-row"><input id="pref-collapse-scan-log" type="checkbox" ${preferences.collapseScanLog ? 'checked' : ''} /><span>Keep scan log collapsed by default</span></label>
+              <label class="preference-row"><input id="pref-scan-progress-toasts" type="checkbox" ${preferences.scanProgressToasts ? 'checked' : ''} /><span>Show scan progress toasts</span></label>
               <label class="preference-field">
                 <span>Default list density</span>
                 <select id="pref-default-list-density">
@@ -5171,6 +5298,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('pref-collapse-scan-log')?.addEventListener('change', (event) => {
         preferences.collapseScanLog = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
+      });
+      document.getElementById('pref-scan-progress-toasts')?.addEventListener('change', (event) => {
+        preferences.scanProgressToasts = (event.currentTarget as HTMLInputElement).checked;
+        savePreferences();
+        syncProgressToastPreference();
+        if (googleDriveImportBusy && preferences.scanProgressToasts) {
+          startGoogleDriveImportProgressToasts();
+        }
       });
       document.getElementById('pref-default-list-density')?.addEventListener('change', (event) => {
         const value = (event.currentTarget as HTMLSelectElement).value === 'compact' ? 'compact' : 'comfortable';
@@ -5520,6 +5655,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           ensureBackgroundRefreshLoop();
           setScanStatus(status, ['failed', 'cancelled'].includes(status) ? 'error' : status === 'completed' ? 'success' : 'running');
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), String(event.current_file ?? event.directory ?? ''));
+          if (status === 'queued' || status === 'running') {
+            maybeShowLocalScanProgressToast(
+              Number(event.current ?? 0),
+              Number(event.total ?? 0),
+              String(event.current_file ?? event.directory ?? ''),
+            );
+          }
           setScanSummary(summary, { createdAt: scanHistory.find((job) => job.id === jobId)?.createdAt ?? null });
           if (['completed', 'failed', 'cancelled'].includes(status)) {
             frozenTrackIdsDuringScan = null;
@@ -5544,10 +5686,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   },
                 } : undefined,
               );
+              showProgressToast(
+                'local-scan-progress',
+                newCount
+                  ? `Scan finished: ${scanned} scanned, ${analyzed} analyzed, ${newCount} new.`
+                  : `Scan finished: ${scanned} scanned, ${analyzed} analyzed.`,
+                'success',
+                true,
+              );
             } else if (status === 'cancelled') {
               showToast('Scan stopped.', 'warning');
+              showProgressToast('local-scan-progress', 'Scan stopped.', 'warning', true);
             } else if (status === 'failed') {
               showToast('Scan failed.', 'error');
+              showProgressToast('local-scan-progress', 'Scan failed.', 'error', true);
             }
           }
           return;
@@ -5566,6 +5718,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
         if (type === 'track_start') {
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), String(event.file ?? event.path ?? 'Scanning…'));
+          maybeShowLocalScanProgressToast(
+            Number(event.current ?? 0),
+            Number(event.total ?? 0),
+            String(event.file ?? event.path ?? 'Scanning…'),
+          );
           return;
         }
 
@@ -5574,6 +5731,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const reason = String(event.reason ?? '');
           const label = String(event.file ?? event.path ?? 'Track');
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), `${label} · ${status}`);
+          maybeShowLocalScanProgressToast(
+            Number(event.current ?? 0),
+            Number(event.total ?? 0),
+            `${label} · ${status || reason || 'done'}`,
+          );
           queueDbRefresh(5000, 'light');
           return;
         }
@@ -5585,6 +5747,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           setScanStatus('failed', 'error');
           appendScanLog(String(event.error ?? 'Scan failed'), 'error');
           showToast('Scan failed.', 'error');
+          showProgressToast('local-scan-progress', `Scan failed: ${String(event.error ?? 'Unknown error')}`, 'error', true);
           await loadScanHistory();
         }
       };
@@ -5709,6 +5872,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
 
       activeScanStatus = 'queued';
+      localScanToastLastAt = 0;
+      localScanToastLastPercentBucket = -1;
+      localScanToastLastLabel = '';
       frozenTrackIdsDuringScan = tracks.length
         ? [...tracks]
             .sort(compareTracks)
@@ -5720,6 +5886,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       ensureBackgroundRefreshLoop();
       setScanStatus('Scanning collection…', 'running');
       setScanProgress(0, 0, directory);
+      showProgressToast('local-scan-progress', `Scanning collection · ${directory}`, 'info', false);
       warningBanner.style.display = 'none';
       resetScanLog();
       appendScanLog(`Starting scan for ${directory}`);

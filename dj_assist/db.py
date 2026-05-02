@@ -329,9 +329,16 @@ class Database:
         self,
         track_id: int,
         *,
+        title: Optional[str] = None,
+        artist: Optional[str] = None,
+        album: Optional[str] = None,
+        duration: Optional[float] = None,
+        bitrate: Optional[float] = None,
         bpm: Optional[float] = None,
         bpm_confidence: Optional[float] = None,
         bpm_source: Optional[str] = None,
+        key: Optional[str] = None,
+        key_numeric: Optional[str] = None,
         analysis_status: Optional[str] = None,
         analysis_error: Optional[str] = None,
         analysis_stage: Optional[str] = None,
@@ -343,9 +350,23 @@ class Database:
             track = session.query(Track).filter_by(id=track_id).first()
             if not track:
                 return None
+            if title is not None:
+                track.title = title
+            if artist is not None:
+                track.artist = artist
+            if album is not None:
+                track.album = album
+            if duration is not None:
+                track.duration = duration
+            if bitrate is not None:
+                track.bitrate = bitrate
             track.bpm = bpm
             track.bpm_confidence = bpm_confidence
             track.bpm_source = bpm_source
+            if key is not None:
+                track.key = key
+            if key_numeric is not None:
+                track.key_numeric = key_numeric
             track.analysis_status = analysis_status
             track.analysis_error = analysis_error
             track.analysis_stage = analysis_stage

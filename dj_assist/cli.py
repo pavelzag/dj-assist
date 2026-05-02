@@ -18,6 +18,7 @@ from .analyzer import extract_waveform_peaks
 from .analyzer import read_tag_bpm
 from .db import Database
 from .scanner import scan_directory
+from .scanner import extract_metadata
 from .web import run_app
 from .media import AcoustIdClient, SpotifyClient
 from .tag_writer import write_mp3_metadata
@@ -313,6 +314,12 @@ def analyze_file(file_path: Path, bpm_lookup: str, auto_double: bool) -> None:
     )
 
 
+@main.command(name="inspect-file")
+@click.argument("file_path", type=click.Path(dir_okay=False, path_type=Path))
+def inspect_file(file_path: Path) -> None:
+    click.echo(json.dumps(extract_metadata(str(file_path))))
+
+
 @main.command()
 @click.option("--query", default=None)
 @click.option("--artist", default=None)
@@ -367,6 +374,18 @@ def reanalyze_bpm(track_id: int, json_output: bool, path_override: str) -> None:
         raise click.ClickException(f"Track {track_id} has no file path")
     analysis_path = path_override.strip() or track.path
 
+    mark("extract_metadata_start", path=analysis_path)
+    extracted_metadata = extract_metadata(analysis_path)
+    mark(
+        "extract_metadata_done",
+        title=extracted_metadata.get("title") or "",
+        artist=extracted_metadata.get("artist") or "",
+        album=extracted_metadata.get("album") or "",
+        duration=float(extracted_metadata.get("duration") or 0.0),
+        bitrate=float(extracted_metadata.get("bitrate") or 0.0),
+        tag_bpm=float(extracted_metadata.get("bpm") or 0.0),
+        tag_key=extracted_metadata.get("key") or "",
+    )
     mark("detect_bpm_start", path=analysis_path, stored_path=track.path)
     bpm, bpm_source, analysis_error, bpm_confidence = detect_bpm(analysis_path)
     mark(
@@ -376,19 +395,36 @@ def reanalyze_bpm(track_id: int, json_output: bool, path_override: str) -> None:
         analysis_error=analysis_error or "",
         bpm_confidence=float(bpm_confidence or 0.0),
     )
+    detected_key = str(extracted_metadata.get("key") or "").strip()
+    detected_key_numeric = str(track.key_numeric or "").strip()
+    detected_key_confidence = 1.0 if detected_key else 0.0
+    if not detected_key:
+        mark("detect_key_start", path=analysis_path)
+        detected_key, detected_key_numeric, detected_key_confidence = detect_key(analysis_path)
+        mark(
+            "detect_key_done",
+            key=detected_key or "",
+            key_numeric=detected_key_numeric or "",
+            confidence=float(detected_key_confidence or 0.0),
+        )
     analysis_status = "ok" if bpm else "needs_review"
     decode_failed = "true" if analysis_error == "decode_failed" else "false"
     reanalyze_debug: dict[str, object] = {
         "track_id": track_id,
         "path": track.path,
         "analysis_path": analysis_path,
-        "artist": track.artist or "",
-        "title": track.title or "",
-        "album": track.album or "",
+        "artist": extracted_metadata.get("artist") or track.artist or "",
+        "title": extracted_metadata.get("title") or track.title or "",
+        "album": extracted_metadata.get("album") or track.album or "",
+        "duration": float(extracted_metadata.get("duration") or track.duration or 0.0),
+        "bitrate": float(extracted_metadata.get("bitrate") or track.bitrate or 0.0),
         "local_bpm": bpm or 0.0,
         "local_bpm_source": bpm_source or "",
         "local_bpm_error": analysis_error or "",
         "bpm_confidence": float(bpm_confidence or 0.0),
+        "key": detected_key or "",
+        "key_numeric": detected_key_numeric or "",
+        "key_confidence": float(detected_key_confidence or 0.0),
         "album_art_present_before": bool(track.album_art_url),
         "album_art_source_before": track.album_art_source or "",
         "art_recheck_attempted": False,
@@ -397,15 +433,24 @@ def reanalyze_bpm(track_id: int, json_output: bool, path_override: str) -> None:
     }
     analysis_debug = (
         f"manual_reanalyze_bpm={bpm or 0.0} | "
+        f"key={detected_key or 'none'} | "
+        f"duration={float(extracted_metadata.get('duration') or 0.0):.3f} | "
         f"local_bpm_error={analysis_error or 'none'} | "
         f"bpm_confidence={bpm_confidence:.3f}"
     )
     mark("db_update_analysis_start")
     updated = db.update_track_analysis(
       track_id,
+      title=str(extracted_metadata.get("title") or "").strip() or track.title,
+      artist=str(extracted_metadata.get("artist") or "").strip() or track.artist,
+      album=str(extracted_metadata.get("album") or "").strip() or track.album,
+      duration=float(extracted_metadata.get("duration") or track.duration or 0.0) or track.duration,
+      bitrate=float(extracted_metadata.get("bitrate") or track.bitrate or 0.0) or track.bitrate,
       bpm=bpm,
       bpm_source=bpm_source,
       bpm_confidence=bpm_confidence,
+      key=detected_key or track.key,
+      key_numeric=detected_key_numeric or track.key_numeric,
       analysis_status=analysis_status,
       analysis_error=analysis_error,
       analysis_stage="local_bpm",
@@ -433,9 +478,16 @@ def reanalyze_bpm(track_id: int, json_output: bool, path_override: str) -> None:
 
     payload = {
         "id": updated.id,
+        "title": updated.title or "",
+        "artist": updated.artist or "",
+        "album": updated.album or "",
         "bpm": updated.bpm or 0.0,
         "bpm_source": updated.bpm_source or "",
         "bpm_confidence": float(updated.bpm_confidence or 0.0),
+        "key": updated.key or "",
+        "key_numeric": updated.key_numeric or "",
+        "duration": float(updated.duration or 0.0),
+        "bitrate": float(updated.bitrate or 0.0),
         "analysis_status": updated.analysis_status or "",
         "analysis_error": updated.analysis_error or "",
         "analysis_stage": updated.analysis_stage or "",

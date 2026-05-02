@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
+import { logServerEvent } from '@/lib/app-log';
 
 export const GOOGLE_OAUTH_STATE_COOKIE = 'dj_assist_google_oauth_state';
 export const GOOGLE_OAUTH_VERIFIER_COOKIE = 'dj_assist_google_oauth_verifier';
@@ -47,7 +48,13 @@ export async function verifyGoogleIdToken(input: {
     'oauth2.googleapis.com',
     `/tokeninfo?id_token=${encodeURIComponent(input.token)}`,
   );
-  console.log(`[google-auth] tokeninfo status=${status} raw_length=${raw.length} raw_preview=${raw.slice(0, 120)}`);
+  void logServerEvent({
+    level: 'info',
+    message: `[google-auth] tokeninfo status=${status} raw_length=${raw.length} raw_preview=${raw.slice(0, 120)}`,
+    category: 'google-auth',
+    context: { status, rawLength: raw.length, rawPreview: raw.slice(0, 120) },
+    alsoConsole: true,
+  }).catch(() => {});
   if (status < 200 || status >= 300) {
     throw new Error(raw.trim() || 'Google sign-in could not be verified.');
   }
@@ -102,7 +109,13 @@ function httpsGet(hostname: string, path: string): Promise<{ status: number; raw
         res.on('end', async () => {
           const raw = Buffer.concat(chunks).toString('utf8');
           if (shouldRetryDirect(res.statusCode ?? 0, raw)) {
-            console.warn(`[google-auth] proxy tokeninfo request failed on port=${proxyPort}; retrying direct HTTPS`);
+            void logServerEvent({
+              level: 'warning',
+              message: `[google-auth] proxy tokeninfo request failed on port=${proxyPort}; retrying direct HTTPS`,
+              category: 'google-auth',
+              context: { proxyPort, status: res.statusCode ?? 0 },
+              alsoConsole: true,
+            }).catch(() => {});
             try {
               resolve(await directHttpsGet(hostname, path));
               return;
@@ -115,7 +128,13 @@ function httpsGet(hostname: string, path: string): Promise<{ status: number; raw
         });
       });
       req.on('error', async (error) => {
-        console.warn(`[google-auth] proxy tokeninfo request error on port=${proxyPort}; retrying direct HTTPS: ${error.message}`);
+        void logServerEvent({
+          level: 'warning',
+          message: `[google-auth] proxy tokeninfo request error on port=${proxyPort}; retrying direct HTTPS: ${error.message}`,
+          category: 'google-auth',
+          context: { proxyPort, error: error.message },
+          alsoConsole: true,
+        }).catch(() => {});
         try {
           resolve(await directHttpsGet(hostname, path));
         } catch (directError) {

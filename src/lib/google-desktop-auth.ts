@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
+import { logServerEvent } from '@/lib/app-log';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -72,7 +73,13 @@ export async function exchangeGoogleDesktopAuthCode(input: {
   }).toString();
 
   const { status, statusText, raw } = await httpsPost('oauth2.googleapis.com', '/token', body);
-  console.log(`[google-desktop-auth] token exchange status=${status} raw_length=${raw.length} raw_preview=${raw.slice(0, 120)}`);
+  void logServerEvent({
+    level: 'info',
+    message: `[google-desktop-auth] token exchange status=${status} raw_length=${raw.length} raw_preview=${raw.slice(0, 120)}`,
+    category: 'google-desktop-auth',
+    context: { status, statusText, rawLength: raw.length, rawPreview: raw.slice(0, 120) },
+    alsoConsole: true,
+  }).catch(() => {});
 
   if (status < 200 || status >= 300) {
     throw new GoogleDesktopTokenExchangeError({
@@ -105,7 +112,13 @@ function httpsPost(hostname: string, path: string, body: string): Promise<{ stat
           res.on('end', async () => {
             const raw = Buffer.concat(chunks).toString('utf8');
             if (shouldRetryDirect(res.statusCode ?? 0, raw)) {
-              console.warn(`[google-desktop-auth] proxy token exchange failed on port=${proxyPort}; retrying direct HTTPS`);
+              void logServerEvent({
+                level: 'warning',
+                message: `[google-desktop-auth] proxy token exchange failed on port=${proxyPort}; retrying direct HTTPS`,
+                category: 'google-desktop-auth',
+                context: { proxyPort, status: res.statusCode ?? 0 },
+                alsoConsole: true,
+              }).catch(() => {});
               try {
                 resolve(await directHttpsPost(hostname, path, body));
                 return;
@@ -119,7 +132,13 @@ function httpsPost(hostname: string, path: string, body: string): Promise<{ stat
         },
       );
       req.on('error', async (error) => {
-        console.warn(`[google-desktop-auth] proxy token exchange request error on port=${proxyPort}; retrying direct HTTPS: ${error.message}`);
+        void logServerEvent({
+          level: 'warning',
+          message: `[google-desktop-auth] proxy token exchange request error on port=${proxyPort}; retrying direct HTTPS: ${error.message}`,
+          category: 'google-desktop-auth',
+          context: { proxyPort, error: error.message },
+          alsoConsole: true,
+        }).catch(() => {});
         try {
           resolve(await directHttpsPost(hostname, path, body));
         } catch (directError) {

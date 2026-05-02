@@ -744,6 +744,7 @@ def extract_metadata(filepath: str) -> dict:
         "duration": 0.0,
         "bitrate": 0.0,
         "bpm": 0.0,
+        "key": None,
         "track_number": 0,
         "release_year": 0,
         "embedded_album_art_url": "",
@@ -762,6 +763,7 @@ def extract_metadata(filepath: str) -> dict:
         metadata["album"] = _tag_value(audio.tags, "TALB", "album")
         metadata["track_number"] = _parse_int_tag(_tag_value(audio.tags, "TRCK", "tracknumber"))
         metadata["release_year"] = _parse_int_tag(_tag_value(audio.tags, "TDRC", "date", "year"))
+        metadata["key"] = _tag_value(audio.tags, "TKEY", "initialkey", "key")
         bpm_text = _tag_value(audio.tags, "TBPM", "bpm")
         if bpm_text:
             try:

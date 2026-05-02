@@ -1,7 +1,12 @@
 import { promises as fs } from 'node:fs';
+import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { getGoogleDriveAccessToken } from '@/lib/runtime-settings';
+import { resolveWorkingPython } from '@/lib/scan';
+
+const execFileAsync = promisify(execFile);
 
 function configDirectory(): string {
   return process.env.DJ_ASSIST_CONFIG_DIR?.trim() || path.join(homedir(), '.dj_assist');
@@ -110,5 +115,47 @@ export async function ensureLocalGoogleDriveTrackFile(fileId: string): Promise<{
     cached: false,
     name: metadata.name,
     mimeType: metadata.mimeType,
+  };
+}
+
+export type LocalAudioMetadata = {
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  duration: number;
+  bitrate: number;
+  bpm: number;
+  key: string | null;
+  track_number: number;
+  release_year: number;
+  embedded_album_art_url: string;
+  embedded_album_art_mime: string;
+};
+
+export async function readLocalAudioMetadata(filePath: string): Promise<LocalAudioMetadata> {
+  const python = await resolveWorkingPython();
+  const { stdout } = await execFileAsync(
+    python,
+    ['-m', 'dj_assist.cli', 'inspect-file', filePath],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      timeout: 45_000,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  const parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
+  return {
+    title: String(parsed.title ?? '').trim() || null,
+    artist: String(parsed.artist ?? '').trim() || null,
+    album: String(parsed.album ?? '').trim() || null,
+    duration: Number(parsed.duration ?? 0) || 0,
+    bitrate: Number(parsed.bitrate ?? 0) || 0,
+    bpm: Number(parsed.bpm ?? 0) || 0,
+    key: String(parsed.key ?? '').trim() || null,
+    track_number: Number(parsed.track_number ?? 0) || 0,
+    release_year: Number(parsed.release_year ?? 0) || 0,
+    embedded_album_art_url: String(parsed.embedded_album_art_url ?? '').trim(),
+    embedded_album_art_mime: String(parsed.embedded_album_art_mime ?? '').trim(),
   };
 }

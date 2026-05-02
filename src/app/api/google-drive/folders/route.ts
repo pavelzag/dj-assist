@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleDriveAccessToken } from '@/lib/runtime-settings';
+import { logServerEvent } from '@/lib/app-log';
 
 export const runtime = 'nodejs';
 
@@ -9,19 +10,37 @@ type GoogleDriveFolder = {
   parents: string[];
 };
 
+function logGoogleDriveFolders(
+  level: 'info' | 'warning' | 'error',
+  event: string,
+  context: Record<string, unknown>,
+) {
+  const payload = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...context,
+  };
+  const line = `[google-drive-folders] ${JSON.stringify(payload)}`;
+  void logServerEvent({
+    level,
+    message: line,
+    category: 'google-drive-folders',
+    context: payload,
+    alsoConsole: true,
+  }).catch(() => {});
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { accessToken } = await getGoogleDriveAccessToken();
     const { searchParams } = new URL(request.url);
     const parentId = String(searchParams.get('parentId') ?? '').trim();
     const pageSize = Math.min(Math.max(Math.trunc(Number(searchParams.get('limit') ?? 200) || 200), 1), 200);
-    console.log(`[google-drive-folders] ${JSON.stringify({
-      timestamp: new Date().toISOString(),
-      event: 'started',
+    logGoogleDriveFolders('info', 'started', {
       parentId: parentId || 'root',
       pageSize,
       hasAccessToken: Boolean(accessToken),
-    })}`);
+    });
     const query = parentId
       ? `trashed = false and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents`
       : "trashed = false and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents";
@@ -59,23 +78,19 @@ export async function GET(request: NextRequest) {
         }))
       : [];
 
-    console.log(`[google-drive-folders] ${JSON.stringify({
-      timestamp: new Date().toISOString(),
-      event: 'completed',
+    logGoogleDriveFolders('info', 'completed', {
       parentId: parentId || 'root',
       returned: folders.length,
-    })}`);
+    });
 
     return NextResponse.json({
       parentId: parentId || null,
       folders,
     });
   } catch (error) {
-    console.error(`[google-drive-folders] ${JSON.stringify({
-      timestamp: new Date().toISOString(),
-      event: 'failed',
+    logGoogleDriveFolders('error', 'failed', {
       error: error instanceof Error ? error.message : String(error),
-    })}`);
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },
       { status: 400 },

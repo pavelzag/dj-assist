@@ -1,16 +1,23 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export type ClientDiagnosticLogEntry = {
+export type AppLogLevel = 'info' | 'warning' | 'error' | 'success';
+export type AppLogSource = 'renderer' | 'server';
+
+export type AppLogEntry = {
   timestamp: string;
-  level: 'info' | 'warning' | 'error' | 'success';
+  level: AppLogLevel;
   message: string;
-  source: 'renderer';
+  source: AppLogSource;
   category?: string;
   context?: Record<string, unknown>;
 };
 
-export function getClientLogPath() {
+export type ClientDiagnosticLogEntry = AppLogEntry & {
+  source: 'renderer';
+};
+
+export function getAppLogPath() {
   const explicitDir = process.env.DJ_ASSIST_LOG_DIR?.trim();
   const fallbackDir = process.env.DJ_ASSIST_CONFIG_DIR?.trim()
     ? path.join(process.env.DJ_ASSIST_CONFIG_DIR.trim(), 'logs')
@@ -19,15 +26,21 @@ export function getClientLogPath() {
   return path.join(logDir, 'dj-assist-client.ndjson');
 }
 
-export async function appendClientDiagnosticLog(entry: ClientDiagnosticLogEntry) {
-  const filePath = getClientLogPath();
+export const getClientLogPath = getAppLogPath;
+
+export async function appendAppLog(entry: AppLogEntry) {
+  const filePath = getAppLogPath();
   await mkdir(path.dirname(filePath), { recursive: true });
   await appendFile(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
   return filePath;
 }
 
-export async function getClientDiagnosticLogs(limit = 100): Promise<ClientDiagnosticLogEntry[]> {
-  const filePath = getClientLogPath();
+export async function appendClientDiagnosticLog(entry: ClientDiagnosticLogEntry) {
+  return appendAppLog(entry);
+}
+
+export async function getAppLogs(limit = 100): Promise<AppLogEntry[]> {
+  const filePath = getAppLogPath();
   try {
     const raw = await readFile(filePath, 'utf8');
     return raw
@@ -38,7 +51,7 @@ export async function getClientDiagnosticLogs(limit = 100): Promise<ClientDiagno
       .reverse()
       .flatMap((line) => {
         try {
-          const parsed = JSON.parse(line) as ClientDiagnosticLogEntry;
+          const parsed = JSON.parse(line) as AppLogEntry;
           return parsed && typeof parsed === 'object' ? [parsed] : [];
         } catch {
           return [];
@@ -47,4 +60,28 @@ export async function getClientDiagnosticLogs(limit = 100): Promise<ClientDiagno
   } catch {
     return [];
   }
+}
+
+export const getClientDiagnosticLogs = getAppLogs;
+
+export async function logServerEvent(input: {
+  level: 'info' | 'warning' | 'error';
+  message: string;
+  category: string;
+  context?: Record<string, unknown>;
+  alsoConsole?: boolean;
+}) {
+  if (input.alsoConsole) {
+    if (input.level === 'error') console.error(input.message);
+    else if (input.level === 'warning') console.warn(input.message);
+    else console.log(input.message);
+  }
+  return appendAppLog({
+    timestamp: new Date().toISOString(),
+    level: input.level,
+    message: input.message,
+    source: 'server',
+    category: input.category,
+    context: input.context,
+  });
 }

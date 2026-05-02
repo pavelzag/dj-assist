@@ -988,6 +988,67 @@ export async function updateTrackMetadata(
   );
 }
 
+export async function updateGoogleDriveTrackLocalMetadata(
+  fileId: string,
+  patch: {
+    title?: string | null;
+    artist?: string | null;
+    album?: string | null;
+    duration?: number | null;
+    bitrate?: number | null;
+    bpm?: number | null;
+    key?: string | null;
+    embedded_album_art_url?: string | null;
+  },
+): Promise<void> {
+  const path = `gdrive:${String(fileId ?? '').trim()}`;
+  const currentRow = queryOne<Record<string, unknown>>('SELECT * FROM tracks WHERE path = ? LIMIT 1', path);
+  if (!currentRow) return;
+  const current = mapTrack(currentRow);
+
+  const title = patch.title !== undefined ? patch.title : current.title;
+  const artist = patch.artist !== undefined ? patch.artist : current.artist;
+  const album = patch.album !== undefined ? patch.album : current.album;
+  const artistCanonical = canonicalizeArtistName(artist);
+  const albumCanonical = canonicalizeAlbumName(album);
+  const albumGroupKey = artistCanonical && albumCanonical ? `${artistCanonical}::${albumCanonical}` : current.album_group_key;
+  const embeddedArtUrl = patch.embedded_album_art_url !== undefined ? patch.embedded_album_art_url : current.album_art_url;
+  const hasEmbeddedArt = Boolean(String(embeddedArtUrl ?? '').trim());
+  const nextBpm = patch.bpm != null && patch.bpm > 0 ? patch.bpm : current.bpm;
+  const nextKey = patch.key !== undefined ? patch.key : current.key;
+
+  execute(
+    `UPDATE tracks
+     SET title = ?, artist = ?, album = ?, duration = ?, bitrate = ?, bpm = ?, key = ?,
+         bpm_source = ?, analysis_status = ?, analysis_error = ?, analysis_stage = ?, analysis_debug = ?,
+         album_art_url = ?, album_art_source = ?, album_art_confidence = ?, album_art_review_status = ?,
+         album_art_review_notes = ?, embedded_album_art = ?, album_group_key = ?, artist_canonical = ?, album_canonical = ?
+     WHERE path = ?`,
+    title,
+    artist,
+    album,
+    patch.duration != null && patch.duration > 0 ? patch.duration : current.duration,
+    patch.bitrate != null && patch.bitrate > 0 ? patch.bitrate : current.bitrate,
+    nextBpm,
+    nextKey,
+    nextBpm ? 'tag' : current.bpm_source,
+    'google_drive_local_metadata',
+    null,
+    'google_drive_local_metadata',
+    `source=google_drive_local_metadata | embedded_tags=${hasEmbeddedArt ? 'yes' : 'no'} | bpm=${nextBpm ?? 0} | key=${nextKey ?? ''}`,
+    hasEmbeddedArt ? embeddedArtUrl : current.album_art_url,
+    hasEmbeddedArt ? 'embedded' : current.album_art_source,
+    hasEmbeddedArt ? 100 : current.album_art_confidence,
+    hasEmbeddedArt ? 'approved' : current.album_art_review_status,
+    hasEmbeddedArt ? 'embedded artwork extracted from Google Drive file tags' : current.album_art_review_notes,
+    boolInt(hasEmbeddedArt || Boolean(current.embedded_album_art)),
+    albumGroupKey,
+    artistCanonical || current.artist_canonical,
+    albumCanonical || current.album_canonical,
+    path,
+  );
+}
+
 export async function getTracksByIds(ids: number[]): Promise<Track[]> {
   const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
   if (!uniqueIds.length) return [];

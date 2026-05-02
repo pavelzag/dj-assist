@@ -5,8 +5,9 @@ import {
   getGoogleDriveAccessToken,
 } from '@/lib/runtime-settings';
 import { listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
-import { importGoogleDriveTracks } from '@/lib/db';
-import { appendClientDiagnosticLog } from '@/lib/app-log';
+import { importGoogleDriveTracks, updateGoogleDriveTrackLocalMetadata } from '@/lib/db';
+import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
+import { ensureLocalGoogleDriveTrackFile, readLocalAudioMetadata } from '@/lib/google-drive-cache';
 
 export const runtime = 'nodejs';
 const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
@@ -16,15 +17,20 @@ function logGoogleDriveImport(
   event: string,
   context: Record<string, unknown>,
 ) {
-  const line = `[google-drive-import] ${JSON.stringify({
+  const payload = {
     timestamp: new Date().toISOString(),
     level,
     event,
     ...context,
-  })}`;
-  if (level === 'error') console.error(line);
-  else if (level === 'warn') console.warn(line);
-  else console.log(line);
+  };
+  const line = `[google-drive-import] ${JSON.stringify(payload)}`;
+  void logServerEvent({
+    level: level === 'warn' ? 'warning' : level,
+    message: line,
+    category: 'google-drive-import',
+    context: payload,
+    alsoConsole: true,
+  }).catch(() => {});
 }
 
 async function logGoogleDriveProgress(
@@ -156,6 +162,84 @@ export async function POST(request: NextRequest) {
       },
     );
 
+    let localMetadataEnriched = 0;
+    let localMetadataFailed = 0;
+    for (let index = 0; index < localFiles.length; index += 1) {
+      const file = localFiles[index];
+      const fileId = String(file.id ?? '').trim();
+      if (!fileId) continue;
+      try {
+        await logGoogleDriveProgress(
+          'info',
+          `Reading embedded metadata ${index + 1}/${localFiles.length}: ${file.name}`,
+          {
+            event: 'local_metadata_started',
+            index: index + 1,
+            total: localFiles.length,
+            fileId,
+            name: file.name,
+          },
+        );
+        const localFile = await ensureLocalGoogleDriveTrackFile(fileId);
+        const metadata = await readLocalAudioMetadata(localFile.localPath);
+        await updateGoogleDriveTrackLocalMetadata(fileId, {
+          title: metadata.title,
+          artist: metadata.artist,
+          album: metadata.album,
+          duration: metadata.duration > 0 ? metadata.duration : null,
+          bitrate: metadata.bitrate > 0 ? metadata.bitrate : null,
+          bpm: metadata.bpm > 0 ? metadata.bpm : null,
+          key: metadata.key,
+          embedded_album_art_url: metadata.embedded_album_art_url || null,
+        });
+        localMetadataEnriched += 1;
+        logGoogleDriveImport('info', 'local_metadata_completed', {
+          index: index + 1,
+          total: localFiles.length,
+          fileId,
+          name: file.name,
+          cached: localFile.cached,
+          title: metadata.title,
+          artist: metadata.artist,
+          bpm: metadata.bpm,
+          key: metadata.key,
+          hasEmbeddedArt: Boolean(metadata.embedded_album_art_url),
+        });
+      } catch (error) {
+        localMetadataFailed += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        logGoogleDriveImport('warn', 'local_metadata_failed', {
+          index: index + 1,
+          total: localFiles.length,
+          fileId,
+          name: file.name,
+          error: message,
+        });
+        await logGoogleDriveProgress(
+          'warning',
+          `Embedded metadata read failed for ${file.name}: ${message}`,
+          {
+            event: 'local_metadata_failed',
+            index: index + 1,
+            total: localFiles.length,
+            fileId,
+            name: file.name,
+            error: message,
+          },
+        );
+      }
+    }
+    await logGoogleDriveProgress(
+      localMetadataFailed ? 'warning' : 'success',
+      `Local Google Drive metadata enrichment completed: ${localMetadataEnriched} succeeded, ${localMetadataFailed} failed.`,
+      {
+        event: 'local_metadata_summary',
+        succeeded: localMetadataEnriched,
+        failed: localMetadataFailed,
+        total: localFiles.length,
+      },
+    );
+
     const response = await fetch(`${serverUrl}/api/v1/google-drive/import`, {
       method: 'POST',
       headers: buildServerHeaders({
@@ -201,6 +285,8 @@ export async function POST(request: NextRequest) {
         ...(payload ?? { ok: response.ok }),
         local_tracks_imported: localImport.imported,
         local_tracks_updated: localImport.updated,
+        local_metadata_enriched: localMetadataEnriched,
+        local_metadata_failed: localMetadataFailed,
       },
       { status: response.status },
     );
