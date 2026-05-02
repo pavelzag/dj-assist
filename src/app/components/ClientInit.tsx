@@ -1921,19 +1921,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         .filter((track) => matchesBrowseScope(track))
         .filter((track) => matchesQuickFilter(track))
         .filter((track) => showOnlyNoBpmEl?.checked ? !hasBpm(track) : true);
-
-      if (!frozenTrackIdsDuringScan?.length || !['queued', 'running'].includes(activeScanStatus)) {
-        return filtered.sort(compareTracks);
-      }
-
-      const frozenOrder = new Map(frozenTrackIdsDuringScan.map((id, index) => [id, index]));
-      return filtered
-        .filter((track) => frozenOrder.has(Number(track.id)))
-        .sort((a, b) => {
-          const aOrder = frozenOrder.get(Number(a.id)) ?? Number.MAX_SAFE_INTEGER;
-          const bOrder = frozenOrder.get(Number(b.id)) ?? Number.MAX_SAFE_INTEGER;
-          return aOrder - bOrder || compareTracks(a, b);
-        });
+      return filtered.sort(compareTracks);
     }
 
     function visibleTracksOrdered(): Record<string, unknown>[] {
@@ -2764,7 +2752,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function currentRefreshIntervalMs(): number {
-      return isScanRunning() ? 9000 : 20000;
+      return isScanRunning() ? 2500 : 20000;
     }
 
     async function refreshFromDb(options?: { includeLibrary?: boolean; includeHistory?: boolean; mode?: 'light' | 'full' }) {
@@ -5736,7 +5724,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             Number(event.total ?? 0),
             `${label} · ${status || reason || 'done'}`,
           );
-          queueDbRefresh(5000, 'light');
+          queueDbRefresh(700, 'light');
           return;
         }
 
