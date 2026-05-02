@@ -13,6 +13,11 @@ on:
         description: Tag to publish, for example v0.1.0 or v0.2.0-beta.1
         required: false
         type: string
+      make_latest:
+        description: Mark this release as the latest release on GitHub
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -286,3 +291,4 @@ jobs:
             dist-electron/*.zip
           generate_release_notes: true
           prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+          make_latest: ${{ github.event_name == 'workflow_dispatch' && toJSON(inputs.make_latest) || 'legacy' }}
