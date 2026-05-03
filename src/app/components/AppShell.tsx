@@ -200,16 +200,20 @@ export default function AppShell({
       </div>
 
       <div className="modal" id="quit-app-modal" aria-hidden="true">
-        <div className="modal-card">
+        <div className="modal-card quit-app-card">
           <div className="modal-head">
             <h3>Quit DJ Assist</h3>
             <button className="close" id="close-quit-app" type="button">&times;</button>
           </div>
-          <div className="metadata-editor">
-            <div className="scan-preflight" id="quit-app-message">Are you sure you want to close DJ Assist? Any active scan or playback will stop when the app quits.</div>
-            <div className="buttons">
-              <button className="btn" id="cancel-quit-app-btn" type="button">Cancel</button>
-              <button className="btn danger" id="confirm-quit-app-btn" type="button">Quit</button>
+          <div className="quit-app-body">
+            <div className="quit-app-icon" aria-hidden="true">!</div>
+            <div className="quit-app-copy">
+              <div className="quit-app-title">Close the app now?</div>
+              <div className="scan-preflight quit-app-message" id="quit-app-message">Are you sure you want to close DJ Assist? Any active scan or playback will stop when the app quits.</div>
+            </div>
+            <div className="quit-app-actions">
+              <button className="btn secondary" id="cancel-quit-app-btn" type="button">Cancel</button>
+              <button className="btn danger" id="confirm-quit-app-btn" type="button">Quit DJ Assist</button>
             </div>
           </div>
         </div>
@@ -289,11 +293,6 @@ export default function AppShell({
                   <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
                   <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
                 </div>
-                <div className="google-drive-folder-table-head">
-                  <span>Name</span>
-                  <span>Type</span>
-                  <span>Action</span>
-                </div>
                 <div className="google-drive-folder-list" id="google-drive-folder-list">
                   <div className="empty">Loading Google Drive folders…</div>
                 </div>
@@ -304,21 +303,33 @@ export default function AppShell({
       </div>
 
       <div className="modal" id="add-music-source-modal" aria-hidden="true">
-        <div className="modal-card google-drive-folder-card">
+        <div className="modal-card add-music-source-card">
           <div className="modal-head">
             <h3>Add Music</h3>
             <button className="close" id="close-add-music-source-modal" type="button">&times;</button>
           </div>
-          <div className="metadata-editor">
-            <div className="scan-preflight">Choose where you want DJ Assist to add music from.</div>
-            <div className="shortcuts-list">
-              <button className="command-palette-item" id="add-music-source-local-btn" type="button">
-                <strong>This Mac</strong>
-                <span>Pick a local folder and run the regular desktop scan.</span>
+          <div className="add-music-source-body">
+            <div className="add-music-source-hero">
+              <div className="add-music-source-icon" aria-hidden="true">♪</div>
+              <div className="add-music-source-copy">
+                <strong>Choose a music source</strong>
+                <span>Pick where DJ Assist should pull tracks from right now.</span>
+              </div>
+            </div>
+            <div className="add-music-source-options">
+              <button className="add-music-source-option" id="add-music-source-local-btn" type="button">
+                <span className="add-music-source-option-icon" aria-hidden="true">⌂</span>
+                <span className="add-music-source-option-copy">
+                  <strong>This Mac</strong>
+                  <span>Pick a local folder and run the regular desktop scan.</span>
+                </span>
               </button>
-              <button className="command-palette-item" id="add-music-source-google-drive-btn" type="button">
-                <strong>Google Drive</strong>
-                <span>Pick a Drive folder with read-only access and import its audio metadata into the Songs list and server.</span>
+              <button className="add-music-source-option" id="add-music-source-google-drive-btn" type="button">
+                <span className="add-music-source-option-icon" aria-hidden="true">G</span>
+                <span className="add-music-source-option-copy">
+                  <strong>Google Drive</strong>
+                  <span>Browse a Drive folder and import its audio metadata with read-only access.</span>
+                </span>
               </button>
             </div>
           </div>

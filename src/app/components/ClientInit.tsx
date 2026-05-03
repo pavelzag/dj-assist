@@ -156,12 +156,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let runtimeHealth: Record<string, unknown> | null = null;
     let googleDriveFiles: Record<string, unknown>[] = [];
     let googleDriveFolders: Record<string, unknown>[] = [];
+    let googleDriveFolderFiles: Record<string, unknown>[] = [];
     let spotifySettingsBusy = false;
     let googleOauthSettingsBusy = false;
     let googleDriveImportBusy = false;
     let googleDriveFilesBusy = false;
     let googleDriveFilesLoaded = false;
     let googleDriveFoldersBusy = false;
+    let googleDriveFolderFilesBusy = false;
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
     let activeQuickFilter = '';
@@ -1462,6 +1464,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return googleDriveFolderTrail[googleDriveFolderTrail.length - 1] ?? null;
     }
 
+    function formatGoogleDriveFolderItemMeta(file: Record<string, unknown>) {
+      const size = formatDriveFileSize(file.size);
+      const modified = formatDriveModifiedTime(file.modifiedTime);
+      return [size !== '--' ? size : '', modified !== '--' ? modified : ''].filter(Boolean).join(' · ') || 'Audio file';
+    }
+
     function renderGoogleDriveFolderPicker() {
       const listEl = document.getElementById('google-drive-folder-list') as HTMLElement | null;
       const sidebarEl = document.getElementById('google-drive-folder-sidebar') as HTMLElement | null;
@@ -1525,25 +1533,38 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
       }
       if (!listEl) return;
-      if (googleDriveFoldersBusy) {
-        listEl.innerHTML = '<div class="empty">Loading Google Drive folders…</div>';
+      if (googleDriveFoldersBusy || googleDriveFolderFilesBusy) {
+        listEl.innerHTML = '<div class="empty">Loading Google Drive folder contents…</div>';
         return;
       }
-      listEl.innerHTML = googleDriveFolders.length
-        ? googleDriveFolders.map((folder) => `
-          <div class="google-drive-folder-row" data-drive-folder-id="${esc(String(folder.id ?? ''))}" data-drive-folder-name="${esc(String(folder.name ?? 'Untitled folder'))}">
-            <button type="button" class="google-drive-folder-name-btn" data-drive-open-folder="true">
-              <span class="google-drive-folder-icon" aria-hidden="true">📁</span>
-              <span class="google-drive-folder-name-copy">
-                <strong>${esc(String(folder.name ?? 'Untitled folder'))}</strong>
-                <span>${esc(googleDriveFolderTrail.length ? 'Subfolder' : 'Folder in My Drive')}</span>
-              </span>
-            </button>
-            <span class="google-drive-folder-kind">Folder</span>
-            <button type="button" class="btn secondary google-drive-folder-open-btn" data-drive-open-folder="true">Open</button>
-          </div>
-        `).join('')
-        : '<div class="empty">No child folders found here.</div>';
+      const folderMarkup = googleDriveFolders.map((folder) => `
+        <button
+          type="button"
+          class="google-drive-browser-row folder"
+          data-drive-folder-id="${esc(String(folder.id ?? ''))}"
+          data-drive-folder-name="${esc(String(folder.name ?? 'Untitled folder'))}"
+          data-drive-open-folder="true"
+        >
+          <span class="google-drive-browser-row-icon" aria-hidden="true">📁</span>
+          <span class="google-drive-browser-row-copy">
+            <strong>${esc(String(folder.name ?? 'Untitled folder'))}</strong>
+            <span>${esc(googleDriveFolderTrail.length ? 'Folder' : 'Folder in My Drive')}</span>
+          </span>
+          <span class="google-drive-browser-row-trailing" aria-hidden="true">›</span>
+        </button>
+      `).join('');
+      const fileMarkup = googleDriveFolderFiles.map((file) => `
+        <div class="google-drive-browser-row file">
+          <span class="google-drive-browser-row-icon audio" aria-hidden="true">♪</span>
+          <span class="google-drive-browser-row-copy">
+            <strong>${esc(String(file.name ?? 'Untitled'))}</strong>
+            <span>${esc(formatGoogleDriveFolderItemMeta(file))}</span>
+          </span>
+        </div>
+      `).join('');
+      listEl.innerHTML = folderMarkup || fileMarkup
+        ? `${folderMarkup}${fileMarkup}`
+        : '<div class="empty">No folders or audio files found here.</div>';
       listEl.querySelectorAll('[data-drive-open-folder="true"]').forEach((button) => {
         button.addEventListener('click', () => {
           const element = button.closest('[data-drive-folder-id]') as HTMLElement | null;
@@ -1563,9 +1584,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       parentId?: string;
       trail?: Array<{ id: string; name: string }>;
     } = {}) {
-      if (googleDriveFoldersBusy) return;
+      if (googleDriveFoldersBusy || googleDriveFolderFilesBusy) return;
       googleDriveFoldersBusy = true;
+      googleDriveFolderFilesBusy = true;
       googleDriveFolderTrail = options.trail ?? [];
+      googleDriveFolderFiles = [];
       renderGoogleDriveFolderPicker();
       setGoogleDriveFolderStatus('Loading Google Drive folders with read-only access…', 'saving');
       appendScanLog(
@@ -1582,37 +1605,73 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const parentId = String(options.parentId ?? '').trim();
         const query = new URLSearchParams();
         if (parentId) query.set('parentId', parentId);
-        const response = await fetch(`/api/google-drive/folders${query.toString() ? `?${query.toString()}` : ''}`);
-        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-        if (!response.ok) {
-          setGoogleDriveFolderStatus(String(payload.error ?? 'Could not load Google Drive folders.'), 'error');
+        const foldersPromise = fetch(`/api/google-drive/folders${query.toString() ? `?${query.toString()}` : ''}`);
+        const filesPromise = parentId
+          ? (() => {
+            const filesQuery = new URLSearchParams();
+            filesQuery.set('folderId', parentId);
+            filesQuery.set('limit', '100');
+            return fetch(`/api/google-drive/files?${filesQuery.toString()}`);
+          })()
+          : Promise.resolve(null);
+        const [foldersResponse, filesResponse] = await Promise.all([foldersPromise, filesPromise]);
+        const foldersPayload = await foldersResponse.json().catch(() => ({})) as Record<string, unknown>;
+        const filesPayload = filesResponse
+          ? await filesResponse.json().catch(() => ({})) as Record<string, unknown>
+          : {};
+        if (!foldersResponse.ok) {
+          setGoogleDriveFolderStatus(String(foldersPayload.error ?? 'Could not load Google Drive folders.'), 'error');
           googleDriveFolders = [];
+          googleDriveFolderFiles = [];
           appendScanLog(
-            `Google Drive folders failed: ${String(payload.error ?? 'Could not load folders.')}`,
+            `Google Drive folders failed: ${String(foldersPayload.error ?? 'Could not load folders.')}`,
             'error',
             {
               category: 'google-drive-folders',
-              status: response.status,
-              payload,
+              status: foldersResponse.status,
+              payload: foldersPayload,
             },
             { eventType: 'google_drive_folders_failed' },
           );
           return;
         }
-        googleDriveFolders = Array.isArray(payload.folders) ? payload.folders as Record<string, unknown>[] : [];
-        setGoogleDriveFolderStatus('Browse a folder and choose it for Drive preview/import. DJ Assist only has read access.', 'success');
+        if (filesResponse && !filesResponse.ok) {
+          setGoogleDriveFolderStatus(String(filesPayload.error ?? 'Could not load Google Drive files.'), 'error');
+          googleDriveFolders = Array.isArray(foldersPayload.folders) ? foldersPayload.folders as Record<string, unknown>[] : [];
+          googleDriveFolderFiles = [];
+          appendScanLog(
+            `Google Drive files failed: ${String(filesPayload.error ?? 'Could not load files.')}`,
+            'error',
+            {
+              category: 'google-drive-files',
+              parentId: parentId || null,
+              status: filesResponse.status,
+              payload: filesPayload,
+            },
+            { eventType: 'google_drive_files_failed' },
+          );
+          return;
+        }
+        googleDriveFolders = Array.isArray(foldersPayload.folders) ? foldersPayload.folders as Record<string, unknown>[] : [];
+        googleDriveFolderFiles = filesResponse && Array.isArray(filesPayload.files) ? filesPayload.files as Record<string, unknown>[] : [];
+        setGoogleDriveFolderStatus(
+          `Showing ${googleDriveFolders.length} folders and ${googleDriveFolderFiles.length} audio files. DJ Assist only uses read access.`,
+          'success',
+        );
         appendScanLog(
-          `Google Drive folders loaded: count=${googleDriveFolders.length} parent=${parentId || 'root'}`,
+          `Google Drive folders loaded: folders=${googleDriveFolders.length} files=${googleDriveFolderFiles.length} parent=${parentId || 'root'}`,
           'success',
           {
             category: 'google-drive-folders',
             parentId: parentId || null,
             count: googleDriveFolders.length,
+            fileCount: googleDriveFolderFiles.length,
           },
           { eventType: 'google_drive_folders_loaded' },
         );
       } catch (error) {
         googleDriveFolders = [];
+        googleDriveFolderFiles = [];
         setGoogleDriveFolderStatus(error instanceof Error ? error.message : String(error), 'error');
         appendScanLog(
           `Google Drive folders exception: ${error instanceof Error ? error.message : String(error)}`,
@@ -1625,6 +1684,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         );
       } finally {
         googleDriveFoldersBusy = false;
+        googleDriveFolderFilesBusy = false;
         renderGoogleDriveFolderPicker();
       }
     }
