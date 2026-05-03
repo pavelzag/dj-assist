@@ -1440,6 +1440,100 @@ body[data-list-density="compact"] .row span {
 .google-drive-folder-open-btn {
   min-width: 0;
 }
+.google-drive-import-progress-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line2);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)),
+    radial-gradient(circle at top right, rgba(255,108,0,0.12), transparent 35%);
+}
+.google-drive-import-progress-card[data-state="discovering"] {
+  border-color: rgba(255, 184, 107, 0.28);
+}
+.google-drive-import-progress-card[data-state="enriching"],
+.google-drive-import-progress-card[data-state="importing"],
+.google-drive-import-progress-card[data-state="syncing"] {
+  border-color: rgba(255, 108, 0, 0.32);
+}
+.google-drive-import-progress-card[data-state="complete"] {
+  border-color: rgba(86, 204, 140, 0.28);
+}
+.google-drive-import-progress-card[data-state="error"] {
+  border-color: rgba(255, 107, 107, 0.28);
+}
+.google-drive-import-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.google-drive-import-progress-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.google-drive-import-progress-head strong {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.google-drive-import-progress-head span {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.google-drive-import-progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.04);
+}
+.google-drive-import-progress-bar {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(255,108,0,0.82), rgba(255,210,96,0.96));
+  box-shadow: 0 0 18px rgba(255,108,0,0.28);
+  transition: width 0.22s ease;
+}
+.google-drive-import-progress-bar.indeterminate,
+.google-drive-import-progress-bar[data-indeterminate="true"] {
+  width: 40%;
+  animation: google-drive-progress-indeterminate 1.25s ease-in-out infinite;
+}
+.google-drive-import-progress-card[data-state="complete"] .google-drive-import-progress-bar {
+  background: linear-gradient(90deg, rgba(86,204,140,0.82), rgba(156,244,199,0.98));
+  box-shadow: 0 0 18px rgba(86,204,140,0.24);
+}
+.google-drive-import-progress-card[data-state="error"] .google-drive-import-progress-bar {
+  background: linear-gradient(90deg, rgba(255,107,107,0.82), rgba(255,170,170,0.96));
+  box-shadow: 0 0 18px rgba(255,107,107,0.22);
+}
+.google-drive-import-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.google-drive-import-progress-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.03);
+  color: var(--muted);
+  font-size: 11px;
+}
+@keyframes google-drive-progress-indeterminate {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(260%); }
+}
 .command-palette-card input {
   width: 100%;
   background: var(--panel);
@@ -1511,4 +1605,5 @@ body[data-list-density="compact"] .row span {
   .google-drive-sidebar { max-height: 180px; overflow: auto; }
   .google-drive-folder-table-head,
   .google-drive-folder-row { grid-template-columns: minmax(0, 1fr) 72px 72px; }
+  .google-drive-import-progress-head { flex-direction: column; }
 }

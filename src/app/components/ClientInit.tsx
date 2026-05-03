@@ -12,6 +12,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       errors: number;
     };
     type ScanSourceMode = 'local' | 'google_drive';
+    type GoogleDriveImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
 
     // ── DOM refs ──────────────────────────────────────────────────────────────
     const listEl = document.getElementById('track-list') as HTMLElement;
@@ -209,6 +210,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportProgressTimer: number | null = null;
     let googleDriveImportToastSignature = '';
     let googleDriveImportUiSignature = '';
+    let googleDriveImportStage: GoogleDriveImportStage = 'idle';
+    let googleDriveImportStageLabel = 'Ready to import';
+    let googleDriveImportStageDetail = 'Choose a Drive scope and start the import.';
+    let googleDriveImportStageCurrent = 0;
+    let googleDriveImportStageTotal = 0;
+    let googleDriveImportStageMeta = 'No import running';
     let localScanToastLastAt = 0;
     let localScanToastLastPercentBucket = -1;
     let localScanToastLastLabel = '';
@@ -605,31 +612,113 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const current = Number(context.index ?? 0);
         const total = Number(context.total ?? 0);
         const name = String(context.name ?? selectedGoogleDriveFolderLabel()).trim() || selectedGoogleDriveFolderLabel();
+        setGoogleDriveImportStageState({
+          stage: 'enriching',
+          label: 'Reading embedded metadata',
+          detail: name,
+          current,
+          total,
+          meta: total > 0 ? `${Math.max(0, total - current)} files remaining` : 'Processing downloaded Drive files',
+        });
         setScanProgress(current, total, `Reading metadata · ${name}`);
         return;
       }
 
       if (event === 'drive_page_loaded') {
-        const current = Number(context.totalBuffered ?? 0);
-        const total = Number(context.totalBuffered ?? 0) + (context.hasNextPage ? 1 : 0);
-        setScanProgress(current, total, `Loading Google Drive pages · page ${Number(context.page ?? 1)}`);
+        const buffered = Number(context.totalBuffered ?? 0);
+        const page = Number(context.page ?? 1);
+        const hasNext = Boolean(context.hasNextPage);
+        setGoogleDriveImportStageState({
+          stage: 'discovering',
+          label: 'Loading Google Drive file list',
+          detail: `Page ${page}${hasNext ? ' loaded, more remaining' : ' loaded'}`,
+          current: buffered,
+          total: hasNext ? 0 : buffered,
+          meta: `${buffered} audio files discovered so far`,
+        });
+        setScanProgress(buffered, hasNext ? 0 : buffered, `Loading Google Drive pages · page ${page}`);
         return;
       }
 
       if (event === 'local_import_completed') {
         const total = Number(context.totalBuffered ?? 0);
+        const added = Number(context.localImported ?? 0);
+        const updated = Number(context.localUpdated ?? 0);
+        setGoogleDriveImportStageState({
+          stage: 'importing',
+          label: 'Saving Drive entries locally',
+          detail: `${added} added, ${updated} updated`,
+          current: total,
+          total,
+          meta: `${total} Drive files prepared in the app database`,
+        });
         setScanProgress(total, total, 'Imported file list locally');
         return;
       }
 
       if (event === 'local_metadata_summary') {
         const total = Number(context.total ?? 0);
+        const succeeded = Number(context.succeeded ?? 0);
+        const failed = Number(context.failed ?? 0);
+        setGoogleDriveImportStageState({
+          stage: 'enriching',
+          label: 'Embedded metadata complete',
+          detail: `${succeeded} succeeded${failed ? `, ${failed} failed` : ''}`,
+          current: total,
+          total,
+          meta: 'Preparing server sync',
+        });
         setScanProgress(total, total, 'Local metadata enrichment complete');
         return;
       }
 
       if (event === 'started') {
+        setGoogleDriveImportStageState({
+          stage: 'discovering',
+          label: 'Starting Google Drive import',
+          detail: selectedGoogleDriveFolderLabel(),
+          current: 0,
+          total: 0,
+          meta: 'Connecting to Google Drive and enumerating audio files',
+        });
         setScanProgress(0, 0, selectedGoogleDriveFolderLabel());
+        return;
+      }
+
+      if (event === 'server_import_started') {
+        const total = googleDriveImportStageTotal;
+        setGoogleDriveImportStageState({
+          stage: 'syncing',
+          label: 'Syncing import to server',
+          detail: selectedGoogleDriveFolderLabel(),
+          current: total,
+          total,
+          meta: 'Uploading prepared Drive metadata',
+        });
+        return;
+      }
+
+      if (event === 'server_import_response') {
+        setGoogleDriveImportStageState({
+          stage: level === 'success' ? 'complete' : 'error',
+          label: level === 'success' ? 'Server sync complete' : 'Server sync needs attention',
+          detail: `Server response ${Number(context.status ?? 0) || '--'}`,
+          current: googleDriveImportStageTotal,
+          total: googleDriveImportStageTotal,
+          meta: level === 'success' ? 'Import pipeline finished' : 'Review the server response',
+        });
+        return;
+      }
+
+      if (event === 'failed') {
+        setGoogleDriveImportStageState({
+          stage: 'error',
+          label: 'Import failed',
+          detail: String(context.error ?? 'Unknown error'),
+          current: 0,
+          total: 0,
+          meta: 'The import stopped before completion',
+        });
       }
     }
 
@@ -920,6 +1009,72 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       statusEl.dataset.state = state;
     }
 
+    function setGoogleDriveImportStageState(input: {
+      stage: GoogleDriveImportStage;
+      label: string;
+      detail: string;
+      current?: number;
+      total?: number;
+      meta?: string;
+    }) {
+      googleDriveImportStage = input.stage;
+      googleDriveImportStageLabel = input.label;
+      googleDriveImportStageDetail = input.detail;
+      googleDriveImportStageCurrent = Math.max(0, Number(input.current ?? googleDriveImportStageCurrent) || 0);
+      googleDriveImportStageTotal = Math.max(0, Number(input.total ?? googleDriveImportStageTotal) || 0);
+      googleDriveImportStageMeta = input.meta ?? googleDriveImportStageMeta;
+      syncGoogleDriveImportProgressUi();
+    }
+
+    function resetGoogleDriveImportStageState() {
+      googleDriveImportStage = 'idle';
+      googleDriveImportStageLabel = 'Ready to import';
+      googleDriveImportStageDetail = 'Choose a Drive scope and start the import.';
+      googleDriveImportStageCurrent = 0;
+      googleDriveImportStageTotal = 0;
+      googleDriveImportStageMeta = 'No import running';
+      syncGoogleDriveImportProgressUi();
+    }
+
+    function syncGoogleDriveImportProgressUi() {
+      const cardEl = document.getElementById('google-drive-import-progress-card') as HTMLElement | null;
+      const labelEl = document.getElementById('google-drive-import-stage-label') as HTMLElement | null;
+      const detailEl = document.getElementById('google-drive-import-stage-detail') as HTMLElement | null;
+      const metaEl = document.getElementById('google-drive-import-stage-meta') as HTMLElement | null;
+      const barEl = document.getElementById('google-drive-import-stage-bar') as HTMLElement | null;
+      const countEl = document.getElementById('google-drive-import-stage-count') as HTMLElement | null;
+      const scopeEl = document.getElementById('google-drive-import-stage-scope') as HTMLElement | null;
+      const modeEl = document.getElementById('google-drive-import-stage-mode') as HTMLElement | null;
+      if (cardEl) cardEl.dataset.state = googleDriveImportStage;
+      if (labelEl) labelEl.textContent = googleDriveImportStageLabel;
+      if (detailEl) detailEl.textContent = googleDriveImportStageDetail;
+      if (metaEl) metaEl.textContent = googleDriveImportStageMeta;
+      if (scopeEl) scopeEl.textContent = selectedGoogleDriveFolderLabel();
+      if (modeEl) {
+        modeEl.textContent = googleDriveImportStageTotal > 0
+          ? 'Measured progress'
+          : googleDriveImportBusy
+            ? 'Stage progress'
+            : 'Waiting';
+      }
+      const percent = googleDriveImportStageTotal > 0
+        ? Math.min(100, (googleDriveImportStageCurrent / Math.max(1, googleDriveImportStageTotal)) * 100)
+        : googleDriveImportBusy
+          ? 100
+          : 0;
+      if (barEl) {
+        barEl.style.width = `${percent}%`;
+        barEl.dataset.indeterminate = googleDriveImportStageTotal > 0 ? 'false' : (googleDriveImportBusy ? 'true' : 'false');
+      }
+      if (countEl) {
+        countEl.textContent = googleDriveImportStageTotal > 0
+          ? `${googleDriveImportStageCurrent} / ${googleDriveImportStageTotal}`
+          : googleDriveImportBusy
+            ? 'Working…'
+            : '--';
+      }
+    }
+
     function setGoogleDriveFolderStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
       const statusEl = document.getElementById('google-drive-folder-status') as HTMLElement | null;
       if (!statusEl) return;
@@ -1154,6 +1309,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function importGoogleDriveMetadata() {
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
+      setGoogleDriveImportStageState({
+        stage: 'discovering',
+        label: 'Starting Google Drive import',
+        detail: selectedGoogleDriveFolderLabel(),
+        current: 0,
+        total: 0,
+        meta: 'Preparing the import pipeline',
+      });
       startGoogleDriveImportProgressPolling();
       const button = document.getElementById('google-drive-import-btn') as HTMLButtonElement | null;
       if (button) {
@@ -1217,6 +1380,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const localImported = Number(payload.local_tracks_imported ?? 0);
         const localUpdated = Number(payload.local_tracks_updated ?? 0);
         const truncated = payload.truncated === true;
+        setGoogleDriveImportStageState({
+          stage: 'complete',
+          label: 'Import complete',
+          detail: `${localImported} added, ${localUpdated} updated locally`,
+          current: scanned,
+          total: scanned,
+          meta: `${imported} tracks sent to the server${truncated ? ' · import limit reached' : ''}`,
+        });
         setGoogleDriveImportStatus(
           `Imported ${imported} Drive tracks to the server from ${selectedGoogleDriveFolderLabel()}${truncated ? ' (stopped at the import limit).' : '.'}`,
           'success',
@@ -1246,6 +1417,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           'success',
         );
       } catch (error) {
+        setGoogleDriveImportStageState({
+          stage: 'error',
+          label: 'Import failed',
+          detail: error instanceof Error ? error.message : String(error),
+          current: 0,
+          total: 0,
+          meta: 'Review the error and try again',
+        });
         setGoogleDriveImportStatus(error instanceof Error ? error.message : String(error), 'error');
         setScanStatus('Google Drive import failed', 'error');
         setScanProgress(0, 0, 'Google Drive import failed');
@@ -5205,6 +5384,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist. Imported Drive items are added to the Songs list locally and synced to the server.</div>
             <div class="scan-preflight">Selected scope: ${esc(selectedGoogleDriveFolderLabel())}</div>
             <div class="scan-preflight" id="google-drive-import-status" data-state="idle">${esc(googleDriveRuntimeLabel())}</div>
+            <div class="google-drive-import-progress-card" id="google-drive-import-progress-card" data-state="${esc(googleDriveImportStage)}">
+              <div class="google-drive-import-progress-head">
+                <div>
+                  <strong id="google-drive-import-stage-label">${esc(googleDriveImportStageLabel)}</strong>
+                  <span id="google-drive-import-stage-detail">${esc(googleDriveImportStageDetail)}</span>
+                </div>
+                <strong id="google-drive-import-stage-count">${googleDriveImportStageTotal > 0 ? esc(`${googleDriveImportStageCurrent} / ${googleDriveImportStageTotal}`) : (googleDriveImportBusy ? 'Working…' : '--')}</strong>
+              </div>
+              <div class="google-drive-import-progress-track">
+                <div
+                  class="google-drive-import-progress-bar ${googleDriveImportStageTotal > 0 ? '' : (googleDriveImportBusy ? 'indeterminate' : '')}"
+                  id="google-drive-import-stage-bar"
+                  data-indeterminate="${googleDriveImportStageTotal > 0 ? 'false' : (googleDriveImportBusy ? 'true' : 'false')}"
+                  style="width:${googleDriveImportStageTotal > 0 ? `${Math.min(100, (googleDriveImportStageCurrent / Math.max(1, googleDriveImportStageTotal)) * 100)}%` : (googleDriveImportBusy ? '100%' : '0%')}"
+                ></div>
+              </div>
+              <div class="google-drive-import-progress-meta">
+                <span id="google-drive-import-stage-meta">${esc(googleDriveImportStageMeta)}</span>
+                <span id="google-drive-import-stage-mode">${googleDriveImportStageTotal > 0 ? 'Measured progress' : (googleDriveImportBusy ? 'Stage progress' : 'Waiting')}</span>
+                <span id="google-drive-import-stage-scope">${esc(selectedGoogleDriveFolderLabel())}</span>
+              </div>
+            </div>
             <div class="buttons">
               <button type="button" class="btn" id="google-drive-import-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Import Google Drive Metadata</button>
               <button type="button" class="btn secondary" id="google-drive-preview-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>${googleDriveFilesLoaded ? 'Refresh Drive Files' : 'Preview Drive Files'}</button>

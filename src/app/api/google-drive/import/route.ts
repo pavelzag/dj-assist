@@ -254,6 +254,16 @@ export async function POST(request: NextRequest) {
         total: localFiles.length,
       },
     );
+    await logGoogleDriveProgress(
+      'info',
+      'Syncing imported Google Drive metadata to the server…',
+      {
+        event: 'server_import_started',
+        total: localFiles.length,
+        folderId: folderId || null,
+        folderName: folderName || null,
+      },
+    );
 
     const response = await fetch(`${serverUrl}/api/v1/google-drive/import`, {
       method: 'POST',
