@@ -1,72 +1,146 @@
 # DJ Assist
 
-A desktop music-library tool for DJs. Scan local audio folders, analyze BPM and musical key, enrich tracks with Spotify metadata and album art, and build DJ sets with intelligent compatibility suggestions.
+DJ Assist is a desktop music-library tool for DJs. It scans local music folders, analyzes BPM and musical key, enriches tracks with Spotify and album-art data, imports audio metadata from Google Drive, and helps build playlists with compatibility-aware recommendations.
 
 ## Table of Contents
 
-- [Features](#features)
+- [What DJ Assist Does](#what-dj-assist-does)
+- [Important Additions Since The Older README](#important-additions-since-the-older-readme)
+- [Feature Inventory](#feature-inventory)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [Running the App](#running-the-app)
+- [Running The App](#running-the-app)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
 - [API Reference](#api-reference)
-- [Building for Distribution](#building-for-distribution)
+- [Building For Distribution](#building-for-distribution)
 - [Troubleshooting](#troubleshooting)
+- [Additional Docs](#additional-docs)
 
 ---
 
-## Features
+## What DJ Assist Does
 
-### Library Scanning
-- Recursively scan local audio directories
-- Live scan progress with streaming logs
-- Scan history and job summaries
-- Cancel running scans mid-flight
-- Directory preflight validation before scanning
-- Rescan modes: `smart`, `missing-metadata`, `missing-analysis`, `missing-art`, `full`
-- Optional album art fetching during scan
-- Watch folders that trigger automatic rescans on file changes
+DJ Assist combines a desktop shell, a Next.js app, and a Python analysis engine so you can:
 
-### Track Analysis
-- BPM detection via librosa
-- Musical key detection in Camelot wheel notation
-- Spotify metadata matching (title, artist, album)
-- Spotify tempo/key as fallback when local analysis fails
-- AcoustID fingerprint-based metadata recovery
-- Album art fetching and caching
-- Decode failure tracking and per-track diagnostics
+- scan local music folders and keep them under watch
+- analyze BPM, key, bitrate, duration, and decode health
+- enrich tracks with Spotify matches, fallback tempo/key, and album art
+- import Google Drive audio metadata into the same library
+- preview and play both local and Google Drive-backed tracks
+- build playlists and get harmonic / tempo-aware next-track suggestions
+- bulk-fix library gaps like missing BPM, missing art, duplicates, and ignored tracks
 
-### Library Navigation
-- Full-text search by title, artist, album, and tags
-- Browse by artist and album
-- Artist catalog shortcuts in the track detail pane
-- Related songs by artist
-- "Can play next" recommendations with Camelot wheel compatibility scoring
+---
 
-### Playback and Track Detail
-- Local audio playback via the browser
-- Resume playback position when navigating between tracks
-- Interactive waveform display with scrubbing
-- Cue point creation and clearing
-- Album cover modal
-- YouTube link generation for tracks
+## Important Additions Since The Older README
 
-### Playlist / Set Building
-- Create and name playlists
-- Add and remove tracks
-- Intelligent next-track suggestions based on the last track in the set (Camelot key and BPM compatibility)
+The earlier README described the base scanner and set builder, but the app has grown substantially. The important capabilities that were missing or under-described are:
+
+- Electron desktop packaging with a persistent backend process that survives window close/reopen
+- Google OAuth desktop sign-in flow with PKCE
+- Google Drive folder browser with Finder-style navigation
+- Google Drive metadata import into the local Songs list and optional server sync
+- Google Drive preview before import
+- Google Drive local cache for playback, waveform generation, and BPM reanalysis
+- Dedicated Google Drive import progress UI with stage-based feedback
+- Command palette for commands, artists, tracks, and BPM lookups
+- Keyboard shortcuts modal and desktop-focused interaction model
+- Tap BPM workflow with save, halve, and double actions
+- Interactive waveform scrubbing with cue markers
+- Manual track metadata editing from the UI
+- Bulk track actions, including ignore/unignore, tag edits, add-to-playlist, delete, BPM reanalysis, and art reanalysis
+- Smart crates and collection cleanup workflows
+- Runtime health and startup diagnostics
+- Preferences panel for playback, scan toasts, list density, and visible library columns
+- Playlist management panel built into the app
+- Source preference handling for local vs Google Drive versions of the same track
+- Activity logging for scan/import diagnostics
+- Library reset tools inside the app
+
+---
+
+## Feature Inventory
+
+### Local Library Scanning
+
+- recursive scan of local audio folders
+- directory preflight validation before scan start
+- scan modes: `smart`, `missing-metadata`, `missing-analysis`, `missing-art`, `full`
+- live scan progress with status text and streaming logs
+- scan history with summaries and job detail
+- cancel in-flight scans
+- watch folders that trigger automatic rescans on file changes
+- optional album-art fetching during scans
+
+### Audio Analysis And Metadata
+
+- BPM detection via Python analysis pipeline
+- musical key detection in Camelot notation
+- duration, bitrate, artist, title, and album extraction
+- decode failure detection and tracking
+- Spotify match lookup for metadata, tempo, and key fallback
+- AcoustID fingerprint-assisted metadata recovery
+- album art fetching and review status tracking
+- embedded artwork extraction for supported files
+- per-track BPM reanalysis
+- per-track album-art reanalysis
+
+### Google Sign-In And Google Drive
+
+- Google desktop sign-in flow
+- Google Drive folder browser with breadcrumb and sidebar navigation
+- scrollable folder picker with folder and audio-file contents
+- Google Drive preview before import
+- Google Drive metadata import into the local library
+- local metadata enrichment after Drive import
+- Google Drive track local caching for playback and analysis
+- playback and waveform support for Google Drive-backed tracks
+- stage-based import progress for Drive imports
+
+### Playback And Track Detail
+
+- in-app audio playback
+- support for local files and Google Drive-backed tracks
+- waveform rendering with scrubbing
+- cue point placement and clearing
+- playback mute/unmute controls
+- album cover modal
+- YouTube link support
+- track source inspection and source preference switching
+
+### Search, Navigation, And Review
+
+- full-text search across title, artist, album, and tags
+- browse by artist and album
+- related tracks by artist
+- review-oriented smart crates
+- next-track suggestions with intent modes such as safe, up, down, and same-vibe
+- command palette for search and commands
+- keyboard shortcuts for common workflows
+
+### Playlists / Sets
+
+- create, rename, and delete playlists
+- add and remove tracks
+- reorder by position through set track APIs
+- compatibility-aware next-track recommendations from the current track or set context
+- export setlists from the CLI
 
 ### Library Management
-- Collection health dashboard with coverage stats
-- Smart crates for common cleanup workflows
-- Duplicate detection
-- Bulk actions from the library list
-- Track tagging and manual metadata editing
-- Ignore / unignore individual tracks
-- Runtime health panel showing backend status
+
+- bulk ignore / unignore
+- bulk tag add / remove / clear
+- bulk add visible selections to playlists
+- bulk delete tracks
+- visible Google Drive missing-BPM remediation workflow
+- duplicate detection
+- collection health overview
+- runtime diagnostics and startup diagnostics
+- in-app preferences for list columns, list density, autoplay, startup load, and scan toasts
+- library reset from the UI
 
 ---
 
@@ -96,35 +170,33 @@ A desktop music-library tool for DJs. Scan local audio folders, analyze BPM and 
 
 ## Architecture
 
-DJ Assist is an **Electron desktop app** with three main layers:
+DJ Assist is an Electron desktop app with three main layers:
 
-```
+```text
 Electron shell
   └── Next.js 15 UI + API server (TypeScript / Node 22)
-        └── Python 3.11 scanner / analyzer (librosa, mutagen)
-              └── SQLite database (~/.dj_assist/dj_assist.db)
+        └── Python 3.11 analysis engine
+              └── SQLite or PostgreSQL data store
 ```
 
 | Layer | Tech | Role |
 |---|---|---|
-| Desktop shell | Electron 41 | Window management, IPC, Python process lifecycle |
-| UI | React 19 + Next.js 15 | All views, audio playback, waveform rendering |
-| API | Next.js API routes | REST endpoints consumed by the UI |
-| Scanner | Python 3.11 + Click | Audio analysis, Spotify/AcoustID integration, CLI |
-| Database | SQLite via SQLAlchemy | Track library, sets, scan jobs |
+| Desktop shell | Electron 41 | Window lifecycle, IPC, app startup, desktop integrations |
+| UI | React 19 + Next.js 15 | Library views, playback UI, modals, progress surfaces |
+| API | Next.js API routes | Track, scan, auth, Drive, settings, playlist, and log endpoints |
+| Analysis engine | Python 3.11 | Scanning, BPM/key analysis, metadata extraction, CLI |
+| Database | SQLite by default, PostgreSQL optional | Tracks, playlists, scan jobs, settings-backed workflows |
 
-The **backend stays running** when the Electron window is closed. In-progress scans continue in the background. Reopening the window reconnects to the same backend and restores any running scan job from history.
-
-PostgreSQL is supported as an alternative database for server deployments; set `DJ_ASSIST_DATABASE_URL` to activate it.
+The backend stays running when the Electron window closes. Reopening the window reconnects to the same backend and restores running jobs from history.
 
 ---
 
 ## Requirements
 
-- **macOS** (primary supported platform)
-- **Node 22.x**
-- **Python 3.11+**
-- SQLite (no separate install needed on macOS)
+- macOS is the primary supported platform
+- Node 22.x
+- Python 3.11+
+- SQLite on macOS, or PostgreSQL if you intentionally configure server-style storage
 
 ---
 
@@ -139,8 +211,8 @@ brew install node@22 python@3.11
 Confirm versions:
 
 ```bash
-node -v   # v22.x.x
-python3 --version  # Python 3.11.x
+node -v
+python3 --version
 ```
 
 ### 2. Clone and install Node dependencies
@@ -168,67 +240,76 @@ mkdir -p ~/.dj_assist
 
 ### 5. Configure environment
 
-Create `.env.local` in the project root:
+Create `.env.local`:
 
 ```bash
 DJ_ASSIST_DB_PATH=/Users/<you>/.dj_assist/dj-assist.db
 PYTHON_EXECUTABLE=/Users/<you>/Projects/dj-assist/.venv/bin/python
 ```
 
+If you plan to use Google Drive, Spotify, or server sync, also configure the relevant variables from the table below.
+
 ---
 
-## Running the App
+## Running The App
 
-### Desktop (Electron + Next.js)
+### Desktop app
 
 ```bash
 npm run dev
 ```
 
-Launches the Electron window and the Next.js backend together.
+This launches Electron and the embedded Next.js backend together.
 
-### Backend only (for debugging)
+### Backend only
 
 ```bash
 npm run backend:dev
 ```
 
-Then open `http://localhost:3000` in a browser.
+Then open `http://localhost:3000`.
 
 ### First-run checklist
 
-1. Open the **Collection** panel and check **Startup Diagnostics** — confirm the runtime shows green.
-2. Enter a local music folder path in the scan bar and run a scan.
-3. Confirm tracks appear in the library list.
-4. Test playback and waveform scrubbing on a track.
+1. Open `Collection`.
+2. Check `Startup Diagnostics`.
+3. Add a local music folder or open `Add Music`.
+4. Run a local scan or import Google Drive metadata.
+5. Open a track and verify playback, waveform, and metadata.
 
 ---
 
 ## Configuration
 
-All configuration is via environment variables (`.env.local` for local dev).
+All configuration is driven through environment variables, typically from `.env.local`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DJ_ASSIST_DB_PATH` | `~/.dj_assist/dj_assist.db` | Path to the SQLite database |
+| `DJ_ASSIST_DB_PATH` | `~/.dj_assist/dj-assist.db` | Local SQLite database path |
 | `DJ_ASSIST_DATABASE_URL` | — | PostgreSQL connection string; overrides SQLite |
-| `PYTHON_EXECUTABLE` | `python3` | Path to the Python interpreter used for scans |
-| `GOOGLE_CLIENT_ID` | — | Google OAuth Desktop App client ID used for PKCE sign-in |
-| `SPOTIFY_CLIENT_ID` | — | Spotify API client ID for metadata enrichment |
+| `PYTHON_EXECUTABLE` | `python3` | Python used by scan and analysis routes |
+| `GOOGLE_CLIENT_ID` | — | Google OAuth desktop client ID |
+| `GOOGLE_CLIENT_SECRET` | — | Google OAuth desktop client secret for local dev flows |
+| `SPOTIFY_CLIENT_ID` | — | Spotify API client ID |
 | `SPOTIFY_CLIENT_SECRET` | — | Spotify API client secret |
-| `ACOUSTID_API_KEY` | — | AcoustID API key for fingerprint-based metadata |
-| `DJ_ASSIST_ELECTRON_PORT` | `3000` | Port the Next.js server listens on |
-| `DJ_ASSIST_ELECTRON_HOST` | `127.0.0.1` | Host the Next.js server binds to |
+| `ACOUSTID_API_KEY` | — | AcoustID API key |
+| `FPCALC_PATH` | system lookup | AcoustID fingerprint executable path |
+| `DJ_ASSIST_SERVER_ENABLED` | `false` | Enable optional server sync features |
+| `DJ_ASSIST_SERVER_URL` | — | Production server URL |
+| `DJ_ASSIST_LOCAL_SERVER_URL` | `http://localhost:3001` | Local server URL used when local debug mode is enabled |
+| `DJ_ASSIST_SERVER_LOCAL_DEBUG` | `false` | Switch server sync calls to the local server URL |
+| `DJ_ASSIST_ELECTRON_PORT` | `3000` | Embedded Next.js port |
+| `DJ_ASSIST_ELECTRON_HOST` | `127.0.0.1` | Embedded Next.js host |
+| `DJ_ASSIST_PYTHON_STANDALONE` | — | Relocatable Python root used for packaging |
+| `DJ_ASSIST_CONFIG_DIR` | app-managed default | Config, logs, cache, and waveform base directory |
 
-Google sign-in expects a Google OAuth client of type `Desktop app`. Release builds embed `GOOGLE_CLIENT_ID` from GitHub Actions configuration so end users only see **Sign in with Google**. The desktop loopback flow uses PKCE and does not depend on a bundled client secret.
-
-Spotify credentials can also be saved from within the app under **Settings → Spotify**.
+Google sign-in expects a Google OAuth client of type `Desktop app`.
 
 ---
 
 ## CLI Reference
 
-The Python package exposes a `dj-assist` command. Activate the virtualenv first, or use `python -m dj_assist.cli`.
+The Python package exposes `python -m dj_assist.cli` and related commands.
 
 ### Scanning
 
@@ -238,33 +319,28 @@ dj-assist scan <directory>
 
 | Option | Description |
 |---|---|
-| `--mode smart` | Only scan new and changed files (default) |
+| `--mode smart` | Scan new and changed files |
 | `--mode full` | Rescan all files |
-| `--mode missing-metadata` | Only files with no Spotify metadata |
+| `--mode missing-metadata` | Only files missing Spotify metadata |
 | `--mode missing-analysis` | Only files missing BPM/key |
 | `--mode missing-art` | Only files missing album art |
-| `--fetch-art` | Fetch album art during this scan |
-| `--verbose` | Enable detailed diagnostic output |
+| `--fetch-art` | Fetch album art during scan |
+| `--verbose` | Verbose diagnostic output |
 
-### Library
+### Library And Analysis
 
 ```bash
-dj-assist list                         # List all tracks
-dj-assist search --query "track name"  # Search by title/artist
+dj-assist list
+dj-assist search --query "track name"
 dj-assist search --artist "Artist"
 dj-assist search --key 8A
 dj-assist search --bpm-min 120 --bpm-max 130
-dj-assist debug <track_id>             # Show full analysis details for a track
-```
-
-### Analysis
-
-```bash
-dj-assist reanalyze-bpm <track_id>     # Re-detect BPM for a single track
-dj-assist waveform-peaks <file>        # Extract waveform peaks as JSON
-dj-assist fetch-art                    # Fetch missing album art for all tracks
-dj-assist fetch-art --force            # Refetch art even if already present
-dj-assist fetch-art --limit 50         # Limit to N tracks
+dj-assist debug <track_id>
+dj-assist reanalyze-bpm <track_id>
+dj-assist waveform-peaks <file>
+dj-assist fetch-art
+dj-assist fetch-art --force
+dj-assist fetch-art --limit 50
 ```
 
 ### Metadata
@@ -281,37 +357,24 @@ dj-assist write-tags <file> \
 ### Sets / Playlists
 
 ```bash
-dj-assist set new "My Set Name"         # Create a new set
-dj-assist set list                      # List all sets
-dj-assist set show <set_id>             # Show tracks in a set
-dj-assist set add <set_id> <track_id>   # Add a track
-dj-assist set remove <set_id> <pos>     # Remove track at position
-dj-assist set recommend <set_id>        # Get compatible next-track suggestions
-dj-assist set export <set_id>           # Export set to file
-dj-assist set export <set_id> --output playlist.m3u
+dj-assist set new "My Set Name"
+dj-assist set list
+dj-assist set show <set_id>
+dj-assist set add <set_id> <track_id>
+dj-assist set remove <set_id> <pos>
+dj-assist set recommend <set_id>
+dj-assist set export <set_id>
 ```
 
-### Library Management
+### Maintenance
 
 ```bash
-dj-assist dedupe                        # Find and remove duplicates (interactive)
-dj-assist dedupe --dry-run              # Preview duplicates without deleting
-dj-assist reset-db                      # Reset the database (prompts for confirmation)
-dj-assist reset-db --yes                # Skip confirmation
-```
-
-### Interactive Set Building
-
-```bash
-dj-assist flow                          # Start interactive set builder
-dj-assist flow --start-track-id <id>    # Start from a specific track
-```
-
-### Flask Web UI (legacy)
-
-```bash
+dj-assist dedupe
+dj-assist dedupe --dry-run
+dj-assist reset-db
+dj-assist reset-db --yes
+dj-assist flow
 dj-assist web
-dj-assist web --host 0.0.0.0 --port 8080 --debug
 ```
 
 ---
@@ -320,105 +383,91 @@ dj-assist web --host 0.0.0.0 --port 8080 --debug
 
 Base URL: `http://127.0.0.1:3000/api`
 
+### Authentication
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/auth/google/start` | Start Google OAuth desktop flow |
+| `GET` | `/api/auth/google/callback` | Complete Google OAuth callback |
+| `POST` | `/api/auth/logout` | Clear current Google session |
+
+### Google Drive
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/google-drive/folders` | Browse Drive folders |
+| `GET` | `/api/google-drive/files` | List audio files visible to the current Drive scope |
+| `POST` | `/api/google-drive/import` | Import Drive metadata into DJ Assist |
+
 ### Scanning
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/scan` | List scan job history |
-| `POST` | `/api/scan` | Start a new scan |
-| `GET` | `/api/scan/:id` | Get scan job status |
-| `GET` | `/api/scan/:id/stream` | Stream scan progress (Server-Sent Events) |
-| `POST` | `/api/scan/validate` | Validate a directory path before scanning |
-
-**Start scan request body:**
-
-```json
-{
-  "path": "/Users/you/Music",
-  "mode": "smart",
-  "fetchArt": false,
-  "verbose": false
-}
-```
+| `GET` | `/api/scan` | List scan jobs |
+| `POST` | `/api/scan` | Start a scan |
+| `GET` | `/api/scan/:id` | Fetch scan job detail |
+| `GET` | `/api/scan/:id/stream` | Stream scan progress |
+| `POST` | `/api/scan/validate` | Validate a scan directory |
 
 ### Tracks
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/tracks` | List tracks with optional filters |
-| `GET` | `/api/tracks/:id` | Get track details |
+| `GET` | `/api/tracks` | List tracks with filters |
+| `GET` | `/api/tracks/:id` | Fetch track detail |
 | `PATCH` | `/api/tracks/:id` | Update track metadata |
-| `GET` | `/api/tracks/:id/waveform` | Get waveform peaks array |
-| `GET` | `/api/tracks/:id/stream` | Stream the audio file |
-| `GET` | `/api/tracks/:id/next` | Get compatible next-track suggestions |
-| `POST` | `/api/tracks/:id/reanalyze-bpm` | Trigger BPM reanalysis |
-| `PATCH` | `/api/tracks/bulk` | Bulk update multiple tracks |
+| `GET` | `/api/tracks/:id/stream` | Stream track audio |
+| `GET` | `/api/tracks/:id/waveform` | Fetch waveform peak data |
+| `GET` | `/api/tracks/:id/next` | Fetch next-track recommendations |
+| `POST` | `/api/tracks/:id/reanalyze-bpm` | Re-run BPM analysis |
+| `POST` | `/api/tracks/:id/reanalyze-art` | Re-run artwork analysis |
+| `GET` | `/api/tracks/:id/art` | Resolve or stream track artwork |
+| `POST` | `/api/tracks/bulk` | Run bulk actions on selected tracks |
 
-**Track list query parameters:**
-
-| Param | Type | Description |
-|---|---|---|
-| `q` | string | Full-text search across title, artist, album, tags |
-| `artist` | string | Filter by artist name |
-| `album` | string | Filter by album name |
-| `key` | string | Filter by Camelot key (e.g. `8A`) |
-| `bpmMin` | number | Minimum BPM |
-| `bpmMax` | number | Maximum BPM |
-| `tag` | string | Filter by tag |
-| `limit` | number | Max results (default 50) |
-| `offset` | number | Pagination offset |
-
-### Sets
+### Playlists / Sets
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/sets` | List all sets |
-| `POST` | `/api/sets` | Create a new set |
-| `GET` | `/api/sets/:id` | Get set with tracks |
-| `PATCH` | `/api/sets/:id` | Update set name |
-| `POST` | `/api/sets/:id/tracks` | Add a track to the set |
-| `DELETE` | `/api/sets/:id/tracks/:position` | Remove a track by position |
+| `GET` | `/api/sets` | List playlists |
+| `POST` | `/api/sets` | Create playlist |
+| `GET` | `/api/sets/:id` | Fetch playlist with tracks |
+| `PATCH` | `/api/sets/:id` | Rename playlist |
+| `POST` | `/api/sets/:id/tracks` | Add track to playlist |
+| `DELETE` | `/api/sets/:id/tracks/:position` | Remove playlist item |
 
-### Library
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/library` | Library statistics and health metrics |
-| `POST` | `/api/library/reset` | Reset the database |
-
-### Settings
+### Library And Settings
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/settings/spotify` | Save Spotify API credentials |
+| `GET` | `/api/library` | Collection overview and health metrics |
+| `POST` | `/api/library/reset` | Reset local library data |
+| `POST` | `/api/settings/spotify` | Save Spotify settings |
+| `POST` | `/api/settings/google` | Save Google OAuth settings |
+| `POST` | `/api/settings/server` | Save server sync settings |
 
-### Watch Folders
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/watch` | List configured watch folders |
-| `POST` | `/api/watch` | Add a watch folder |
-| `DELETE` | `/api/watch` | Remove a watch folder |
-
-### Other
+### Watch Folders And Logs
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/health` | Health check |
-| `POST` | `/api/logs/client` | Submit client-side log entries |
+| `GET` | `/api/watch` | List watch folders |
+| `POST` | `/api/watch` | Add watch folder |
+| `DELETE` | `/api/watch` | Remove watch folder |
+| `GET` | `/api/health` | Runtime health and startup diagnostics |
+| `GET` | `/api/logs/client` | Read client diagnostic logs |
+| `POST` | `/api/logs/client` | Append client diagnostic log entries |
 
 ---
 
-## Building for Distribution
+## Building For Distribution
 
-### macOS app bundle (unsigned, for local testing)
+### Local macOS app bundle
 
 ```bash
-npm run build       # Build Next.js
-npm run pack:mac    # Create .app bundle in dist-electron/
+npm run build
+npm run pack:mac
 ```
 
-### macOS distributables (DMG + ZIP)
+### DMG + ZIP
 
 ```bash
 export DJ_ASSIST_PYTHON_STANDALONE=/absolute/path/to/relocatable-python-root
@@ -435,27 +484,17 @@ export APPLE_TEAM_ID=XXXXXXXXXX
 
 Artifacts are written to `dist-electron/`.
 
-The packaging flow:
-1. Copies the relocatable Python runtime into `python/runtime`
-2. Creates a fresh in-bundle virtualenv at `python/env`
-3. Installs scanner dependencies into the bundle
-4. Runs `electron-builder` to produce the final artifact
-
-> The Python runtime must be a **relocatable standalone build** — not a symlinked Homebrew installation. A Homebrew virtualenv will not work inside the app bundle.
-
-See [Product Shipping Guide](./docs/PRODUCT-SHIPPING.md) for the full discussion of distribution options.
+Packaging copies the Python runtime, prepares bundled audio tools, builds the Next.js app, and runs `electron-builder`.
 
 ---
 
 ## Troubleshooting
 
-### Startup Diagnostics shows the runtime is not ready
+### Startup Diagnostics says the runtime is not ready
 
-Open **Collection → Startup Diagnostics**. It shows whether the bundled Python runtime and database are accessible. In dev, confirm `.env.local` has the correct `PYTHON_EXECUTABLE` and `DJ_ASSIST_DB_PATH`.
+Open `Collection → Startup Diagnostics`. Verify the Python runtime, database path, and audio tools.
 
 ### Python scan fails
-
-Test the scanner directly:
 
 ```bash
 source .venv/bin/activate
@@ -465,32 +504,36 @@ python -m dj_assist.cli scan /path/to/music
 
 ### Database is unavailable
 
-Verify `.env.local` exists with `DJ_ASSIST_DB_PATH` pointing to a writable directory, then restart `npm run dev`.
+Verify `.env.local` and confirm `DJ_ASSIST_DB_PATH` or `DJ_ASSIST_DATABASE_URL` points to a writable and reachable target.
 
-### macOS says the app cannot be opened (unsigned build)
+### Google Drive import fails
 
-Right-click the app in Finder → **Open**, then confirm. Or go to **System Settings → Privacy & Security** and allow the app.
+- verify Google sign-in is active
+- open the Drive folder picker and reduce the scope to a smaller folder
+- check `Collection` and the activity logs for Drive import progress and failures
 
-### App refuses to start due to Node version
-
-DJ Assist requires Node 22.x.
-
-```bash
-node -v
-brew install node@22 && brew link --force --overwrite node@22
-```
-
-### No waveform or audio playback
-
-Confirm the track file path is readable by the backend, then test the stream endpoint directly:
+### No waveform or playback
 
 ```bash
 curl -I http://127.0.0.1:3000/api/tracks/<id>/stream
 ```
 
-### Scan finds files but no metadata appears
+For Google Drive-backed tracks, the first play may need to create a local cache copy before waveform or playback becomes available.
 
-Add your Spotify credentials under **Settings → Spotify** or set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env.local`, then rescan with `--mode missing-metadata`.
+### Scan finds files but metadata is sparse
+
+Add Spotify credentials and rerun:
+
+```bash
+SPOTIFY_CLIENT_ID=...
+SPOTIFY_CLIENT_SECRET=...
+```
+
+or re-run a targeted scan with `--mode missing-metadata`.
+
+### Unsigned macOS build will not open
+
+Right-click the app in Finder, choose `Open`, and confirm. You can also allow it from `System Settings → Privacy & Security`.
 
 ---
 
@@ -499,3 +542,5 @@ Add your Spotify credentials under **Settings → Spotify** or set `SPOTIFY_CLIE
 - [Client Install Guide](./docs/CLIENT-INSTALL.md)
 - [Product Shipping Guide](./docs/PRODUCT-SHIPPING.md)
 - [Electron Plan](./docs/ELECTRON-PLAN.md)
+- [Album Art Backfill](./docs/ALBUM-ART-BACKFILL.md)
+- [Releases](./docs/RELEASES.md)
