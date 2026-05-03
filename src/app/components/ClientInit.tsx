@@ -206,8 +206,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let commandPaletteActiveIndex = 0;
     let currentRenderedList: Record<string, unknown>[] = [];
     let frozenTrackIdsDuringScan: number[] | null = null;
-    let googleDriveImportToastTimer: number | null = null;
+    let googleDriveImportProgressTimer: number | null = null;
     let googleDriveImportToastSignature = '';
+    let googleDriveImportUiSignature = '';
     let localScanToastLastAt = 0;
     let localScanToastLastPercentBucket = -1;
     let localScanToastLastLabel = '';
@@ -590,8 +591,50 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       showProgressToast('local-scan-progress', progressLabel, 'info', false);
     }
 
-    async function pollGoogleDriveImportProgressToast() {
-      if (!googleDriveImportBusy || !preferences.scanProgressToasts) return;
+    function applyGoogleDriveImportUiProgress(entry: Record<string, unknown>) {
+      const message = String(entry.message ?? 'Google Drive import in progress.');
+      const level = String(entry.level ?? 'info');
+      const context = entry.context && typeof entry.context === 'object'
+        ? entry.context as Record<string, unknown>
+        : {};
+      const event = String(context.event ?? '').trim();
+      const tone = level === 'error' ? 'error' : level === 'warning' ? 'error' : level === 'success' ? 'success' : 'saving';
+      setGoogleDriveImportStatus(message, tone);
+
+      if (event === 'local_metadata_started' || event === 'local_metadata_completed' || event === 'local_metadata_failed') {
+        const current = Number(context.index ?? 0);
+        const total = Number(context.total ?? 0);
+        const name = String(context.name ?? selectedGoogleDriveFolderLabel()).trim() || selectedGoogleDriveFolderLabel();
+        setScanProgress(current, total, `Reading metadata · ${name}`);
+        return;
+      }
+
+      if (event === 'drive_page_loaded') {
+        const current = Number(context.totalBuffered ?? 0);
+        const total = Number(context.totalBuffered ?? 0) + (context.hasNextPage ? 1 : 0);
+        setScanProgress(current, total, `Loading Google Drive pages · page ${Number(context.page ?? 1)}`);
+        return;
+      }
+
+      if (event === 'local_import_completed') {
+        const total = Number(context.totalBuffered ?? 0);
+        setScanProgress(total, total, 'Imported file list locally');
+        return;
+      }
+
+      if (event === 'local_metadata_summary') {
+        const total = Number(context.total ?? 0);
+        setScanProgress(total, total, 'Local metadata enrichment complete');
+        return;
+      }
+
+      if (event === 'started') {
+        setScanProgress(0, 0, selectedGoogleDriveFolderLabel());
+      }
+    }
+
+    async function pollGoogleDriveImportProgress() {
+      if (!googleDriveImportBusy) return;
       try {
         const response = await fetch('/api/logs/client?limit=120');
         if (!response.ok) return;
@@ -604,32 +647,39 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           String(latest.level ?? 'info'),
           String(latest.message ?? ''),
         ]);
-        if (signature === googleDriveImportToastSignature) return;
-        googleDriveImportToastSignature = signature;
-        const level = String(latest.level ?? 'info');
-        const tone = level === 'error' ? 'error' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'info';
-        showProgressToast('google-drive-import-progress', String(latest.message ?? 'Google Drive import in progress.'), tone, tone === 'success');
+        if (signature !== googleDriveImportUiSignature) {
+          googleDriveImportUiSignature = signature;
+          applyGoogleDriveImportUiProgress(latest);
+        }
+        if (preferences.scanProgressToasts && signature !== googleDriveImportToastSignature) {
+          googleDriveImportToastSignature = signature;
+          const level = String(latest.level ?? 'info');
+          const tone = level === 'error' ? 'error' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'info';
+          showProgressToast('google-drive-import-progress', String(latest.message ?? 'Google Drive import in progress.'), tone, tone === 'success');
+        }
       } catch {
         // Ignore progress polling failures.
       }
     }
 
-    function stopGoogleDriveImportProgressToasts() {
-      if (googleDriveImportToastTimer) {
-        window.clearInterval(googleDriveImportToastTimer);
-        googleDriveImportToastTimer = null;
+    function stopGoogleDriveImportProgressPolling() {
+      if (googleDriveImportProgressTimer) {
+        window.clearInterval(googleDriveImportProgressTimer);
+        googleDriveImportProgressTimer = null;
       }
+      googleDriveImportUiSignature = '';
       googleDriveImportToastSignature = '';
       removeToastByKey('google-drive-import-progress');
     }
 
-    function startGoogleDriveImportProgressToasts() {
-      if (!preferences.scanProgressToasts) return;
-      stopGoogleDriveImportProgressToasts();
-      showProgressToast('google-drive-import-progress', `Google Drive import started · ${selectedGoogleDriveFolderLabel()}`, 'info', false);
-      void pollGoogleDriveImportProgressToast();
-      googleDriveImportToastTimer = window.setInterval(() => {
-        void pollGoogleDriveImportProgressToast();
+    function startGoogleDriveImportProgressPolling() {
+      stopGoogleDriveImportProgressPolling();
+      if (preferences.scanProgressToasts) {
+        showProgressToast('google-drive-import-progress', `Google Drive import started · ${selectedGoogleDriveFolderLabel()}`, 'info', false);
+      }
+      void pollGoogleDriveImportProgress();
+      googleDriveImportProgressTimer = window.setInterval(() => {
+        void pollGoogleDriveImportProgress();
       }, 2500);
     }
 
@@ -937,18 +987,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function openGoogleAuthModal() {
       const user = googleSignedInUser();
+      const drive = googleDriveRuntimeSummary();
       const statusEl = document.getElementById('google-auth-upsell-status') as HTMLElement | null;
       const signInLabel = document.getElementById('google-auth-upsell-sign-in-label') as HTMLElement | null;
+      const signInBtn = document.getElementById('google-auth-upsell-sign-in-btn') as HTMLButtonElement | null;
       const signOutBtn = document.getElementById('google-auth-modal-sign-out-btn') as HTMLButtonElement | null;
       const declineBtn = document.getElementById('google-auth-upsell-decline-btn') as HTMLButtonElement | null;
       if (statusEl) {
         statusEl.textContent = user
-          ? `Signed in as ${String(user.email ?? user.name ?? 'Google user')}.`
-          : '';
+          ? `${String(user.email ?? user.name ?? 'Google user')}${drive?.connected ? ' · Drive access ready' : ' · account connected'}`
+          : 'Sign in to connect Google Drive.';
       }
       if (signInLabel) {
-        signInLabel.textContent = 'Sign in with Google';
+        signInLabel.textContent = user ? 'Reconnect Google' : 'Sign in with Google';
       }
+      if (signInBtn) signInBtn.hidden = Boolean(user);
       if (signOutBtn) signOutBtn.hidden = !user;
       if (declineBtn) declineBtn.hidden = true;
       openModal(googleAuthUpsellModal);
@@ -1101,7 +1154,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function importGoogleDriveMetadata() {
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
-      startGoogleDriveImportProgressToasts();
+      startGoogleDriveImportProgressPolling();
       const button = document.getElementById('google-drive-import-btn') as HTMLButtonElement | null;
       if (button) {
         button.disabled = true;
@@ -1209,9 +1262,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         );
       } finally {
         googleDriveImportBusy = false;
-        if (googleDriveImportToastTimer) {
+        if (googleDriveImportProgressTimer) {
           window.setTimeout(() => {
-            stopGoogleDriveImportProgressToasts();
+            stopGoogleDriveImportProgressPolling();
           }, 3000);
         }
         if (button) {
@@ -1226,8 +1279,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return `Current folder: My Drive / ${googleDriveFolderTrail.map((item) => item.name).join(' / ')}`;
     }
 
+    function currentGoogleDriveFolder() {
+      return googleDriveFolderTrail[googleDriveFolderTrail.length - 1] ?? null;
+    }
+
     function renderGoogleDriveFolderPicker() {
       const listEl = document.getElementById('google-drive-folder-list') as HTMLElement | null;
+      const sidebarEl = document.getElementById('google-drive-folder-sidebar') as HTMLElement | null;
       const pathEl = document.getElementById('google-drive-folder-path') as HTMLElement | null;
       const backBtn = document.getElementById('google-drive-folder-back-btn') as HTMLButtonElement | null;
       const useCurrentBtn = document.getElementById('google-drive-folder-use-current-btn') as HTMLButtonElement | null;
@@ -1239,6 +1297,54 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           ? `Use "${googleDriveFolderTrail[googleDriveFolderTrail.length - 1]?.name ?? 'This Folder'}"`
           : 'Use This Folder';
       }
+      if (sidebarEl) {
+        const currentFolder = currentGoogleDriveFolder();
+        const sidebarItems = [
+          `
+            <button type="button" class="google-drive-sidebar-item ${googleDriveFolderTrail.length === 0 ? 'active' : ''}" data-drive-root="true">
+              <span class="google-drive-sidebar-item-title">My Drive</span>
+              <span class="google-drive-sidebar-item-meta">Top-level folders</span>
+            </button>
+          `,
+          selectedGoogleDriveFolderId
+            ? `
+              <button type="button" class="google-drive-sidebar-item ${currentFolder?.id === selectedGoogleDriveFolderId ? 'active' : ''}" data-drive-jump-id="${esc(selectedGoogleDriveFolderId)}" data-drive-jump-name="${esc(selectedGoogleDriveFolderName || 'Selected folder')}">
+                <span class="google-drive-sidebar-item-title">Current selection</span>
+                <span class="google-drive-sidebar-item-meta">${esc(selectedGoogleDriveFolderName || 'Selected folder')}</span>
+              </button>
+            `
+            : '',
+          googleDriveFolderTrail.map((folder, index) => `
+            <button type="button" class="google-drive-sidebar-item ${index === googleDriveFolderTrail.length - 1 ? 'active' : ''}" data-drive-jump-id="${esc(folder.id)}" data-drive-jump-name="${esc(folder.name)}" data-drive-jump-depth="${index}">
+              <span class="google-drive-sidebar-item-title">${esc(folder.name)}</span>
+              <span class="google-drive-sidebar-item-meta">${index === 0 ? 'Inside My Drive' : `Level ${index + 1}`}</span>
+            </button>
+          `).join(''),
+        ].filter(Boolean).join('');
+        sidebarEl.innerHTML = sidebarItems;
+        sidebarEl.querySelector('[data-drive-root="true"]')?.addEventListener('click', () => {
+          void loadGoogleDriveFolders({
+            parentId: '',
+            trail: [],
+          });
+        });
+        sidebarEl.querySelectorAll('[data-drive-jump-id]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const element = button as HTMLElement;
+            const folderId = String(element.dataset.driveJumpId ?? '').trim();
+            const folderName = String(element.dataset.driveJumpName ?? '').trim() || 'Untitled folder';
+            const depth = Number(element.dataset.driveJumpDepth ?? '-1');
+            if (!folderId) return;
+            const trail = depth >= 0
+              ? googleDriveFolderTrail.slice(0, depth + 1)
+              : [{ id: folderId, name: folderName }];
+            void loadGoogleDriveFolders({
+              parentId: folderId,
+              trail,
+            });
+          });
+        });
+      }
       if (!listEl) return;
       if (googleDriveFoldersBusy) {
         listEl.innerHTML = '<div class="empty">Loading Google Drive folders…</div>';
@@ -1246,15 +1352,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       listEl.innerHTML = googleDriveFolders.length
         ? googleDriveFolders.map((folder) => `
-          <button type="button" class="scan-history-item" data-drive-folder-id="${esc(String(folder.id ?? ''))}" data-drive-folder-name="${esc(String(folder.name ?? 'Untitled folder'))}">
-            <strong>${esc(String(folder.name ?? 'Untitled folder'))}</strong>
-            <span>Open folder</span>
-          </button>
+          <div class="google-drive-folder-row" data-drive-folder-id="${esc(String(folder.id ?? ''))}" data-drive-folder-name="${esc(String(folder.name ?? 'Untitled folder'))}">
+            <button type="button" class="google-drive-folder-name-btn" data-drive-open-folder="true">
+              <span class="google-drive-folder-icon" aria-hidden="true">📁</span>
+              <span class="google-drive-folder-name-copy">
+                <strong>${esc(String(folder.name ?? 'Untitled folder'))}</strong>
+                <span>${esc(googleDriveFolderTrail.length ? 'Subfolder' : 'Folder in My Drive')}</span>
+              </span>
+            </button>
+            <span class="google-drive-folder-kind">Folder</span>
+            <button type="button" class="btn secondary google-drive-folder-open-btn" data-drive-open-folder="true">Open</button>
+          </div>
         `).join('')
         : '<div class="empty">No child folders found here.</div>';
-      listEl.querySelectorAll('[data-drive-folder-id]').forEach((button) => {
+      listEl.querySelectorAll('[data-drive-open-folder="true"]').forEach((button) => {
         button.addEventListener('click', () => {
-          const element = button as HTMLElement;
+          const element = button.closest('[data-drive-folder-id]') as HTMLElement | null;
+          if (!element) return;
           const folderId = String(element.dataset.driveFolderId ?? '').trim();
           const folderName = String(element.dataset.driveFolderName ?? 'Untitled folder').trim() || 'Untitled folder';
           if (!folderId) return;
@@ -5095,7 +5209,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <button type="button" class="btn" id="google-drive-import-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Import Google Drive Metadata</button>
               <button type="button" class="btn secondary" id="google-drive-preview-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>${googleDriveFilesLoaded ? 'Refresh Drive Files' : 'Preview Drive Files'}</button>
               <button type="button" class="btn secondary" id="google-drive-folder-picker-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Choose Drive Folder</button>
-              <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleUser ? 'Refresh Google Access' : 'Sign in with Google'}</button>
+              <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleUser ? 'Manage Google' : 'Sign in with Google'}</button>
             </div>
             <div class="scan-history">
               ${googleDriveFilesLoaded
@@ -5288,8 +5402,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         preferences.scanProgressToasts = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
         syncProgressToastPreference();
-        if (googleDriveImportBusy && preferences.scanProgressToasts) {
-          startGoogleDriveImportProgressToasts();
+        if (googleDriveImportBusy) {
+          startGoogleDriveImportProgressPolling();
         }
       });
       document.getElementById('pref-default-list-density')?.addEventListener('change', (event) => {

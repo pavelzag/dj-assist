@@ -250,14 +250,13 @@ export default function AppShell({
             <button className="close" id="close-google-auth-upsell" type="button">&times;</button>
           </div>
           <div className="metadata-editor">
-            <div className="scan-preflight">
-              Sign in to fetch exact file matches from the server before local analysis.
+            <div className="google-auth-sheet">
+              <div className="google-auth-sheet-mark" aria-hidden="true">G</div>
+              <div className="google-auth-sheet-copy">
+                <strong>Google account</strong>
+                <span id="google-auth-upsell-status">Sign in to connect Google Drive.</span>
+              </div>
             </div>
-            <div className="shortcuts-list google-auth-upsell-points">
-              <div><strong>Signed in</strong><span>Exact matches fetched from server — faster scans.</span></div>
-              <div><strong>Not signed in</strong><span>Scans run locally and results are uploaded for others.</span></div>
-            </div>
-            <div className="scan-preflight" id="google-auth-upsell-status" />
             <div className="buttons">
               <button className="google-sign-in-primary" id="google-auth-upsell-sign-in-btn" type="button">
                 <span className="google-mark" aria-hidden="true">G</span>
@@ -276,15 +275,29 @@ export default function AppShell({
             <h3>Choose Google Drive Folder</h3>
             <button className="close" id="close-google-drive-folder-modal" type="button">&times;</button>
           </div>
-          <div className="metadata-editor">
-            <div className="scan-preflight" id="google-drive-folder-status">Browse your Google Drive folders. DJ Assist only uses read access.</div>
-            <div className="scan-preflight" id="google-drive-folder-path">Current folder: My Drive</div>
-            <div className="buttons">
-              <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
-              <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
+          <div className="google-drive-browser">
+            <div className="google-drive-browser-head">
+              <div className="scan-preflight" id="google-drive-folder-status">Browse your Google Drive folders. DJ Assist only uses read access.</div>
+              <div className="google-drive-folder-breadcrumb" id="google-drive-folder-path">Current folder: My Drive</div>
             </div>
-            <div className="scan-history" id="google-drive-folder-list">
-              <div className="empty">Loading Google Drive folders…</div>
+            <div className="google-drive-browser-shell">
+              <aside className="google-drive-sidebar" id="google-drive-folder-sidebar">
+                <div className="empty">Loading locations…</div>
+              </aside>
+              <section className="google-drive-browser-main">
+                <div className="google-drive-browser-toolbar">
+                  <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
+                  <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
+                </div>
+                <div className="google-drive-folder-table-head">
+                  <span>Name</span>
+                  <span>Type</span>
+                  <span>Action</span>
+                </div>
+                <div className="google-drive-folder-list" id="google-drive-folder-list">
+                  <div className="empty">Loading Google Drive folders…</div>
+                </div>
+              </section>
             </div>
           </div>
         </div>
