@@ -4,9 +4,7 @@ DJ Assist is a desktop music-library tool for DJs. It scans local music folders,
 
 ## Table of Contents
 
-- [What DJ Assist Does](#what-dj-assist-does)
-- [Important Additions Since The Older README](#important-additions-since-the-older-readme)
-- [Feature Inventory](#feature-inventory)
+- [Features](#features)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
@@ -21,126 +19,16 @@ DJ Assist is a desktop music-library tool for DJs. It scans local music folders,
 
 ---
 
-## What DJ Assist Does
+## Features
 
-DJ Assist combines a desktop shell, a Next.js app, and a Python analysis engine so you can:
-
-- scan local music folders and keep them under watch
-- analyze BPM, key, bitrate, duration, and decode health
-- enrich tracks with Spotify matches, fallback tempo/key, and album art
-- import Google Drive audio metadata into the same library
-- preview and play both local and Google Drive-backed tracks
-- build playlists and get harmonic / tempo-aware next-track suggestions
-- bulk-fix library gaps like missing BPM, missing art, duplicates, and ignored tracks
-
----
-
-## Important Additions Since The Older README
-
-The earlier README described the base scanner and set builder, but the app has grown substantially. The important capabilities that were missing or under-described are:
-
-- Electron desktop packaging with a persistent backend process that survives window close/reopen
-- Google OAuth desktop sign-in flow with PKCE
-- Google Drive folder browser with Finder-style navigation
-- Google Drive metadata import into the local Songs list and optional server sync
-- Google Drive preview before import
-- Google Drive local cache for playback, waveform generation, and BPM reanalysis
-- Dedicated Google Drive import progress UI with stage-based feedback
-- Command palette for commands, artists, tracks, and BPM lookups
-- Keyboard shortcuts modal and desktop-focused interaction model
-- Tap BPM workflow with save, halve, and double actions
-- Interactive waveform scrubbing with cue markers
-- Manual track metadata editing from the UI
-- Bulk track actions, including ignore/unignore, tag edits, add-to-playlist, delete, BPM reanalysis, and art reanalysis
-- Smart crates and collection cleanup workflows
-- Runtime health and startup diagnostics
-- Preferences panel for playback, scan toasts, list density, and visible library columns
-- Playlist management panel built into the app
-- Source preference handling for local vs Google Drive versions of the same track
-- Activity logging for scan/import diagnostics
-- Library reset tools inside the app
-
----
-
-## Feature Inventory
-
-### Local Library Scanning
-
-- recursive scan of local audio folders
-- directory preflight validation before scan start
-- scan modes: `smart`, `missing-metadata`, `missing-analysis`, `missing-art`, `full`
-- live scan progress with status text and streaming logs
-- scan history with summaries and job detail
-- cancel in-flight scans
-- watch folders that trigger automatic rescans on file changes
-- optional album-art fetching during scans
-
-### Audio Analysis And Metadata
-
-- BPM detection via Python analysis pipeline
-- musical key detection in Camelot notation
-- duration, bitrate, artist, title, and album extraction
-- decode failure detection and tracking
-- Spotify match lookup for metadata, tempo, and key fallback
-- AcoustID fingerprint-assisted metadata recovery
-- album art fetching and review status tracking
-- embedded artwork extraction for supported files
-- per-track BPM reanalysis
-- per-track album-art reanalysis
-
-### Google Sign-In And Google Drive
-
-- Google desktop sign-in flow
-- Google Drive folder browser with breadcrumb and sidebar navigation
-- scrollable folder picker with folder and audio-file contents
-- Google Drive preview before import
-- Google Drive metadata import into the local library
-- local metadata enrichment after Drive import
-- Google Drive track local caching for playback and analysis
-- playback and waveform support for Google Drive-backed tracks
-- stage-based import progress for Drive imports
-
-### Playback And Track Detail
-
-- in-app audio playback
-- support for local files and Google Drive-backed tracks
-- waveform rendering with scrubbing
-- cue point placement and clearing
-- playback mute/unmute controls
-- album cover modal
-- YouTube link support
-- track source inspection and source preference switching
-
-### Search, Navigation, And Review
-
-- full-text search across title, artist, album, and tags
-- browse by artist and album
-- related tracks by artist
-- review-oriented smart crates
-- next-track suggestions with intent modes such as safe, up, down, and same-vibe
-- command palette for search and commands
-- keyboard shortcuts for common workflows
-
-### Playlists / Sets
-
-- create, rename, and delete playlists
-- add and remove tracks
-- reorder by position through set track APIs
-- compatibility-aware next-track recommendations from the current track or set context
-- export setlists from the CLI
-
-### Library Management
-
-- bulk ignore / unignore
-- bulk tag add / remove / clear
-- bulk add visible selections to playlists
-- bulk delete tracks
-- visible Google Drive missing-BPM remediation workflow
-- duplicate detection
-- collection health overview
-- runtime diagnostics and startup diagnostics
-- in-app preferences for list columns, list density, autoplay, startup load, and scan toasts
-- library reset from the UI
+- local folder scanning, watch folders, scan history, validation, cancel, and multiple rescan modes
+- BPM, key, bitrate, duration, decode-failure, Spotify fallback, AcoustID, and album-art enrichment
+- Google desktop sign-in, Google Drive folder browser, Drive preview, Drive import, local Drive caching, and staged import progress
+- local and Google Drive playback with waveform scrubbing, cue points, mute, album art, and YouTube links
+- full-text search, artist/album browsing, related tracks, smart crates, command palette, and keyboard shortcuts
+- playlist creation and editing with compatibility-aware next-track recommendations
+- bulk actions for tags, ignore state, delete, add-to-playlist, BPM reanalysis, and artwork refresh
+- runtime diagnostics, startup diagnostics, preferences, source preference switching, activity logs, and library reset
 
 ---
 
