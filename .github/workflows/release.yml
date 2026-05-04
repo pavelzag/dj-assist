@@ -22,6 +22,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   bump-release:
     name: Bump Patch Release
@@ -29,12 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout current ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -82,12 +85,12 @@ jobs:
       sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Checkout current ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -180,13 +183,13 @@ jobs:
       ELECTRON_BUILDER_CACHE: ~/Library/Caches/electron-builder
     steps:
       - name: Checkout current ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare-release.outputs.sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
