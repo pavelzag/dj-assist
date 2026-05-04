@@ -73,6 +73,7 @@ export default function AppShell({
             <button type="button" data-sort="bpm-asc" id="sort-bpm">BPM ▲</button>
             <button type="button" data-sort="key-asc" id="sort-key">Key ▲</button>
             <button type="button" data-sort="duration-asc" id="sort-dur">Dur ▲</button>
+            <button type="button" data-sort="album-asc" id="sort-album">Album ▲</button>
           </div>
           <div className="list" id="track-list" />
         </section>

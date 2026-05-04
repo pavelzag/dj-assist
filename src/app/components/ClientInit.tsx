@@ -4446,6 +4446,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (av !== bv) return sortMode === 'duration-asc' ? av - bv : bv - av;
         return String(a.artist ?? '').localeCompare(String(b.artist ?? ''));
       }
+      if (sortMode === 'album-asc' || sortMode === 'album-desc') {
+        const av = albumNameFor(a), bv = albumNameFor(b);
+        if (av !== bv) return sortMode === 'album-asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+        const ac = String(a.artist ?? ''), bc = String(b.artist ?? '');
+        if (ac !== bc) return ac.localeCompare(bc);
+        return String(a.title ?? '').localeCompare(String(b.title ?? ''));
+      }
       return String(a.artist ?? '').localeCompare(String(b.artist ?? ''));
     }
 
@@ -4454,6 +4461,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       'sort-bpm':    ['BPM ▲',    'BPM ▼'],
       'sort-key':    ['Key ▲',    'Key ▼'],
       'sort-dur':    ['Dur ▲',    'Dur ▼'],
+      'sort-album':  ['Album ▲',  'Album ▼'],
     };
 
     function setActiveSortButton(mode: string) {
