@@ -1,7 +1,7 @@
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { NextRequest, NextResponse } from 'next/server';
-import { getTrackById, serializeTrack } from '@/lib/db';
+import { getTrackById, propagateAlbumArt, serializeTrack } from '@/lib/db';
 import { resolveWorkingPython } from '@/lib/scan';
 
 export const runtime = 'nodejs';
@@ -49,9 +49,14 @@ export async function POST(
     }
     const refreshed = await getTrackById(trackId);
     if (!refreshed) return NextResponse.json({ error: 'not found' }, { status: 404 });
+    const { propagated, updatedIds } = refreshed.album_art_url
+      ? await propagateAlbumArt(trackId)
+      : { propagated: 0, updatedIds: [] };
     return NextResponse.json({
       track: serializeTrack(refreshed),
       message: typeof debug === 'object' ? String(debug.message ?? 'Artwork refresh complete.') : 'Artwork refresh complete.',
+      propagated,
+      propagatedTrackIds: updatedIds,
       debug: {
         durationMs,
         stdout: debug,

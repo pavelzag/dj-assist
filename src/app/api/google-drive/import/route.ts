@@ -82,6 +82,10 @@ export async function POST(request: NextRequest) {
     const maxFiles = Math.min(Math.max(Math.trunc(Number(body.maxFiles ?? 2000) || 2000), 1), 5000);
     const folderId = String(body.folderId ?? '').trim();
     const folderName = String(body.folderName ?? '').trim();
+    // Accept an array of folder IDs for multi-folder imports.
+    const folderIds: string[] = Array.isArray(body.folderIds)
+      ? (body.folderIds as unknown[]).map((id) => String(id ?? '').trim()).filter(Boolean)
+      : (folderId ? [folderId] : []);
     const fallbackDownloadScan = Boolean(body.fallbackDownloadScan);
     const fallbackDownloadLimit = Math.min(
       Math.max(Math.trunc(Number(body.fallbackDownloadLimit ?? 100) || 100), 1),
@@ -120,19 +124,24 @@ export async function POST(request: NextRequest) {
       },
     );
 
-    // Collect the full folder subtree so that audio files in subfolders are
-    // included (the Drive API only queries direct-parent relationships).
+    // Collect the full folder subtree for all selected root folders so that
+    // audio files in subfolders are included (Drive API only queries direct parents).
     let allFolderIds: string[] | undefined;
-    if (folderId) {
-      allFolderIds = await collectFolderTree({ accessToken, rootFolderId: folderId });
+    if (folderIds.length > 0) {
+      const merged = new Set<string>();
+      for (const rootId of folderIds) {
+        const tree = await collectFolderTree({ accessToken, rootFolderId: rootId });
+        tree.forEach((id) => merged.add(id));
+      }
+      allFolderIds = [...merged];
       logGoogleDriveImport('info', 'folder_tree_collected', {
-        rootFolderId: folderId,
+        rootFolderIds: folderIds,
         totalFolders: allFolderIds.length,
       });
       await logGoogleDriveProgress(
         'info',
-        `Folder tree collected: ${allFolderIds.length} folder${allFolderIds.length === 1 ? '' : 's'} to search (including subfolders).`,
-        { event: 'folder_tree_collected', rootFolderId: folderId, totalFolders: allFolderIds.length },
+        `Folder tree collected: ${allFolderIds.length} folder${allFolderIds.length === 1 ? '' : 's'} across ${folderIds.length} root${folderIds.length === 1 ? '' : 's'}.`,
+        { event: 'folder_tree_collected', rootFolderIds: folderIds, totalFolders: allFolderIds.length },
       );
     }
 

@@ -1120,6 +1120,39 @@ export async function purgeIgnoredGoogleDriveTracks(): Promise<number> {
   return before;
 }
 
+export async function propagateAlbumArt(trackId: number): Promise<{ propagated: number; updatedIds: number[] }> {
+  const track = queryOne<Record<string, unknown>>(
+    'SELECT album_group_key, album_art_url, album_art_source, album_art_confidence FROM tracks WHERE id = ? LIMIT 1',
+    trackId,
+  );
+  const albumGroupKey = String(track?.album_group_key ?? '').trim();
+  const artUrl = String(track?.album_art_url ?? '').trim();
+  if (!albumGroupKey || !artUrl) return { propagated: 0, updatedIds: [] };
+
+  const targets = queryAll<{ id: number }>(
+    `SELECT id FROM tracks WHERE album_group_key = ? AND id != ? AND (album_art_url IS NULL OR album_art_url = '')`,
+    albumGroupKey,
+    trackId,
+  );
+  if (!targets.length) return { propagated: 0, updatedIds: [] };
+
+  execute(
+    `UPDATE tracks
+     SET album_art_url = ?,
+         album_art_source = 'album_propagated',
+         album_art_confidence = ?,
+         album_art_review_status = 'approved',
+         album_art_review_notes = 'propagated from reanalysis of same album'
+     WHERE album_group_key = ? AND id != ? AND (album_art_url IS NULL OR album_art_url = '')`,
+    artUrl,
+    Number(track?.album_art_confidence ?? 0) || null,
+    albumGroupKey,
+    trackId,
+  );
+
+  return { propagated: targets.length, updatedIds: targets.map((r) => Number(r.id)) };
+}
+
 export async function getTracksByIds(ids: number[]): Promise<Track[]> {
   const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
   if (!uniqueIds.length) return [];

@@ -303,6 +303,7 @@ export default function AppShell({
                 <div className="google-drive-browser-toolbar">
                   <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
                   <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
+                  <button className="btn" id="google-drive-use-selected-btn" type="button" hidden>Use Selected</button>
                 </div>
                 <div className="google-drive-folder-list" id="google-drive-folder-list">
                   <div className="empty">Loading Google Drive folders…</div>
