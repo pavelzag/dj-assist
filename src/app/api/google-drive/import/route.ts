@@ -206,7 +206,11 @@ export async function POST(request: NextRequest) {
             name: file.name,
           },
         );
-        const localFile = await ensureLocalGoogleDriveTrackFile(fileId);
+        const localFile = await ensureLocalGoogleDriveTrackFile(fileId, {
+          name: file.name,
+          mimeType: file.mimeType,
+          size: file.size,
+        });
         const metadata = await readLocalAudioMetadata(localFile.localPath, localFile.name);
         await updateGoogleDriveTrackLocalMetadata(fileId, {
           title: metadata.title,

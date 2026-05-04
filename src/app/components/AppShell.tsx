@@ -28,7 +28,7 @@ export default function AppShell({
               </div>
             </div>
           </div>
-          <div className="search-shortcut-hint">Use <strong>/</strong> to search. Try <strong>bpm:128-132</strong>, <strong>key:8A</strong>, <strong>art:missing</strong>, <strong>notes:cue</strong>, <strong>duplicate</strong>.</div>
+          <div className="search-shortcut-hint">Use <strong>/</strong> to search.</div>
           <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album, notes, or filters like bpm:128-132..." aria-label="Search collection" />
           <div className="filters">
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />

@@ -46,18 +46,32 @@ async function normalizeGoogleDriveAudioFile(
   filePath: string,
   mimeType: string,
 ): Promise<{ normalized: boolean; mimeType: string }> {
-  const header = await fs.readFile(filePath, { encoding: null, flag: 'r' });
-  if (header.length < 16 || header.subarray(0, 3).toString('ascii') !== 'ID3') {
+  // Peek at only the first 10 bytes to check for an ID3 header.  Most cached
+  // files are already normalized and won't start with 'ID3', so this avoids
+  // reading the full audio file (potentially 50–100 MB) on every cache check.
+  const fd = await fs.open(filePath, 'r');
+  let prefix: Buffer;
+  try {
+    const buf = Buffer.alloc(10);
+    const { bytesRead } = await fd.read(buf, 0, 10, 0);
+    prefix = buf.subarray(0, bytesRead);
+  } finally {
+    await fd.close();
+  }
+
+  if (prefix.length < 10 || prefix.subarray(0, 3).toString('ascii') !== 'ID3') {
     return { normalized: false, mimeType };
   }
 
-  const id3Size = readSynchsafeInteger(header, 6);
+  // File starts with ID3 — read the full content to check for and strip an M4A wrapper.
+  const content = await fs.readFile(filePath, { encoding: null, flag: 'r' });
+  const id3Size = readSynchsafeInteger(content, 6);
   const payloadOffset = 10 + id3Size;
-  if (header.length < payloadOffset + 8 || header.subarray(payloadOffset + 4, payloadOffset + 8).toString('ascii') !== 'ftyp') {
+  if (content.length < payloadOffset + 8 || content.subarray(payloadOffset + 4, payloadOffset + 8).toString('ascii') !== 'ftyp') {
     return { normalized: false, mimeType };
   }
 
-  const stripped = header.subarray(payloadOffset);
+  const stripped = content.subarray(payloadOffset);
   if (!stripped.length) {
     throw new Error('Google Drive cached file normalization produced an empty payload.');
   }
@@ -121,14 +135,28 @@ async function fetchGoogleDriveFileMetadata(fileId: string, accessToken: string)
   };
 }
 
-export async function ensureLocalGoogleDriveTrackFile(fileId: string): Promise<{
+export async function ensureLocalGoogleDriveTrackFile(
+  fileId: string,
+  knownMetadata?: { name?: string; mimeType?: string; size?: string | number | null },
+): Promise<{
   localPath: string;
   cached: boolean;
   name: string;
   mimeType: string;
 }> {
   const { accessToken } = await getGoogleDriveAccessToken();
-  const metadata = await fetchGoogleDriveFileMetadata(fileId, accessToken);
+  // Use caller-supplied metadata when available to avoid a redundant Drive API
+  // call — the import route already has name/mimeType/size from the listing step.
+  const metadata = (knownMetadata?.name && knownMetadata?.mimeType)
+    ? {
+        id: fileId,
+        name: knownMetadata.name,
+        mimeType: knownMetadata.mimeType,
+        modifiedTime: null,
+        md5Checksum: null,
+        size: Number(knownMetadata.size ?? 0) || null,
+      }
+    : await fetchGoogleDriveFileMetadata(fileId, accessToken);
   const ext = path.extname(metadata.name) || extensionFromMimeType(metadata.mimeType);
   const baseName = path.basename(metadata.name, path.extname(metadata.name) || ext);
   const fileName = `${fileId}-${safeBasename(baseName)}${ext}`;
