@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('djAssistDesktop', {
   platform: process.platform,
   appUrl: process.env.DJ_ASSIST_ELECTRON_URL || null,
+  appFlavor: process.env.DJ_ASSIST_APP_FLAVOR || process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR || 'debug',
   getAppUrl: () => ipcRenderer.invoke('desktop:get-app-url'),
   mediaUrlForPath: (targetPath) => {
     const value = String(targetPath ?? '').trim();

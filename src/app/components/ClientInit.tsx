@@ -5,6 +5,8 @@ import type { PlatformAdapter } from './platform';
 
 export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
   useEffect(() => {
+    const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' ? 'prod' : 'debug';
+    const isProdFlavor = appFlavor === 'prod';
     type ScanSummary = {
       scanned: number;
       analyzed: number;
@@ -92,10 +94,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const panelTrack = document.getElementById('panel-track') as HTMLElement;
     const panelSets = document.getElementById('panel-sets') as HTMLElement;
     const panelLibrary = document.getElementById('panel-library') as HTMLElement;
-    const panelActivity = document.getElementById('panel-activity') as HTMLElement;
+    const panelActivity = document.getElementById('panel-activity') as HTMLElement | null;
     const setsPanel = document.getElementById('sets-panel') as HTMLElement;
     const libraryPanel = document.getElementById('library-panel') as HTMLElement;
-    const activityPanel = document.getElementById('activity-panel') as HTMLElement;
+    const activityPanel = document.getElementById('activity-panel') as HTMLElement | null;
     const toastStack = document.getElementById('toast-stack') as HTMLElement;
     const quickChooseFolderBtn = document.getElementById('quick-choose-folder-btn') as HTMLButtonElement | null;
     const quickStartScanBtn = document.getElementById('quick-start-scan-btn') as HTMLButtonElement | null;
@@ -128,7 +130,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       loadLibraryOnStartup: true,
       defaultListDensity: 'comfortable',
       collapseScanLog: true,
-      scanProgressToasts: true,
+      scanProgressToasts: !isProdFlavor,
       listShowAlbum: true,
       listShowBitrate: true,
       listShowTags: true,
@@ -218,6 +220,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportStageCurrent = 0;
     let googleDriveImportStageTotal = 0;
     let googleDriveImportStageMeta = 'No import running';
+    let serverAccountSession: Record<string, unknown> | null = null;
+    let serverEntitlements = new Set<string>();
+    let serverDeviceRegistrationAttempted = false;
     let localScanToastLastAt = 0;
     let localScanToastLastPercentBucket = -1;
     let localScanToastLastLabel = '';
@@ -284,7 +289,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           loadLibraryOnStartup: parsed.loadLibraryOnStartup !== false,
           defaultListDensity: parsed.defaultListDensity === 'compact' ? 'compact' : 'comfortable',
           collapseScanLog: parsed.collapseScanLog !== false,
-          scanProgressToasts: parsed.scanProgressToasts !== false,
+          scanProgressToasts: parsed.scanProgressToasts === undefined ? defaultPreferences.scanProgressToasts : parsed.scanProgressToasts !== false,
           listShowAlbum: parsed.listShowAlbum !== false,
           listShowBitrate: parsed.listShowBitrate !== false,
           listShowTags: parsed.listShowTags !== false,
@@ -513,6 +518,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       options: { toastKey?: string; autoHideMs?: number | null } = {},
     ) {
       if (!toastStack) return;
+      if (isProdFlavor && tone !== 'warning' && tone !== 'error' && !action && !options.toastKey) return;
       const toastKey = String(options.toastKey ?? '').trim();
       const existing = toastKey
         ? toastStack.querySelector<HTMLElement>(`.toast[data-toast-key="${CSS.escape(toastKey)}"]`)
@@ -1002,6 +1008,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const button = document.getElementById(id) as HTMLButtonElement | null;
         if (button) button.textContent = addMusicStartLabel();
       }
+      const googleDriveBtn = document.getElementById('add-music-source-google-drive-btn') as HTMLButtonElement | null;
+      const googleDriveCopy = googleDriveBtn?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
+      if (googleDriveBtn) {
+        googleDriveBtn.dataset.locked = canUseGoogleDriveFeature() ? 'false' : 'true';
+        googleDriveBtn.title = canUseGoogleDriveFeature() ? 'Browse Google Drive music' : googleDriveFeatureStatusLabel();
+      }
+      if (googleDriveCopy) {
+        googleDriveCopy.textContent = canUseGoogleDriveFeature()
+          ? 'Browse a Drive folder and import its audio metadata with read-only access.'
+          : googleDriveFeatureStatusLabel();
+      }
     }
 
     function setGoogleDriveImportStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
@@ -1129,6 +1146,89 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return user?.type === 'google' ? user : null;
     }
 
+    function hasServerEntitlement(capability: string) {
+      if (!isProdFlavor) return true;
+      return serverEntitlements.has(capability);
+    }
+
+    function canUseGoogleDriveFeature() {
+      return hasServerEntitlement('google_drive');
+    }
+
+    function googleDriveFeatureStatusLabel() {
+      if (!isProdFlavor) return 'Available in debug build.';
+      if (canUseGoogleDriveFeature()) return 'Included in your DJ Assist Sync access.';
+      if (googleSignedInUser()) return 'Google Drive import is part of DJ Assist Sync.';
+      return 'Sign in and subscribe to DJ Assist Sync to use Google Drive.';
+    }
+
+    function formatCapabilityLabel(capability: string) {
+      const value = String(capability ?? '').trim();
+      if (!value) return 'Unknown';
+      const labels: Record<string, string> = {
+        google_auth: 'Google Auth',
+        playlist_sync: 'Playlist Sync',
+        google_drive: 'Google Drive',
+        fast_scan_cloud: 'Fast Scan Cloud',
+        ios_access: 'iOS Access',
+      };
+      return labels[value] ?? value.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+    }
+
+    function accountPlanSummary() {
+      const subscription = serverAccountSession?.subscription && typeof serverAccountSession.subscription === 'object'
+        ? serverAccountSession.subscription as Record<string, unknown>
+        : null;
+      if (!subscription) return isProdFlavor ? 'Free' : 'Debug';
+      const planKey = String(subscription.plan_key ?? 'free').trim() || 'free';
+      const status = String(subscription.status ?? 'inactive').trim() || 'inactive';
+      return `${planKey} · ${status}`;
+    }
+
+    async function refreshServerAccountAccess(options: { registerDevice?: boolean } = {}) {
+      if (!googleSignedInUser()) {
+        serverAccountSession = null;
+        serverEntitlements = new Set<string>();
+        serverDeviceRegistrationAttempted = false;
+        return;
+      }
+      try {
+        const [sessionResponse, entitlementsResponse] = await Promise.all([
+          fetch('/api/account/session'),
+          fetch('/api/account/entitlements'),
+        ]);
+        const sessionPayload = await sessionResponse.json().catch(() => ({})) as Record<string, unknown>;
+        const entitlementsPayload = await entitlementsResponse.json().catch(() => ({})) as Record<string, unknown>;
+        serverAccountSession = sessionResponse.ok && sessionPayload.session && typeof sessionPayload.session === 'object'
+          ? sessionPayload.session as Record<string, unknown>
+          : null;
+        const entitlementItems = entitlementsResponse.ok && entitlementsPayload.entitlements && typeof entitlementsPayload.entitlements === 'object'
+          ? (entitlementsPayload.entitlements as Record<string, unknown>).entitlements
+          : [];
+        serverEntitlements = new Set(
+          Array.isArray(entitlementItems)
+            ? entitlementItems.map((value) => String(value ?? '').trim()).filter(Boolean)
+            : [],
+        );
+        if (options.registerDevice && !serverDeviceRegistrationAttempted) {
+          serverDeviceRegistrationAttempted = true;
+          void fetch('/api/devices/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              platform: 'electron',
+              deviceName: 'DJ Assist Desktop',
+            }),
+          }).catch(() => {
+            serverDeviceRegistrationAttempted = false;
+          });
+        }
+      } catch {
+        serverAccountSession = null;
+        serverEntitlements = new Set<string>();
+      }
+    }
+
     function syncGoogleAuthEntryPoint() {
       const user = googleSignedInUser();
       const googleConfigured = serverRuntimeSummary()?.googleAuthConfigured === true;
@@ -1145,6 +1245,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function openGoogleAuthModal() {
       const user = googleSignedInUser();
       const drive = googleDriveRuntimeSummary();
+      const subscription = serverAccountSession?.subscription && typeof serverAccountSession.subscription === 'object'
+        ? serverAccountSession.subscription as Record<string, unknown>
+        : null;
+      const planLabel = subscription
+        ? `${String(subscription.plan_key ?? 'free')} · ${String(subscription.status ?? 'inactive')}`
+        : 'Free plan';
       const statusEl = document.getElementById('google-auth-upsell-status') as HTMLElement | null;
       const signInLabel = document.getElementById('google-auth-upsell-sign-in-label') as HTMLElement | null;
       const signInBtn = document.getElementById('google-auth-upsell-sign-in-btn') as HTMLButtonElement | null;
@@ -1152,8 +1258,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const declineBtn = document.getElementById('google-auth-upsell-decline-btn') as HTMLButtonElement | null;
       if (statusEl) {
         statusEl.textContent = user
-          ? `${String(user.email ?? user.name ?? 'Google user')}${drive?.connected ? ' · Drive access ready' : ' · account connected'}`
-          : 'Sign in to connect Google Drive.';
+          ? `${String(user.email ?? user.name ?? 'Google user')} · ${planLabel}${canUseGoogleDriveFeature() ? (drive?.connected ? ' · Drive access ready' : ' · account connected') : ' · Google Drive locked'}`
+          : 'Sign in to connect your DJ Assist account.';
       }
       if (signInLabel) {
         signInLabel.textContent = user ? 'Reconnect Google' : 'Sign in with Google';
@@ -1309,6 +1415,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     async function importGoogleDriveMetadata() {
+      if (!canUseGoogleDriveFeature()) {
+        setGoogleDriveImportStatus(googleDriveFeatureStatusLabel(), 'error');
+        showToast(googleDriveFeatureStatusLabel(), 'warning');
+        openGoogleAuthModal();
+        return;
+      }
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
       setGoogleDriveImportStageState({
@@ -1708,6 +1820,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     async function openGoogleDriveFolderModal() {
+      if (!canUseGoogleDriveFeature()) {
+        showToast(googleDriveFeatureStatusLabel(), 'warning');
+        openGoogleAuthModal();
+        return;
+      }
       openModal(googleDriveFolderModal);
       await loadGoogleDriveFolders({
         parentId: '',
@@ -1737,6 +1854,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     async function loadGoogleDriveFiles(options: { limit?: number; quiet?: boolean } = {}) {
+      if (!canUseGoogleDriveFeature()) {
+        setGoogleDriveImportStatus(googleDriveFeatureStatusLabel(), 'error');
+        return;
+      }
       if (googleDriveFilesBusy) return;
       googleDriveFilesBusy = true;
       const { limit = 100, quiet = false } = options;
@@ -1937,7 +2058,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function openPanel(panel: 'track' | 'sets' | 'library' | 'activity') {
-      document.querySelector<HTMLElement>(`.panel-tab[data-panel="${panel}"]`)?.click();
+      const nextPanel = isProdFlavor && panel === 'activity' ? 'track' : panel;
+      document.querySelector<HTMLElement>(`.panel-tab[data-panel="${nextPanel}"]`)?.click();
     }
 
     function openModal(modal: HTMLElement | null) {
@@ -1999,7 +2121,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         { label: 'Review Missing Key', meta: 'Review', run: () => startReviewMode('key') },
         { label: 'Review Unreadable Files', meta: 'Review', run: () => startReviewMode('decode') },
         { label: 'Open Collection', meta: 'Panel', run: () => openPanel('library') },
-        { label: 'Open Activity', meta: 'Panel', run: () => openPanel('activity') },
         { label: 'Open Playlists', meta: 'Panel', run: () => openPanel('sets') },
         { label: 'Focus Search', meta: 'Navigation', run: () => searchEl.focus() },
         { label: 'Show Keyboard Shortcuts', meta: 'Help', run: () => openModal(shortcutsModal) },
@@ -2014,6 +2135,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           void loadTracks();
         } },
       ];
+      if (!isProdFlavor) {
+        commands.splice(8, 0, { label: 'Open Activity', meta: 'Panel', run: () => openPanel('activity') });
+      }
       const trackResults = tracks
         .filter((track) => {
           const matchesText = !normalized || normalizeText(`${track.artist ?? ''} ${track.title ?? ''} ${albumNameFor(track)}`).includes(normalized);
@@ -4057,17 +4181,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     // ── Panel switching ───────────────────────────────────────────────────────
     document.querySelectorAll('.panel-tab').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const panel = ((btn as HTMLElement).dataset.panel ?? 'track') as 'track' | 'sets' | 'library' | 'activity';
+        const requestedPanel = ((btn as HTMLElement).dataset.panel ?? 'track') as 'track' | 'sets' | 'library' | 'activity';
+        const panel = isProdFlavor && requestedPanel === 'activity' ? 'track' : requestedPanel;
         currentPanel = panel;
         document.querySelectorAll('.panel-tab').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         panelTrack.style.display = panel === 'track' ? '' : 'none';
         panelSets.style.display = panel === 'sets' ? '' : 'none';
         panelLibrary.style.display = panel === 'library' ? '' : 'none';
-        panelActivity.style.display = panel === 'activity' ? '' : 'none';
+        if (panelActivity) panelActivity.style.display = panel === 'activity' ? '' : 'none';
         if (panel === 'sets') renderSetsPanel();
         if (panel === 'library') renderLibraryPanel();
-        if (panel === 'activity') renderActivityPanel();
+        if (panel === 'activity' && !isProdFlavor) renderActivityPanel();
       });
     });
 
@@ -5337,6 +5462,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const res = await fetch('/api/health');
       if (!res.ok) return;
       runtimeHealth = (await res.json()).runtime ?? null;
+      await refreshServerAccountAccess({ registerDevice: true });
       const issues: string[] = [];
       if (!runtimeHealth?.python_ok) issues.push(`Python runtime unavailable${runtimeHealth?.python_error ? `: ${String(runtimeHealth.python_error)}` : ''}`);
       if (!runtimeHealth?.database_url_set) issues.push('Local database unavailable');
@@ -5349,6 +5475,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderLibraryPanel();
       renderActivityPanel();
       syncGoogleAuthEntryPoint();
+      syncAddMusicUi();
       if (googleSignedInUser()) {
         closeModal(googleAuthUpsellModal);
       }
@@ -5429,16 +5556,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const googleOauthConfigured = googleOauth?.configured === true;
       const googleDrive = googleDriveRuntimeSummary();
       const googleUser = googleSignedInUser();
-
-      libraryPanel.innerHTML = `
-        <div class="library-grid">
-          <section class="library-card">
-            <div class="scan-log-head"><strong>Library Reset</strong></div>
-            <div class="scan-preflight">Clear tracks, playlists, scan history, and watched folders from this app database.</div>
-            <div class="buttons">
-              <button type="button" class="btn danger" id="reset-library-data-btn">Reset Library Data</button>
-            </div>
-          </section>
+      const accountUser = serverAccountSession?.user && typeof serverAccountSession.user === 'object'
+        ? serverAccountSession.user as Record<string, unknown>
+        : null;
+      const accountEntitlementChips = serverEntitlements.size
+        ? [...serverEntitlements].sort().map((capability) => `<span class="chip subtle">${esc(formatCapabilityLabel(capability))}</span>`).join('')
+        : '<span class="chip subtle">No premium capabilities active</span>';
+      const googleDriveCardMarkup = (!isProdFlavor || canUseGoogleDriveFeature()) ? `
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
             <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist. Imported Drive items are added to the Songs list locally and synced to the server.</div>
@@ -5486,6 +5610,43 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 : `<div class="empty">Preview Google Drive files from ${esc(selectedGoogleDriveFolderLabel())} to inspect what the app can see before importing.</div>`}
             </div>
           </section>
+      ` : `
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Google Drive Import</strong></div>
+            <div class="scan-preflight">${esc(googleDriveFeatureStatusLabel())}</div>
+            <div class="buttons">
+              <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleSignedInUser() ? 'Manage Google' : 'Sign in with Google'}</button>
+            </div>
+          </section>
+      `;
+
+      libraryPanel.innerHTML = `
+        <div class="library-grid">
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Account Status</strong></div>
+            <div class="scan-preflight">
+              ${googleUser
+                ? `${esc(String(accountUser?.email ?? googleUser.email ?? googleUser.name ?? 'Google user'))} · ${esc(accountPlanSummary())}`
+                : (isProdFlavor ? 'Not signed in. Premium capabilities stay locked until you connect your account.' : 'Debug build keeps premium capabilities available without account gating.')}
+            </div>
+            <div class="scan-preflight">
+              ${isProdFlavor
+                ? (googleUser ? `Active capabilities: ${serverEntitlements.size}` : 'Capabilities will load after Google sign-in.')
+                : 'Debug build: account checks are visible, but premium features stay unlocked for development.'}
+            </div>
+            <div class="chips">${accountEntitlementChips}</div>
+            <div class="buttons">
+              <button type="button" class="btn secondary" id="account-status-google-btn">${googleUser ? 'Manage Google' : 'Sign in with Google'}</button>
+            </div>
+          </section>
+          <section class="library-card">
+            <div class="scan-log-head"><strong>Library Reset</strong></div>
+            <div class="scan-preflight">Clear tracks, playlists, scan history, and watched folders from this app database.</div>
+            <div class="buttons">
+              <button type="button" class="btn danger" id="reset-library-data-btn">Reset Library Data</button>
+            </div>
+          </section>
+          ${googleDriveCardMarkup}
           <section class="library-card">
             <div class="scan-log-head"><strong>Preferences</strong></div>
             <div class="preferences-list">
@@ -5512,7 +5673,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             </div>
           </section>
-          <section class="library-card" hidden>
+          ${isProdFlavor ? '' : `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Fast Scan Server</strong></div>
             <div class="preferences-list">
               <label class="preference-row"><input id="server-sync-enabled" type="checkbox" ${serverRuntimeSummary()?.enabled !== false ? 'checked' : ''} /><span>Send scan results to DJ Assist Server</span></label>
@@ -5544,8 +5705,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <button type="button" class="btn secondary" id="google-sign-out-btn">Sign out</button>
               </div>
             </div>
-          </section>
-          <section class="library-card" hidden>
+          </section>`}
+          ${isProdFlavor ? '' : `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Spotify Credentials</strong></div>
             <div class="preferences-list">
               <label class="preference-field">
@@ -5562,8 +5723,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <button type="button" class="btn" id="spotify-test-saved-btn">Test Saved</button>
               </div>
             </div>
-          </section>
-          <section class="library-card" hidden>
+          </section>`}
+          ${isProdFlavor ? '' : `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Smart Crates</strong></div>
             <div class="chips">
               ${smartCrates.map((crate) => `<button type="button" class="chip nav-chip smart-crate-btn" data-query="${esc(crate.query)}">${esc(crate.label)} · ${esc(crate.count)}</button>`).join('')}
@@ -5571,8 +5732,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="chips">
               ${tags.slice(0, 12).map((tag) => `<button type="button" class="chip nav-chip tag-filter-btn" data-tag="${esc(tag.tag)}">${esc(tag.tag)} · ${esc(tag.count)}</button>`).join('') || '<span class="chip subtle">No tags yet</span>'}
             </div>
-          </section>
-          <section class="library-card" hidden>
+          </section>`}
+          ${isProdFlavor ? '' : `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Artist Browser</strong></div>
             <div class="scan-history">
               ${artists.map((artist) => `
@@ -5583,7 +5744,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 </div>
               `).join('')}
             </div>
-          </section>
+          </section>`}
         </div>
       `;
 
@@ -5746,6 +5907,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
         void signInWithGoogle();
       });
+      document.getElementById('account-status-google-btn')?.addEventListener('click', () => {
+        openGoogleAuthModal();
+      });
       document.getElementById('reset-library-data-btn')?.addEventListener('click', async () => {
         const confirmed = window.confirm('Reset the current DJ Assist library data? This clears tracks, playlists, scan history, and watched folders from the app database.');
       if (!confirmed) return;
@@ -5801,6 +5965,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function renderActivityPanel() {
+      if (isProdFlavor || !activityPanel) return;
       const spotify = spotifyRuntimeSummary();
       const diagnostics = [
         { label: 'Database', ok: Boolean(runtimeHealth?.database_url_set), value: runtimeHealth?.database_path ?? 'Not configured' },
@@ -6213,6 +6378,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           setScanStatus('Sign in with Google first', 'error');
           setScanProgress(0, 0, 'Google Drive access required');
           showToast('Sign in with Google before importing Drive tracks.', 'warning');
+          openGoogleAuthModal();
+          return;
+        }
+        if (!canUseGoogleDriveFeature()) {
+          setScanStatus('Google Drive is locked', 'error');
+          setScanProgress(0, 0, googleDriveFeatureStatusLabel());
+          showToast(googleDriveFeatureStatusLabel(), 'warning');
           openGoogleAuthModal();
           return;
         }
@@ -6780,6 +6952,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void chooseLocalMusicSource();
     });
     document.getElementById('add-music-source-google-drive-btn')?.addEventListener('click', () => {
+      if (!canUseGoogleDriveFeature()) {
+        showToast(googleDriveFeatureStatusLabel(), 'warning');
+        openGoogleAuthModal();
+        return;
+      }
       void chooseGoogleDriveMusicSource();
     });
     commandPaletteModal?.addEventListener('click', (event) => {

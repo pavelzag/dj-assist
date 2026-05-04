@@ -3,6 +3,7 @@ import {
   effectiveUserData,
   getClientId,
 } from '@/lib/runtime-settings';
+import { fetchServerEntitlements } from '@/lib/server-account';
 
 type CollectionTrackReference = {
   position: number;
@@ -76,7 +77,7 @@ export type CollectionSyncResult = {
   collection?: SyncedCollectionInfo;
 } | {
   ok: false;
-  skipped: 'server disabled' | 'server url missing';
+  skipped: 'server disabled' | 'server url missing' | 'playlist sync not entitled';
 };
 
 export class CollectionSyncConflictError extends Error {
@@ -183,7 +184,19 @@ async function getServerAuthHeaders() {
   return buildServerHeaders(googleIdToken, googleAccessToken);
 }
 
+async function canUsePlaylistSyncFeature() {
+  const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' || process.env.DJ_ASSIST_APP_FLAVOR === 'prod'
+    ? 'prod'
+    : 'debug';
+  if (appFlavor !== 'prod') return true;
+  const response = await fetchServerEntitlements();
+  return Array.isArray(response?.entitlements) && response.entitlements.includes('playlist_sync');
+}
+
 export async function syncCollectionSnapshot(snapshot: CollectionSnapshot): Promise<CollectionSyncResult> {
+  if (!(await canUsePlaylistSyncFeature())) {
+    return { ok: false, skipped: 'playlist sync not entitled' };
+  }
   return postCollectionPayload({ collections: [snapshot] });
 }
 
@@ -197,6 +210,7 @@ export async function syncCollectionDeletion(input: {
   baseRevision?: number | null;
   baseUpdatedAt?: string | null;
 }): Promise<void> {
+  if (!(await canUsePlaylistSyncFeature())) return;
   await postCollectionPayload({
     collections: [
       {
@@ -216,6 +230,7 @@ export async function syncCollectionDeletion(input: {
 }
 
 export async function listCollectionsFromServer(): Promise<ServerCollectionSummary[]> {
+  if (!(await canUsePlaylistSyncFeature())) return [];
   const baseUrl = await getServerBaseUrl();
   if (!baseUrl) return [];
   const headers = await getServerAuthHeaders();
@@ -234,6 +249,7 @@ export async function listCollectionsFromServer(): Promise<ServerCollectionSumma
 }
 
 export async function getCollectionTracksFromServer(collectionId: string): Promise<ServerCollectionTrack[]> {
+  if (!(await canUsePlaylistSyncFeature())) return [];
   const baseUrl = await getServerBaseUrl();
   if (!baseUrl) return [];
   const headers = await getServerAuthHeaders();

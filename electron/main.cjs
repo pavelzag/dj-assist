@@ -27,11 +27,18 @@ function applyBundledBuildEnv() {
   const buildEnv = readBundledBuildEnv();
   const googleClientId = String(buildEnv.GOOGLE_CLIENT_ID ?? '').trim();
   const googleClientSecret = String(buildEnv.GOOGLE_CLIENT_SECRET ?? '').trim();
+  const appFlavor = String(buildEnv.DJ_ASSIST_APP_FLAVOR ?? buildEnv.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR ?? '').trim();
   if (googleClientId && !process.env.GOOGLE_CLIENT_ID) {
     process.env.GOOGLE_CLIENT_ID = googleClientId;
   }
   if (googleClientSecret && !process.env.GOOGLE_CLIENT_SECRET) {
     process.env.GOOGLE_CLIENT_SECRET = googleClientSecret;
+  }
+  if (appFlavor && !process.env.DJ_ASSIST_APP_FLAVOR) {
+    process.env.DJ_ASSIST_APP_FLAVOR = appFlavor;
+  }
+  if (appFlavor && !process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR) {
+    process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR = appFlavor;
   }
 }
 

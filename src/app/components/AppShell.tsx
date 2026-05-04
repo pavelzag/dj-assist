@@ -7,6 +7,8 @@ export default function AppShell({
   clientInit: ReactNode;
 }) {
   const appVersion = packageJson.version;
+  const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' ? 'prod' : 'debug';
+  const isProdFlavor = appFlavor === 'prod';
   return (
     <>
       <header data-platform="electron">
@@ -32,9 +34,13 @@ export default function AppShell({
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
             <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
             <input id="key-filter" placeholder="Key" />
-            <label>
-              <input id="hide-unknown-artists" type="checkbox" /> Hide unknown artists
-            </label>
+            {isProdFlavor
+              ? <input id="hide-unknown-artists" type="checkbox" hidden />
+              : (
+                <label>
+                  <input id="hide-unknown-artists" type="checkbox" /> Hide unknown artists
+                </label>
+              )}
             <div className="quick-filter-bar" id="quick-filter-bar" />
           </div>
           <div className="header-global-actions">
@@ -74,7 +80,7 @@ export default function AppShell({
             <button type="button" className="panel-tab active" id="tab-track" data-panel="track">Track</button>
             <button type="button" className="panel-tab" id="tab-sets" data-panel="sets">Playlists</button>
             <button type="button" className="panel-tab" id="tab-library" data-panel="library">Collection</button>
-            <button type="button" className="panel-tab" id="tab-activity" data-panel="activity">Activity</button>
+            {isProdFlavor ? null : <button type="button" className="panel-tab" id="tab-activity" data-panel="activity">Activity</button>}
           </div>
           <div id="panel-track">
             <div className="detail" id="detail">
