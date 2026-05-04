@@ -1729,7 +1729,7 @@ async function syncSingleSetFromServer(setId: number): Promise<SetDetail | null>
   return getSetById(setId);
 }
 
-async function syncSetToServer(setId: number): Promise<void> {
+export async function syncSetToServer(setId: number): Promise<void> {
   const set = await getSetById(setId);
   if (!set) return;
   const result = await syncCollectionSnapshot(serializeSetForServer(set));
@@ -1856,6 +1856,20 @@ export async function addTrackToSet(setId: number, trackId: number): Promise<voi
     const position = Number(countRow?.count ?? 0) + 1;
     execute('INSERT INTO set_tracks (set_id, track_id, client_entry_id, position) VALUES (?, ?, ?, ?)', setId, trackId, randomUUID(), position);
   });
+}
+
+// Fast variant: insert locally and push to server in the background.
+// Skips the pre-sync pull so the response is immediate.
+export async function addTrackToSetFast(setId: number, trackId: number): Promise<void> {
+  const setExists = queryOne<Record<string, unknown>>('SELECT id FROM sets WHERE id = ? LIMIT 1', setId);
+  if (!setExists) throw new Error('Playlist not found.');
+  const trackExists = queryOne<Record<string, unknown>>('SELECT id FROM tracks WHERE id = ? LIMIT 1', trackId);
+  if (!trackExists) throw new Error('Track not found.');
+  const countRow = queryOne<Record<string, unknown>>('SELECT COUNT(*) AS count FROM set_tracks WHERE set_id = ?', setId);
+  const position = Number(countRow?.count ?? 0) + 1;
+  execute('INSERT INTO set_tracks (set_id, track_id, client_entry_id, position) VALUES (?, ?, ?, ?)', setId, trackId, randomUUID(), position);
+  // Push to server without blocking — conflict resolution happens on next full sync
+  syncSetToServer(setId).catch(() => {});
 }
 
 export async function removeTrackFromSet(setId: number, clientEntryId: string): Promise<void> {

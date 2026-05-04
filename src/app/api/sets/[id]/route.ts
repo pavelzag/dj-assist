@@ -8,9 +8,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  await syncSetsFromServer().catch(() => ({ collections: 0, imported: 0, updated: 0, matched_tracks: 0 }));
-  const set = await getSetById(parseInt(id, 10));
+  const setId = parseInt(id, 10);
+  // Return local data immediately — background sync keeps it fresh without blocking.
+  const set = await getSetById(setId);
   if (!set) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  syncSetsFromServer().catch(() => {});
   return NextResponse.json({ set });
 }
 

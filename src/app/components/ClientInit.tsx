@@ -113,6 +113,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const preferencesKey = 'dj-assist-preferences';
     const recentNewTrackIdsKey = 'dj-assist-recent-new-track-ids';
     const googleAuthUpsellDismissedKey = 'dj-assist-google-auth-upsell-dismissed';
+    const gdriveFavoritesKey = 'dj-assist-gdrive-favorites';
     const activityScanLogCollapsedKey = 'dj-assist-activity-scan-log-collapsed';
     const frontendLogCollapsedKey = 'dj-assist-frontend-log-collapsed';
     type Preferences = {
@@ -188,6 +189,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleAuthUpsellEvaluated = false;
     let scanSourceMode: ScanSourceMode = 'local';
     let selectedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
+    let favoritedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
+    let gdriveDragSelecting = false;
+    let gdriveDragSelectAction: 'add' | 'remove' = 'add';
+    const gdriveDragProcessedIds = new Set<string>();
     let googleDriveFolderTrail: Array<{ id: string; name: string }> = [];
     let pendingScanLogEntries: Array<{
       message: string;
@@ -1592,6 +1597,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           `Drive import complete: ${localImported} added, ${localUpdated} updated locally, ${imported} sent to server from ${scanned} files in ${selectedGoogleDriveFolderLabel()}.`,
           'success',
         );
+        selectedGoogleDriveFolders = [];
+        updateScanDirectoryDisplay();
+        syncAddMusicUi();
       } catch (error) {
         setGoogleDriveImportStageState({
           stage: 'error',
@@ -1674,6 +1682,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <span class="google-drive-sidebar-item-meta">Top-level folders</span>
             </button>
           `,
+          favoritedGoogleDriveFolders.length ? `
+            <div class="google-drive-sidebar-section">Favorites</div>
+            ${favoritedGoogleDriveFolders.map((fav) => `
+              <button type="button" class="google-drive-sidebar-item ${currentFolder?.id === fav.id ? 'active' : ''}" data-drive-jump-id="${esc(fav.id)}" data-drive-jump-name="${esc(fav.name)}">
+                <span class="google-drive-sidebar-item-title">★ ${esc(fav.name || 'Favorited folder')}</span>
+                <span class="google-drive-sidebar-item-meta">Favorite</span>
+              </button>
+            `).join('')}
+          ` : '',
           ...selectedGoogleDriveFolders.map((sel) => `
             <button type="button" class="google-drive-sidebar-item ${currentFolder?.id === sel.id ? 'active' : ''}" data-drive-jump-id="${esc(sel.id)}" data-drive-jump-name="${esc(sel.name || 'Selected folder')}">
               <span class="google-drive-sidebar-item-title">${esc(sel.name || 'Selected folder')} ✓</span>
@@ -1717,21 +1734,32 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       const folderMarkup = googleDriveFolders.map((folder) => {
-        const isSelected = selectedGoogleDriveFolders.some((f) => f.id === String(folder.id ?? ''));
+        const fid = String(folder.id ?? '');
+        const fname = String(folder.name ?? 'Untitled folder');
+        const isSelected = selectedGoogleDriveFolders.some((f) => f.id === fid);
+        const isFavorited = favoritedGoogleDriveFolders.some((f) => f.id === fid);
         return `
           <button
             type="button"
             class="google-drive-browser-row folder${isSelected ? ' selected' : ''}"
-            data-drive-folder-id="${esc(String(folder.id ?? ''))}"
-            data-drive-folder-name="${esc(String(folder.name ?? 'Untitled folder'))}"
+            data-drive-folder-id="${esc(fid)}"
+            data-drive-folder-name="${esc(fname)}"
             data-drive-open-folder="true"
-            title="Click to browse · Shift+Click to select"
+            title="Click to browse · Shift+click to select"
           >
             <span class="google-drive-browser-row-icon" aria-hidden="true">${isSelected ? '✓' : '📁'}</span>
             <span class="google-drive-browser-row-copy">
-              <strong>${esc(String(folder.name ?? 'Untitled folder'))}</strong>
+              <strong>${esc(fname)}</strong>
               <span>${isSelected ? 'Selected · Shift+click to deselect' : `${esc(googleDriveFolderTrail.length ? 'Folder' : 'Folder in My Drive')} · Shift+click to select`}</span>
             </span>
+            <button
+              type="button"
+              class="google-drive-fav-btn${isFavorited ? ' favorited' : ''}"
+              data-drive-fav-id="${esc(fid)}"
+              data-drive-fav-name="${esc(fname)}"
+              title="${isFavorited ? 'Remove from favorites' : 'Add to favorites'}"
+              aria-label="${isFavorited ? 'Remove from favorites' : 'Add to favorites'}"
+            >${isFavorited ? '★' : '☆'}</button>
             <span class="google-drive-browser-row-trailing" aria-hidden="true">${isSelected ? '✓' : '›'}</span>
           </button>
         `;
@@ -1750,6 +1778,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         : '<div class="empty">No folders or audio files found here.</div>';
       listEl.querySelectorAll('[data-drive-open-folder="true"]').forEach((button) => {
         button.addEventListener('click', (e) => {
+          if ((e.target as HTMLElement).closest('[data-drive-fav-id]')) return;
           const element = button.closest('[data-drive-folder-id]') as HTMLElement | null;
           if (!element) return;
           const folderId = String(element.dataset.driveFolderId ?? '').trim();
@@ -1763,6 +1792,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             parentId: folderId,
             trail: [...googleDriveFolderTrail, { id: folderId, name: folderName }],
           });
+        });
+      });
+      listEl.querySelectorAll<HTMLElement>('[data-drive-fav-id]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const folderId = String(btn.dataset.driveFavId ?? '').trim();
+          const folderName = String(btn.dataset.driveFavName ?? '').trim();
+          if (!folderId) return;
+          toggleGdriveFavorite(folderId, folderName);
         });
       });
     }
@@ -1894,6 +1932,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           : 'Google Drive scope reset to all audio files.',
         'success',
       );
+    }
+
+    function saveGdriveFavorites() {
+      try { localStorage.setItem(gdriveFavoritesKey, JSON.stringify(favoritedGoogleDriveFolders)); } catch { /* ignore */ }
+    }
+
+    function toggleGdriveFavorite(folderId: string, folderName: string) {
+      const idx = favoritedGoogleDriveFolders.findIndex((f) => f.id === folderId);
+      if (idx >= 0) {
+        favoritedGoogleDriveFolders.splice(idx, 1);
+      } else {
+        favoritedGoogleDriveFolders.push({ id: folderId.trim(), name: folderName.trim() });
+      }
+      saveGdriveFavorites();
+      renderGoogleDriveFolderPicker();
     }
 
     // Shift+click: toggle a folder in/out of the multi-selection without closing the modal.
@@ -6245,6 +6298,70 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           trail: nextTrail,
         });
       });
+      // Shift+drag selection on the folder list
+      const gdriveFolderListEl = document.getElementById('google-drive-folder-list');
+      gdriveFolderListEl?.addEventListener('mousedown', (e) => {
+        if (!e.shiftKey || e.button !== 0) return;
+        const el = (e.target as HTMLElement).closest('[data-drive-folder-id]') as HTMLElement | null;
+        if (!el || (e.target as HTMLElement).closest('[data-drive-fav-id]')) return;
+        const folderId = String(el.dataset.driveFolderId ?? '').trim();
+        const folderName = String(el.dataset.driveFolderName ?? '').trim();
+        if (!folderId) return;
+        e.preventDefault();
+        gdriveDragSelecting = true;
+        gdriveDragProcessedIds.clear();
+        gdriveDragProcessedIds.add(folderId);
+        const isSelected = selectedGoogleDriveFolders.some((f) => f.id === folderId);
+        gdriveDragSelectAction = isSelected ? 'remove' : 'add';
+        if (gdriveDragSelectAction === 'add') {
+          if (!isSelected) selectedGoogleDriveFolders.push({ id: folderId, name: folderName });
+        } else {
+          const idx = selectedGoogleDriveFolders.findIndex((f) => f.id === folderId);
+          if (idx >= 0) selectedGoogleDriveFolders.splice(idx, 1);
+        }
+        renderGoogleDriveFolderPicker();
+      });
+      gdriveFolderListEl?.addEventListener('mouseover', (e) => {
+        if (!gdriveDragSelecting) return;
+        const el = (e.target as HTMLElement).closest('[data-drive-folder-id]') as HTMLElement | null;
+        if (!el || (e.target as HTMLElement).closest('[data-drive-fav-id]')) return;
+        const folderId = String(el.dataset.driveFolderId ?? '').trim();
+        const folderName = String(el.dataset.driveFolderName ?? '').trim();
+        if (!folderId || gdriveDragProcessedIds.has(folderId)) return;
+        gdriveDragProcessedIds.add(folderId);
+        const isSelected = selectedGoogleDriveFolders.some((f) => f.id === folderId);
+        if (gdriveDragSelectAction === 'add' && !isSelected) {
+          selectedGoogleDriveFolders.push({ id: folderId, name: folderName });
+        } else if (gdriveDragSelectAction === 'remove' && isSelected) {
+          const idx = selectedGoogleDriveFolders.findIndex((f) => f.id === folderId);
+          if (idx >= 0) selectedGoogleDriveFolders.splice(idx, 1);
+        } else {
+          return;
+        }
+        // Update just this row's visual state without a full re-render
+        el.classList.toggle('selected', gdriveDragSelectAction === 'add');
+        const icon = el.querySelector('.google-drive-browser-row-icon');
+        const trailing = el.querySelector('.google-drive-browser-row-trailing');
+        if (icon) icon.textContent = gdriveDragSelectAction === 'add' ? '✓' : '📁';
+        if (trailing) trailing.textContent = gdriveDragSelectAction === 'add' ? '✓' : '›';
+        const useSelectedBtn = document.getElementById('google-drive-use-selected-btn') as HTMLButtonElement | null;
+        if (useSelectedBtn) {
+          useSelectedBtn.hidden = selectedGoogleDriveFolders.length === 0;
+          useSelectedBtn.textContent = selectedGoogleDriveFolders.length === 1
+            ? 'Use 1 Selected Folder'
+            : `Use ${selectedGoogleDriveFolders.length} Selected Folders`;
+        }
+      });
+      document.addEventListener('mouseup', () => {
+        if (!gdriveDragSelecting) return;
+        gdriveDragSelecting = false;
+        gdriveDragProcessedIds.clear();
+        renderGoogleDriveFolderPicker();
+        scanSourceMode = 'google_drive';
+        updateScanDirectoryDisplay();
+        syncAddMusicUi();
+      });
+
       document.getElementById('google-drive-folder-use-current-btn')?.addEventListener('click', () => {
         const current = googleDriveFolderTrail[googleDriveFolderTrail.length - 1];
         if (!current) return;
@@ -7257,6 +7374,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     // ── Boot ──────────────────────────────────────────────────────────────────
     try {
       preferences = parsePreferences(localStorage.getItem(preferencesKey));
+      try {
+        const savedFavs = localStorage.getItem(gdriveFavoritesKey);
+        if (savedFavs) favoritedGoogleDriveFolders = JSON.parse(savedFavs) as Array<{ id: string; name: string }>;
+      } catch { /* ignore */ }
       const savedDirectory = localStorage.getItem(scanDirectoryKey);
       if (savedDirectory) scanDirectoryEl.value = savedDirectory;
       updateScanDirectoryDisplay();
