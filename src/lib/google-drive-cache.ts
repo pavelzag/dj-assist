@@ -135,10 +135,14 @@ export async function ensureLocalGoogleDriveTrackFile(fileId: string): Promise<{
   const finalPath = path.join(cacheDirectory(), fileName);
   const expectedSize = Number.isFinite(metadata.size) && metadata.size && metadata.size > 0 ? metadata.size : null;
 
+  // Don't check size for cached files: normalization strips the ID3 wrapper from
+  // some M4A files, making the local size permanently smaller than the Drive-reported
+  // size.  Passing null here skips the size comparison so already-normalized cached
+  // files are not deleted and re-downloaded on every subsequent import.
   const preparedCachedFile = await prepareGoogleDriveAudioFile({
     filePath: finalPath,
     mimeType: metadata.mimeType,
-    expectedSize,
+    expectedSize: null,
   });
   if (preparedCachedFile) {
       return {
