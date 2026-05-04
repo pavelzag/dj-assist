@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import type { PlatformAdapter } from './platform';
+import { matchesTrackSearchQuery } from '@/lib/track-search';
 
 export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
   useEffect(() => {
@@ -213,6 +214,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let commandPaletteActiveIndex = 0;
     let currentRenderedList: Record<string, unknown>[] = [];
     let frozenTrackIdsDuringScan: number[] | null = null;
+    let duplicateTrackIds = new Set<number>();
+    let lastUndoAction: null | {
+      kind: 'delete' | 'bulk-edit';
+      label: string;
+      tracks: Record<string, unknown>[];
+      deleteFiles?: boolean;
+    } = null;
     let googleDriveImportProgressTimer: number | null = null;
     let googleDriveImportToastSignature = '';
     let googleDriveImportUiSignature = '';
@@ -2260,6 +2268,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function trackSourceDetailMarkup(track: Record<string, unknown>): string {
       const sources = Array.isArray(track.sources) ? track.sources as Record<string, unknown>[] : [];
       const sourcePreference = String(track.source_preference ?? '').trim();
+      const canPreferDriveSource = !isProdFlavor;
       if (!sources.length) {
         return `<div class="scan-preflight">Source path: ${esc(String(track.path ?? ''))}</div>`;
       }
@@ -2267,7 +2276,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         <div class="scan-preflight"><strong>Sources</strong></div>
         <div class="chips">
           <button type="button" class="chip nav-chip ${sourcePreference === 'local' ? 'active' : ''}" id="prefer-local-source-btn">Prefer Local</button>
-          <button type="button" class="chip nav-chip ${sourcePreference === 'google_drive' ? 'active' : ''}" id="prefer-drive-source-btn">Prefer Google Drive</button>
+          ${canPreferDriveSource ? `<button type="button" class="chip nav-chip ${sourcePreference === 'google_drive' ? 'active' : ''}" id="prefer-drive-source-btn">Prefer Google Drive</button>` : ''}
           <button type="button" class="chip nav-chip ${!sourcePreference ? 'active' : ''}" id="clear-source-preference-btn">Auto</button>
         </div>
         <div class="suggestions compact">
@@ -2364,17 +2373,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function matchesSearchQuery(track: Record<string, unknown>, query: string): boolean {
-      const normalizedQuery = normalizeText(query);
-      if (!normalizedQuery) return true;
-      const haystacks = [
-        String(track.title ?? ''),
-        String(track.artist ?? ''),
-        String(track.album ?? ''),
-        String(track.spotify_album_name ?? ''),
-        String(track.path ?? ''),
-        Array.isArray(track.custom_tags) ? track.custom_tags.join(' ') : String(track.custom_tags ?? ''),
-      ];
-      return haystacks.some((value) => normalizeText(value).includes(normalizedQuery));
+      return matchesTrackSearchQuery(track, query, { duplicateTrackIds });
     }
 
     function matchesMainPaneFilters(track: Record<string, unknown>): boolean {
@@ -2547,6 +2546,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       );
       persistRecentNewTrackIds();
       renderQuickFilters();
+    }
+
+    function updateDuplicateTrackIdsFromTracks(items: Record<string, unknown>[]) {
+      const duplicateGroups = new Map<string, number[]>();
+      for (const track of items) {
+        const key = String(track.spotify_id ?? '').trim()
+          || String(track.file_hash ?? '').trim()
+          || `${normalizeText(track.artist)}|${normalizeText(track.title)}|${Math.round(Number(track.duration ?? 0))}`;
+        if (!key) continue;
+        const bucket = duplicateGroups.get(key) ?? [];
+        bucket.push(Number(track.id));
+        duplicateGroups.set(key, bucket);
+      }
+      duplicateTrackIds = new Set(
+        [...duplicateGroups.values()]
+          .filter((bucket) => bucket.length > 1)
+          .flatMap((bucket) => bucket.filter((id) => Number.isFinite(id))),
+      );
     }
 
     function selectedTracks(): Record<string, unknown>[] {
@@ -3300,7 +3317,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function renderScanHistory() {
-      return;
+      if (currentPanel === 'library') renderLibraryPanel();
     }
 
     function clearActiveTrackDetail() {
@@ -3329,6 +3346,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       (document.getElementById('edit-meta-album') as HTMLInputElement | null)!.value = String(track.album ?? '');
       (document.getElementById('edit-meta-key') as HTMLInputElement | null)!.value = String(track.key ?? track.effective_key ?? '');
       (document.getElementById('edit-meta-tags') as HTMLInputElement | null)!.value = Array.isArray(track.custom_tags) ? (track.custom_tags as string[]).join(', ') : '';
+      (document.getElementById('edit-meta-notes') as HTMLTextAreaElement | null)!.value = String(track.track_notes ?? '');
       openModal(editMetadataModal);
       requestAnimationFrame(() => {
         const input = document.getElementById('edit-meta-artist') as HTMLInputElement | null;
@@ -3357,6 +3375,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const albumInput = document.getElementById('edit-meta-album') as HTMLInputElement | null;
       const keyInput = document.getElementById('edit-meta-key') as HTMLInputElement | null;
       const tagsInput = document.getElementById('edit-meta-tags') as HTMLInputElement | null;
+      const notesInput = document.getElementById('edit-meta-notes') as HTMLTextAreaElement | null;
       try {
         const saved = await saveTrackMetadata(activeTrackId, {
           artist: artistInput?.value.trim() ?? '',
@@ -3364,6 +3383,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           album: albumInput?.value.trim() ?? '',
           key: keyInput?.value.trim() ?? '',
           custom_tags: (tagsInput?.value ?? '').split(',').map((tag) => tag.trim()).filter(Boolean),
+          track_notes: notesInput?.value.trim() ?? '',
         }, { reloadDetail: false });
         if (!saved) {
           if (editMetadataStatusEl) {
@@ -3503,6 +3523,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function deleteTracksFromLibrary(ids: number[], source: 'single' | 'bulk', deleteFiles = false) {
       const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
       if (!uniqueIds.length) return;
+      const undoSnapshots = trackSnapshotsForIds(uniqueIds);
 
       const orderedBeforeDelete = visibleTracksOrdered();
       const activeDeleted = activeTrackId != null && uniqueIds.includes(activeTrackId);
@@ -3546,10 +3567,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         clearActiveTrackDetail();
       }
       renderBulkToolbar();
+      setUndoAction({
+        kind: 'delete',
+        label: uniqueIds.length === 1 ? 'Delete Track' : 'Delete Tracks',
+        tracks: undoSnapshots,
+        deleteFiles,
+      });
       if (deleteFiles) {
-        showToast(source === 'single' ? 'Track and file deleted.' : `${uniqueIds.length} tracks and files deleted.`, 'success');
+        showToast(
+          source === 'single' ? 'Track and file deleted.' : `${uniqueIds.length} tracks and files deleted.`,
+          'success',
+          { label: 'Undo', onClick: () => { void undoLastAction(); } },
+          { autoHideMs: 8000, toastKey: 'undo-last-action' },
+        );
       } else {
-        showToast(source === 'single' ? 'Track removed from the library.' : `${uniqueIds.length} tracks removed from the library.`, 'success');
+        showToast(
+          source === 'single' ? 'Track removed from the library.' : `${uniqueIds.length} tracks removed from the library.`,
+          'success',
+          { label: 'Undo', onClick: () => { void undoLastAction(); } },
+          { autoHideMs: 8000, toastKey: 'undo-last-action' },
+        );
       }
     }
 
@@ -3582,8 +3619,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <button type="button" class="btn" id="bulk-reanalyze-art-btn">Fill Missing Art</button>
           <button type="button" class="btn" id="bulk-ignore-btn">Ignore</button>
           <button type="button" class="btn" id="bulk-unignore-btn">Unignore</button>
-          <button type="button" class="btn" id="bulk-tags-btn">Add Tags</button>
-          <button type="button" class="btn" id="bulk-clear-tags-btn">Clear Tags</button>
           ${sets.length ? `
             <select id="bulk-set-select">
               ${setOptions}
@@ -3595,6 +3630,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       `;
 
       const runBulkAction = async (action: string, extra: Record<string, unknown> = {}) => {
+        const snapshotAction = ['ignore', 'unignore'].includes(action);
+        const undoSnapshots = snapshotAction ? trackSnapshotsForIds([...selectedTrackIds]) : [];
         const res = await fetch('/api/tracks/bulk', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3625,6 +3662,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           }
           await loadSets();
           if (currentPanel === 'sets') await renderSetsPanel();
+        } else if (snapshotAction) {
+          setUndoAction({
+            kind: 'bulk-edit',
+            label: action === 'ignore' ? 'Ignore Tracks' : 'Unignore Tracks',
+            tracks: undoSnapshots,
+          });
+          showToast(
+            action === 'ignore'
+              ? (selectedTrackIds.size === 1 ? 'Track ignored.' : `${selectedTrackIds.size} tracks ignored.`)
+              : (selectedTrackIds.size === 1 ? 'Track unignored.' : `${selectedTrackIds.size} tracks unignored.`),
+            'success',
+            { label: 'Undo', onClick: () => { void undoLastAction(); } },
+            { autoHideMs: 8000, toastKey: 'undo-last-action' },
+          );
         }
       };
 
@@ -3646,12 +3697,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('bulk-reanalyze-art-btn')?.addEventListener('click', () => {
         void reanalyzeArtBulk([...selectedTrackIds], { label: 'selected tracks' });
       });
-      document.getElementById('bulk-tags-btn')?.addEventListener('click', () => {
-        const input = prompt('Add comma-separated tags to selected tracks');
-        if (!input) return;
-        void runBulkAction('add_tags', { tags: input.split(',').map((tag) => tag.trim()).filter(Boolean) });
-      });
-      document.getElementById('bulk-clear-tags-btn')?.addEventListener('click', () => { void runBulkAction('clear_tags'); });
       document.getElementById('bulk-add-set-btn')?.addEventListener('click', () => {
         const select = document.getElementById('bulk-set-select') as HTMLSelectElement | null;
         if (!select?.value) return;
@@ -3727,6 +3772,66 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       void loadLibraryOverview();
       return payload;
+    }
+
+    function cloneTrackSnapshot(track: Record<string, unknown>): Record<string, unknown> {
+      return JSON.parse(JSON.stringify(track)) as Record<string, unknown>;
+    }
+
+    function trackSnapshotsForIds(ids: number[]): Record<string, unknown>[] {
+      return ids
+        .map((id) => tracks.find((track) => Number(track.id) === id) ?? null)
+        .filter((track): track is Record<string, unknown> => Boolean(track))
+        .map((track) => cloneTrackSnapshot(track));
+    }
+
+    function setUndoAction(action: NonNullable<typeof lastUndoAction>) {
+      lastUndoAction = action;
+    }
+
+    async function undoLastAction() {
+      const action = lastUndoAction;
+      if (!action) {
+        showToast('Nothing to undo.', 'info');
+        return;
+      }
+      lastUndoAction = null;
+      if (action.kind === 'delete') {
+        const response = await fetch('/api/tracks/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tracks: action.tracks }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+          showToast(String(payload.error ?? 'Could not undo delete.'), 'error');
+          return;
+        }
+        await loadTracks(searchEl.value.trim());
+        await loadLibraryOverview();
+        if (selectedDetailTrackId != null) {
+          await loadTrackDetail(String(selectedDetailTrackId), false);
+        }
+        showToast(action.deleteFiles ? 'Library entries restored. Deleted files still need to be recovered manually.' : 'Deleted tracks restored.', 'success');
+        return;
+      }
+
+      const response = await fetch('/api/tracks/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tracks: action.tracks }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        showToast(String(payload.error ?? 'Could not undo track changes.'), 'error');
+        return;
+      }
+      await loadTracks(searchEl.value.trim());
+      await loadLibraryOverview();
+      if (selectedDetailTrackId != null) {
+        await loadTrackDetail(String(selectedDetailTrackId), false);
+      }
+      showToast('Previous track changes restored.', 'success');
     }
 
     async function reanalyzeArtForTrack(
@@ -4409,7 +4514,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       currentRenderedList = sorted;
       const previousScrollTop = listEl.scrollTop;
       if (hiddenCountBadge) hiddenCountBadge.textContent = `Shown: ${sorted.length}`;
-      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
+      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${duplicateTrackIds.size ? ` | Duplicates: <strong>${duplicateTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
       if (!items.length) {
         listIsVirtualized = false;
         listEl.innerHTML = `
@@ -4643,6 +4748,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               ${albumNameFor(track) ? `<button type="button" class="chip nav-chip" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>` : ''}
               ${trackSourcesMarkup(track)}
               ${track.album_art_url ? '<span class="chip success">Album art</span>' : '<span class="chip subtle">No album art</span>'}
+              ${String(track.track_notes ?? '').trim() ? '<span class="chip subtle">Has notes</span>' : ''}
               ${track.analysis_status ? `<span class="chip subtle">${esc(track.analysis_status)}</span>` : ''}
               ${track.bpm_source ? `<span class="chip subtle">BPM ${esc(track.bpm_source)}</span>` : ''}
               ${track.decode_failed === 'true' ? '<span class="chip warn">Unreadable audio</span>' : ''}
@@ -4770,6 +4876,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <label><span>Album</span><input id="meta-album" list="album-suggestions" value="${esc(track.album ?? '')}" /></label>
                 <label><span>Key</span><input id="meta-key" value="${esc(track.key ?? track.effective_key ?? '')}" /></label>
                 <label class="metadata-wide"><span>Tags</span><input id="meta-tags" value="${esc(trackTags.join(', '))}" placeholder="warmup, vocal, peak-time" /></label>
+                <label class="metadata-wide"><span>Notes</span><textarea id="meta-notes" rows="4" placeholder="Anything useful for this track...">${esc(String(track.track_notes ?? ''))}</textarea></label>
                 <label class="metadata-toggle"><input id="meta-ignored" type="checkbox" ${track.ignored ? 'checked' : ''} /><span>Ignored</span></label>
               </div>
               <div class="buttons">
@@ -5295,6 +5402,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const albumInput = document.getElementById('meta-album') as HTMLInputElement;
         const keyInput = document.getElementById('meta-key') as HTMLInputElement;
         const tagsInput = document.getElementById('meta-tags') as HTMLInputElement;
+        const notesInput = document.getElementById('meta-notes') as HTMLTextAreaElement;
         const ignoredInput = document.getElementById('meta-ignored') as HTMLInputElement;
         await saveTrackMetadata(trackId, {
           artist: artistInput.value.trim(),
@@ -5302,6 +5410,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           album: albumInput.value.trim(),
           key: keyInput.value.trim(),
           custom_tags: tagsInput.value.split(',').map((tag) => tag.trim()).filter(Boolean),
+          track_notes: notesInput.value.trim(),
           ignored: ignoredInput.checked,
         });
       });
@@ -5516,6 +5625,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function applySmartCrate(query: string) {
+      if (query === 'duplicate:true' || query === 'duplicate' || query === 'duplicates') {
+        searchEl.value = 'duplicate:true';
+        void loadTracks(searchEl.value.trim());
+        openPanel('track');
+        return;
+      }
       if (query === 'bpm:missing') {
         if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = true;
         loadTracks(searchEl.value.trim());
@@ -5576,8 +5691,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
 
       const smartCrates = (libraryOverview.smart_crates as Record<string, unknown>[]) ?? [];
+      const duplicates = (libraryOverview.duplicates as Record<string, unknown>[]) ?? [];
       const artists = (libraryOverview.artists as Record<string, unknown>[]) ?? [];
-      const tags = (libraryOverview.tags as Record<string, unknown>[]) ?? [];
+      const recentScans = scanHistory.slice(0, 5);
       const googleOauth = googleOauthRuntimeSummary();
       const googleOauthConfigured = googleOauth?.configured === true;
       const googleDrive = googleDriveRuntimeSummary();
@@ -5637,6 +5753,67 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
       `;
+      const recentImportsMarkup = `
+        <section class="library-card">
+          <div class="scan-log-head"><strong>Recent Imports</strong></div>
+          <div class="scan-preflight">${recentScans.length ? `Latest scan: ${esc(String(recentScans[0].directory ?? 'Unknown folder'))}` : 'No scan history yet.'}</div>
+          <div class="scan-preflight">${recentScans.length
+            ? (() => {
+              const latest = recentScans[0];
+              const summary = latest.summary && typeof latest.summary === 'object' ? latest.summary as Record<string, unknown> : {};
+              return `Summary: ${esc(Number(summary.scanned ?? 0))} scanned · ${esc(Number(summary.analyzed ?? 0))} analyzed · ${esc(Number(summary.errors ?? 0))} errors`;
+            })()
+            : 'Recent scan summaries will appear here after each import.'}</div>
+          <div class="scan-history">
+            ${recentScans.length
+              ? recentScans.map((job) => {
+                const summary = job.summary && typeof job.summary === 'object' ? job.summary as Record<string, unknown> : {};
+                const createdAt = String(job.created_at ?? job.createdAt ?? '').trim();
+                const createdLabel = createdAt ? new Date(createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Unknown time';
+                const status = String(job.status ?? 'unknown');
+                return `
+                  <div class="scan-history-item">
+                    <strong>${esc(String(job.directory ?? 'Unknown folder'))}</strong>
+                    <span>${esc(status)} · ${esc(createdLabel)}</span>
+                    <span>${esc(Number(summary.scanned ?? 0))} scanned · ${esc(Number(summary.analyzed ?? 0))} analyzed · ${esc(Number(summary.errors ?? 0))} errors</span>
+                  </div>
+                `;
+              }).join('')
+              : '<div class="empty">No scan history yet.</div>'}
+          </div>
+        </section>
+      `;
+      const duplicateGroupsMarkup = `
+        <section class="library-card">
+          <div class="scan-log-head"><strong>Duplicate Detection</strong></div>
+          <div class="scan-preflight">${duplicates.length ? `${duplicates.length} duplicate group${duplicates.length === 1 ? '' : 's'} detected.` : 'No duplicates detected yet.'}</div>
+          <div class="buttons">
+            <button type="button" class="btn secondary" id="show-duplicate-tracks-btn">${duplicates.length ? 'Show Duplicates' : 'Refresh Duplicates'}</button>
+          </div>
+          <div class="duplicate-list">
+            ${duplicates.slice(0, 5).map((group) => {
+              const tracksInGroup = Array.isArray(group.tracks) ? group.tracks as Record<string, unknown>[] : [];
+              const label = String(group.type ?? 'signature');
+              const key = String(group.key ?? '');
+              return `
+                <div class="duplicate-group">
+                  <details open>
+                    <summary>${esc(label)} · ${esc(key)} · ${tracksInGroup.length} tracks</summary>
+                    <div class="suggestions compact">
+                      ${tracksInGroup.map((track) => `
+                        <div class="suggestion" data-track-id="${esc(String(track.id ?? ''))}">
+                          <strong>${esc(track.artist ?? 'Unknown Artist')} - ${esc(track.title ?? 'Untitled')}</strong><br>
+                          <small>${esc(track.album ?? '')} · ${esc(track.path ?? '')}</small>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </details>
+                </div>
+              `;
+            }).join('') || '<div class="empty">No duplicate groups.</div>'}
+          </div>
+        </section>
+      `;
 
       libraryPanel.innerHTML = `
         <div class="library-grid">
@@ -5664,6 +5841,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <button type="button" class="btn danger" id="reset-library-data-btn">Reset Library Data</button>
             </div>
           </section>
+          ${recentImportsMarkup}
+          ${duplicateGroupsMarkup}
           ${googleDriveCardMarkup}
           <section class="library-card">
             <div class="scan-log-head"><strong>Preferences</strong></div>
@@ -5747,9 +5926,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="chips">
               ${smartCrates.map((crate) => `<button type="button" class="chip nav-chip smart-crate-btn" data-query="${esc(crate.query)}">${esc(crate.label)} · ${esc(crate.count)}</button>`).join('')}
             </div>
-            <div class="chips">
-              ${tags.slice(0, 12).map((tag) => `<button type="button" class="chip nav-chip tag-filter-btn" data-tag="${esc(tag.tag)}">${esc(tag.tag)} · ${esc(tag.count)}</button>`).join('') || '<span class="chip subtle">No tags yet</span>'}
-            </div>
           </section>`}
           ${isProdFlavor ? '' : `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Artist Browser</strong></div>
@@ -5777,19 +5953,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           startReviewMode(((button as HTMLElement).dataset.reviewKind as 'art' | 'key' | 'decode' | 'attention') ?? 'attention');
         });
       });
+      document.getElementById('show-duplicate-tracks-btn')?.addEventListener('click', () => {
+        searchEl.value = 'duplicate:true';
+        void loadTracks(searchEl.value.trim());
+        openPanel('track');
+      });
       document.getElementById('fill-visible-missing-art-btn')?.addEventListener('click', () => {
         const ids = visibleTracksOrdered()
           .filter((track) => !track.album_art_url)
           .map((track) => Number(track.id))
           .filter((id) => Number.isFinite(id));
         void reanalyzeArtBulk(ids, { label: 'visible filtered tracks' });
-      });
-      libraryPanel.querySelectorAll('.tag-filter-btn[data-tag]').forEach((button) => {
-        button.addEventListener('click', () => {
-          searchEl.value = String((button as HTMLElement).dataset.tag ?? '');
-          void loadTracks(searchEl.value.trim());
-          document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
-        });
       });
       libraryPanel.querySelectorAll('.artist-browser-btn[data-artist]').forEach((button) => {
         button.addEventListener('click', () => {
@@ -6521,6 +6695,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       tracks = Array.isArray(response.tracks) ? response.tracks as Record<string, unknown>[] : [];
+      updateDuplicateTrackIdsFromTracks(tracks);
       refreshMetadataSuggestionLists();
       updateRecentNewTrackIdsFromTracks(tracks);
       for (const id of [...selectedTrackIds]) {

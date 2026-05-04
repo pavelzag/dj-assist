@@ -28,8 +28,8 @@ export default function AppShell({
               </div>
             </div>
           </div>
-          <div className="search-shortcut-hint">Use <strong>/</strong> to search</div>
-          <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album..." aria-label="Search collection" />
+          <div className="search-shortcut-hint">Use <strong>/</strong> to search. Try <strong>bpm:128-132</strong>, <strong>key:8A</strong>, <strong>art:missing</strong>, <strong>notes:cue</strong>, <strong>duplicate</strong>.</div>
+          <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album, notes, or filters like bpm:128-132..." aria-label="Search collection" />
           <div className="filters">
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
             <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
@@ -132,7 +132,7 @@ export default function AppShell({
             <h3>Command Palette</h3>
             <button className="close" id="close-command-palette" type="button">&times;</button>
           </div>
-          <input id="command-palette-input" placeholder="Search commands, artists, albums, or BPM like 140 or bpm:138-142..." />
+          <input id="command-palette-input" placeholder="Search commands, artists, albums, or filters like bpm:140, key:8A, art:missing, notes:cue..." />
           <div className="command-palette-list" id="command-palette-list" />
         </div>
       </div>
@@ -145,7 +145,7 @@ export default function AppShell({
           </div>
           <div className="shortcuts-list">
             <div><strong>Cmd/Ctrl + K</strong><span>Open command palette</span></div>
-            <div><strong>Palette BPM</strong><span>Type `140` or `bpm:138-142` to find tracks by BPM</span></div>
+            <div><strong>Palette filters</strong><span>Type `bpm:138-142`, `key:8A`, `art:missing`, `notes:cue`, or `duplicate`</span></div>
             <div><strong>Space</strong><span>Play or pause</span></div>
             <div><strong>Arrow Left / Right</strong><span>Scrub current track by 5s</span></div>
             <div><strong>Arrow Up / Down</strong><span>Select previous or next track</span></div>
@@ -179,6 +179,7 @@ export default function AppShell({
               <label><span>Album</span><input id="edit-meta-album" list="album-suggestions" /></label>
               <label><span>Key</span><input id="edit-meta-key" /></label>
               <label className="metadata-wide"><span>Tags</span><input id="edit-meta-tags" placeholder="warmup, vocal, peak-time" /></label>
+              <label className="metadata-wide"><span>Notes</span><textarea id="edit-meta-notes" rows={4} placeholder="Anything useful for this track..." /></label>
             </div>
             <div className="scan-preflight" id="edit-metadata-status">Press Enter or Save Metadata to apply changes.</div>
             <div className="buttons">

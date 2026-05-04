@@ -10,6 +10,7 @@ import {
   syncCollectionDeletion,
   syncCollectionSnapshot,
 } from '@/lib/server-collections';
+import { parseTrackSearchQuery } from '@/lib/track-search';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -133,6 +134,7 @@ function ensureSchema(): void {
       album_art_review_status TEXT,
       album_art_review_notes TEXT,
       album_group_key TEXT,
+      track_notes TEXT,
       embedded_album_art INTEGER NOT NULL DEFAULT 0,
       album_art_match_debug TEXT,
       spotify_album_name TEXT,
@@ -228,6 +230,7 @@ function ensureSchema(): void {
     ['album_art_review_status', 'TEXT'],
     ['album_art_review_notes', 'TEXT'],
     ['album_group_key', 'TEXT'],
+    ['track_notes', 'TEXT'],
     ['embedded_album_art', 'INTEGER NOT NULL DEFAULT 0'],
     ['album_art_match_debug', 'TEXT'],
     ['spotify_url', 'TEXT'],
@@ -408,6 +411,7 @@ export interface Track {
   album_art_review_status: string | null;
   album_art_review_notes: string | null;
   album_group_key: string | null;
+  track_notes: string | null;
   embedded_album_art: boolean | null;
   album_art_match_debug: string | null;
   spotify_album_name: string | null;
@@ -490,6 +494,7 @@ function mapTrack(row: Record<string, unknown>): Track {
     spotify_match_score: row.spotify_match_score == null ? null : Number(row.spotify_match_score),
     file_size: row.file_size == null ? null : Number(row.file_size),
     file_mtime: row.file_mtime == null ? null : Number(row.file_mtime),
+    track_notes: row.track_notes == null ? null : String(row.track_notes),
     embedded_album_art: toBoolean(row.embedded_album_art),
     ignored: toBoolean(row.ignored),
     manual_cues: parseJson<Array<{ time: number; label?: string }>>(row.manual_cues, []),
@@ -662,6 +667,7 @@ export function serializeTrack(
     album_art_review_status: track.album_art_review_status,
     album_art_review_notes: track.album_art_review_notes,
     album_group_key: track.album_group_key,
+    track_notes: track.track_notes,
     embedded_album_art: Boolean(track.embedded_album_art),
     album_art_match_debug: track.album_art_match_debug,
     spotify_album_name: displaySpotifyAlbumName,
@@ -678,6 +684,7 @@ export function serializeTrack(
       album_art_review_status: track.album_art_review_status ?? '',
       album_art_review_notes: track.album_art_review_notes ?? '',
       album_group_key: track.album_group_key ?? '',
+      track_notes: track.track_notes ?? '',
       embedded_album_art: Boolean(track.embedded_album_art),
       album_art_match_debug: track.album_art_match_debug ?? '',
       has_album_art: Boolean(track.album_art_url),
@@ -811,6 +818,7 @@ export function serializeTrackGroup(
     album_art_review_status: preferValue(tracks, (track) => track.album_art_review_status, base.album_art_review_status),
     album_art_review_notes: preferValue(tracks, (track) => track.album_art_review_notes, base.album_art_review_notes),
     album_group_key: preferValue(tracks, (track) => track.album_group_key, base.album_group_key),
+    track_notes: preferValue(tracks, (track) => track.track_notes, base.track_notes),
     embedded_album_art: tracks.some((track) => Boolean(track.embedded_album_art)),
     album_art_match_debug: preferValue(tracks, (track) => track.album_art_match_debug, base.album_art_match_debug),
     spotify_album_name: preferValue(tracks, (track) => smartCapitalize(track.spotify_album_name), base.spotify_album_name),
@@ -889,9 +897,58 @@ export async function searchTrackRows(params: SearchParams): Promise<Track[]> {
   const values: SqlitePrimitive[] = [];
   const query = params.query?.trim();
   if (query) {
-    clauses.push("(LOWER(title) LIKE LOWER(?) OR LOWER(artist) LIKE LOWER(?) OR LOWER(album) LIKE LOWER(?) OR LOWER(spotify_album_name) LIKE LOWER(?) OR LOWER(COALESCE(custom_tags, '')) LIKE LOWER(?))");
-    const like = `%${query}%`;
-    values.push(like, like, like, like, like);
+    const parsed = parseTrackSearchQuery(query);
+    for (const term of parsed.textTerms) {
+      clauses.push("(LOWER(title) LIKE LOWER(?) OR LOWER(artist) LIKE LOWER(?) OR LOWER(album) LIKE LOWER(?) OR LOWER(spotify_album_name) LIKE LOWER(?) OR LOWER(COALESCE(custom_tags, '')) LIKE LOWER(?) OR LOWER(COALESCE(track_notes, '')) LIKE LOWER(?) OR LOWER(COALESCE(path, '')) LIKE LOWER(?))");
+      const like = `%${term}%`;
+      values.push(like, like, like, like, like, like, like);
+    }
+    for (const filter of parsed.filters) {
+      if (filter.kind === 'ignored') {
+        clauses.push('ignored = ?');
+        values.push(filter.value ? 1 : 0);
+        continue;
+      }
+      if (filter.kind === 'notes') {
+        clauses.push('LOWER(COALESCE(track_notes, \'\')) LIKE LOWER(?)');
+        values.push(`%${filter.value}%`);
+        continue;
+      }
+      if (filter.kind === 'tag') {
+        clauses.push("LOWER(COALESCE(custom_tags, '')) LIKE LOWER(?)");
+        values.push(`%${filter.value}%`);
+        continue;
+      }
+      if (filter.kind === 'art') {
+        clauses.push(filter.missing ? "(album_art_url IS NULL OR TRIM(album_art_url) = '')" : "(album_art_url IS NOT NULL AND TRIM(album_art_url) <> '')");
+        continue;
+      }
+      if (filter.kind === 'key') {
+        if (filter.missing) {
+          clauses.push("(COALESCE(key, '') = '' AND COALESCE(spotify_key, '') = '' AND COALESCE(key_numeric, '') = '')");
+        } else if (filter.value) {
+          clauses.push('(UPPER(key) LIKE UPPER(?) OR UPPER(spotify_key) LIKE UPPER(?) OR UPPER(key_numeric) LIKE UPPER(?))');
+          const like = `%${filter.value}%`;
+          values.push(like, like, like);
+        }
+        continue;
+      }
+      if (filter.kind === 'bpm') {
+        if (filter.missing) {
+          clauses.push('COALESCE(bpm_override, bpm, spotify_tempo) IS NULL');
+        } else {
+          if (filter.min != null) {
+            clauses.push('COALESCE(bpm_override, bpm, spotify_tempo) >= ?');
+            values.push(filter.min);
+          }
+          if (filter.max != null) {
+            clauses.push('COALESCE(bpm_override, bpm, spotify_tempo) <= ?');
+            values.push(filter.max);
+          }
+        }
+        continue;
+      }
+    }
   }
   if (params.bpmMin != null) {
     clauses.push('COALESCE(bpm_override, bpm, spotify_tempo) >= ?');
@@ -932,6 +989,7 @@ export async function updateTrackMetadata(
     album_art_confidence?: number | null;
     album_art_review_status?: string | null;
     album_art_review_notes?: string | null;
+    track_notes?: string | null;
     source_preference?: PreferredSourceKind;
   },
 ): Promise<void> {
@@ -953,6 +1011,7 @@ export async function updateTrackMetadata(
     album_art_confidence: patch.album_art_confidence !== undefined ? patch.album_art_confidence : current.album_art_confidence,
     album_art_review_status: patch.album_art_review_status !== undefined ? patch.album_art_review_status : current.album_art_review_status,
     album_art_review_notes: patch.album_art_review_notes !== undefined ? patch.album_art_review_notes : current.album_art_review_notes,
+    track_notes: patch.track_notes !== undefined ? patch.track_notes : current.track_notes,
     artist_canonical: canonicalizeArtistName(artist),
     album_canonical: canonicalizeAlbumName(album),
     manual_cues: patch.manual_cues !== undefined ? JSON.stringify(patch.manual_cues) : JSON.stringify(current.manual_cues ?? []),
@@ -967,7 +1026,7 @@ export async function updateTrackMetadata(
     `UPDATE tracks
      SET title = ?, artist = ?, album = ?, key = ?, ignored = ?, custom_tags = ?,
          album_art_url = ?, album_art_source = ?, album_art_confidence = ?,
-         album_art_review_status = ?, album_art_review_notes = ?, artist_canonical = ?,
+         album_art_review_status = ?, album_art_review_notes = ?, track_notes = ?, artist_canonical = ?,
          album_canonical = ?, manual_cues = ?
      WHERE id = ?`,
     values.title,
@@ -981,6 +1040,7 @@ export async function updateTrackMetadata(
     values.album_art_confidence,
     values.album_art_review_status,
     values.album_art_review_notes,
+    values.track_notes,
     values.artist_canonical,
     values.album_canonical,
     values.manual_cues,
@@ -1133,8 +1193,8 @@ export async function importGoogleDriveTracks(input: {
              embedded_album_art, album_art_match_debug, spotify_album_name, spotify_match_score,
              spotify_high_confidence, youtube_url, bpm_source, analysis_status, analysis_error,
              decode_failed, analysis_stage, analysis_debug, file_hash, file_size, file_mtime,
-             ignored, custom_tags, artist_canonical, album_canonical, manual_cues
-           ) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, NULL, NULL, '[]')`,
+             ignored, custom_tags, artist_canonical, album_canonical, manual_cues, track_notes
+           ) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, NULL, NULL, '[]', NULL)`,
           path,
           derivedTitle,
           'google_drive_metadata',
@@ -1222,6 +1282,223 @@ export async function bulkTrackAction(input: {
   });
 
   return { updated: rows.length };
+}
+
+function snapshotToTrackRow(snapshot: Record<string, unknown>) {
+  const manualCues = Array.isArray(snapshot.manual_cues) ? snapshot.manual_cues : [];
+  const customTags = Array.isArray(snapshot.custom_tags)
+    ? snapshot.custom_tags.map((value) => String(value)).filter(Boolean).join(', ')
+    : String(snapshot.custom_tags ?? '');
+  return {
+    id: Number(snapshot.id),
+    path: String(snapshot.path ?? '').trim(),
+    title: snapshot.title == null ? null : String(snapshot.title),
+    artist: snapshot.artist == null ? null : String(snapshot.artist),
+    album: snapshot.album == null ? null : String(snapshot.album),
+    duration: snapshot.duration == null ? null : Number(snapshot.duration),
+    bitrate: snapshot.bitrate == null ? null : Number(snapshot.bitrate),
+    bpm: snapshot.bpm == null ? null : Number(snapshot.bpm),
+    bpm_override: snapshot.bpm_override == null ? null : Number(snapshot.bpm_override),
+    bpm_confidence: snapshot.bpm_confidence == null ? null : Number(snapshot.bpm_confidence),
+    key: snapshot.key == null ? null : String(snapshot.key),
+    key_numeric: snapshot.key_numeric == null ? null : String(snapshot.key_numeric),
+    spotify_id: snapshot.spotify_id == null ? null : String(snapshot.spotify_id),
+    spotify_uri: snapshot.spotify_uri == null ? null : String(snapshot.spotify_uri),
+    spotify_url: snapshot.spotify_url == null ? null : String(snapshot.spotify_url),
+    spotify_preview_url: snapshot.spotify_preview_url == null ? null : String(snapshot.spotify_preview_url),
+    spotify_tempo: snapshot.spotify_tempo == null ? null : Number(snapshot.spotify_tempo),
+    spotify_key: snapshot.spotify_key == null ? null : String(snapshot.spotify_key),
+    spotify_mode: snapshot.spotify_mode == null ? null : String(snapshot.spotify_mode),
+    album_art_url: snapshot.album_art_url == null ? null : String(snapshot.album_art_url),
+    album_art_source: snapshot.album_art_source == null ? null : String(snapshot.album_art_source),
+    album_art_confidence: snapshot.album_art_confidence == null ? null : Number(snapshot.album_art_confidence),
+    album_art_review_status: snapshot.album_art_review_status == null ? null : String(snapshot.album_art_review_status),
+    album_art_review_notes: snapshot.album_art_review_notes == null ? null : String(snapshot.album_art_review_notes),
+    album_group_key: snapshot.album_group_key == null ? null : String(snapshot.album_group_key),
+    track_notes: snapshot.track_notes == null ? null : String(snapshot.track_notes),
+    embedded_album_art: boolInt(Boolean(snapshot.embedded_album_art)),
+    album_art_match_debug: snapshot.album_art_match_debug == null ? null : String(snapshot.album_art_match_debug),
+    spotify_album_name: snapshot.spotify_album_name == null ? null : String(snapshot.spotify_album_name),
+    spotify_match_score: snapshot.spotify_match_score == null ? null : Number(snapshot.spotify_match_score),
+    spotify_high_confidence: snapshot.spotify_high_confidence == null ? null : String(snapshot.spotify_high_confidence),
+    youtube_url: snapshot.youtube_url == null ? null : String(snapshot.youtube_url),
+    bpm_source: snapshot.bpm_source == null ? null : String(snapshot.bpm_source),
+    analysis_status: snapshot.analysis_status == null ? null : String(snapshot.analysis_status),
+    analysis_error: snapshot.analysis_error == null ? null : String(snapshot.analysis_error),
+    decode_failed: snapshot.decode_failed == null ? null : String(snapshot.decode_failed),
+    analysis_stage: snapshot.analysis_stage == null ? null : String(snapshot.analysis_stage),
+    analysis_debug: snapshot.analysis_debug == null ? null : String(snapshot.analysis_debug),
+    file_hash: snapshot.file_hash == null ? null : String(snapshot.file_hash),
+    file_size: snapshot.file_size == null ? null : Number(snapshot.file_size),
+    file_mtime: snapshot.file_mtime == null ? null : Number(snapshot.file_mtime),
+    ignored: boolInt(Boolean(snapshot.ignored)),
+    custom_tags: customTags,
+    artist_canonical: snapshot.artist_canonical == null ? null : String(snapshot.artist_canonical),
+    album_canonical: snapshot.album_canonical == null ? null : String(snapshot.album_canonical),
+    manual_cues: JSON.stringify(manualCues),
+    created_at: snapshot.created_at ? String(snapshot.created_at) : null,
+  };
+}
+
+export async function restoreTrackSnapshots(snapshots: Record<string, unknown>[]): Promise<number> {
+  const rows = snapshots
+    .filter((snapshot) => Number.isFinite(Number(snapshot.id)) && String(snapshot.path ?? '').trim())
+    .map(snapshotToTrackRow);
+  if (!rows.length) return 0;
+  const columns = [
+    'id',
+    'path',
+    'title',
+    'artist',
+    'album',
+    'duration',
+    'bitrate',
+    'bpm',
+    'bpm_override',
+    'bpm_confidence',
+    'key',
+    'key_numeric',
+    'spotify_id',
+    'spotify_uri',
+    'spotify_url',
+    'spotify_preview_url',
+    'spotify_tempo',
+    'spotify_key',
+    'spotify_mode',
+    'album_art_url',
+    'album_art_source',
+    'album_art_confidence',
+    'album_art_review_status',
+    'album_art_review_notes',
+    'album_group_key',
+    'track_notes',
+    'embedded_album_art',
+    'album_art_match_debug',
+    'spotify_album_name',
+    'spotify_match_score',
+    'spotify_high_confidence',
+    'youtube_url',
+    'bpm_source',
+    'analysis_status',
+    'analysis_error',
+    'decode_failed',
+    'analysis_stage',
+    'analysis_debug',
+    'file_hash',
+    'file_size',
+    'file_mtime',
+    'ignored',
+    'custom_tags',
+    'artist_canonical',
+    'album_canonical',
+    'manual_cues',
+    'created_at',
+  ] as const;
+  const placeholders = columns.map(() => '?').join(', ');
+  transaction(() => {
+    for (const row of rows) {
+      const values = [
+        row.id,
+        row.path,
+        row.title,
+        row.artist,
+        row.album,
+        row.duration,
+        row.bitrate,
+        row.bpm,
+        row.bpm_override,
+        row.bpm_confidence,
+        row.key,
+        row.key_numeric,
+        row.spotify_id,
+        row.spotify_uri,
+        row.spotify_url,
+        row.spotify_preview_url,
+        row.spotify_tempo,
+        row.spotify_key,
+        row.spotify_mode,
+        row.album_art_url,
+        row.album_art_source,
+        row.album_art_confidence,
+        row.album_art_review_status,
+        row.album_art_review_notes,
+        row.album_group_key,
+        row.track_notes,
+        row.embedded_album_art,
+        row.album_art_match_debug,
+        row.spotify_album_name,
+        row.spotify_match_score,
+        row.spotify_high_confidence,
+        row.youtube_url,
+        row.bpm_source,
+        row.analysis_status,
+        row.analysis_error,
+        row.decode_failed,
+        row.analysis_stage,
+        row.analysis_debug,
+        row.file_hash,
+        row.file_size,
+        row.file_mtime,
+        row.ignored,
+        row.custom_tags,
+        row.artist_canonical,
+        row.album_canonical,
+        row.manual_cues,
+        row.created_at,
+      ];
+      execute(
+        `INSERT INTO tracks (${columns.join(', ')}) VALUES (${placeholders})
+         ON CONFLICT(id) DO UPDATE SET
+           path = excluded.path,
+           title = excluded.title,
+           artist = excluded.artist,
+           album = excluded.album,
+           duration = excluded.duration,
+           bitrate = excluded.bitrate,
+           bpm = excluded.bpm,
+           bpm_override = excluded.bpm_override,
+           bpm_confidence = excluded.bpm_confidence,
+           key = excluded.key,
+           key_numeric = excluded.key_numeric,
+           spotify_id = excluded.spotify_id,
+           spotify_uri = excluded.spotify_uri,
+           spotify_url = excluded.spotify_url,
+           spotify_preview_url = excluded.spotify_preview_url,
+           spotify_tempo = excluded.spotify_tempo,
+           spotify_key = excluded.spotify_key,
+           spotify_mode = excluded.spotify_mode,
+           album_art_url = excluded.album_art_url,
+           album_art_source = excluded.album_art_source,
+           album_art_confidence = excluded.album_art_confidence,
+           album_art_review_status = excluded.album_art_review_status,
+           album_art_review_notes = excluded.album_art_review_notes,
+           album_group_key = excluded.album_group_key,
+           track_notes = excluded.track_notes,
+           embedded_album_art = excluded.embedded_album_art,
+           album_art_match_debug = excluded.album_art_match_debug,
+           spotify_album_name = excluded.spotify_album_name,
+           spotify_match_score = excluded.spotify_match_score,
+           spotify_high_confidence = excluded.spotify_high_confidence,
+           youtube_url = excluded.youtube_url,
+           bpm_source = excluded.bpm_source,
+           analysis_status = excluded.analysis_status,
+           analysis_error = excluded.analysis_error,
+           decode_failed = excluded.decode_failed,
+           analysis_stage = excluded.analysis_stage,
+           analysis_debug = excluded.analysis_debug,
+           file_hash = excluded.file_hash,
+           file_size = excluded.file_size,
+           file_mtime = excluded.file_mtime,
+           ignored = excluded.ignored,
+           custom_tags = excluded.custom_tags,
+           artist_canonical = excluded.artist_canonical,
+           album_canonical = excluded.album_canonical,
+           manual_cues = excluded.manual_cues`,
+        ...values,
+      );
+    }
+  });
+  return rows.length;
 }
 
 export async function resetLibraryData(): Promise<void> {
@@ -1758,6 +2035,8 @@ export async function getLibraryOverview(): Promise<LibraryOverview> {
     .filter((group) => group.tracks.length > 1)
     .sort((a, b) => b.tracks.length - a.tracks.length)
     .slice(0, 20);
+
+  smartCrates.splice(3, 0, { id: 'duplicates', label: 'Duplicates', count: duplicates.length, query: 'duplicate:true' });
 
   const coverReviewQueue = allTracks
     .map((track) => {
