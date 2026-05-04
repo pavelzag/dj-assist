@@ -43,29 +43,39 @@ export async function collectFolderTree(input: {
 }
 
 async function fetchDirectSubfolderIds(parentId: string, accessToken: string): Promise<string[]> {
-  const url = new URL('https://www.googleapis.com/drive/v3/files');
-  url.searchParams.set(
-    'q',
-    `trashed = false and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents`,
-  );
-  url.searchParams.set('fields', 'files(id)');
-  url.searchParams.set('pageSize', '200');
-  url.searchParams.set('supportsAllDrives', 'true');
-  url.searchParams.set('includeItemsFromAllDrives', 'true');
+  const ids: string[] = [];
+  let pageToken: string | undefined;
 
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-    signal: AbortSignal.timeout(30_000),
-  });
+  do {
+    const url = new URL('https://www.googleapis.com/drive/v3/files');
+    url.searchParams.set(
+      'q',
+      `trashed = false and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents`,
+    );
+    url.searchParams.set('fields', 'nextPageToken, files(id)');
+    url.searchParams.set('pageSize', '200');
+    url.searchParams.set('supportsAllDrives', 'true');
+    url.searchParams.set('includeItemsFromAllDrives', 'true');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
 
-  if (!response.ok) return [];
-  const payload = await response.json() as Record<string, unknown>;
-  return Array.isArray(payload.files)
-    ? payload.files
-        .map((f) => String((f as Record<string, unknown>).id ?? '').trim())
-        .filter(Boolean)
-    : [];
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!response.ok) break;
+    const payload = await response.json() as Record<string, unknown>;
+    if (Array.isArray(payload.files)) {
+      for (const f of payload.files) {
+        const id = String((f as Record<string, unknown>).id ?? '').trim();
+        if (id) ids.push(id);
+      }
+    }
+    pageToken = String(payload.nextPageToken ?? '').trim() || undefined;
+  } while (pageToken);
+
+  return ids;
 }
 
 // Build Drive API query clauses for a set of folder IDs.  If no IDs are given,
