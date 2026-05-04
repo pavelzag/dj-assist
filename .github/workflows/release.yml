@@ -31,6 +31,9 @@ jobs:
       - name: Checkout current ref
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.prepare-release.outputs.sha }}
+          fetch-depth: 0
+        with:
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -79,15 +82,24 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
       should_bump_patch: ${{ steps.release.outputs.should_bump_patch }}
+      sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Checkout current ref
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Resolve release version
         id: release
         run: |
           set -euo pipefail
           should_bump_patch=false
+          release_sha=""
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             tag="${{ inputs.tag }}"
@@ -107,9 +119,42 @@ jobs:
             version="${tag#v}"
           fi
 
+          if [ "${should_bump_patch}" = "true" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            npm version patch --no-git-tag-version
+            version="$(node -p "require('./package.json').version")"
+            tag="v${version}"
+
+            if git rev-parse "${tag}" >/dev/null 2>&1; then
+              echo "Tag ${tag} already exists locally." >&2
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+              echo "Tag ${tag} already exists on origin." >&2
+              exit 1
+            fi
+
+            git add package.json package-lock.json
+            git commit -m "chore: release ${tag}"
+            git tag "${tag}"
+            release_sha="$(git rev-parse HEAD)"
+            git push origin HEAD:refs/heads/${GITHUB_REF_NAME}
+            git push origin "${tag}"
+          else
+            git fetch --tags origin
+            if git rev-parse "${tag}" >/dev/null 2>&1; then
+              release_sha="$(git rev-list -n 1 "${tag}")"
+            else
+              release_sha="$(git rev-parse HEAD)"
+            fi
+          fi
+
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "should_bump_patch=${should_bump_patch}" >> "$GITHUB_OUTPUT"
+          echo "sha=${release_sha}" >> "$GITHUB_OUTPUT"
 
           {
             echo "## Release"
@@ -117,6 +162,7 @@ jobs:
             echo "- Tag: \`${tag}\`"
             echo "- Version: \`${version}\`"
             echo "- Patch bump: \`${should_bump_patch}\`"
+            echo "- SHA: \`${release_sha}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build-macos:
@@ -138,6 +184,9 @@ jobs:
     steps:
       - name: Checkout current ref
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.sha }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -170,50 +219,6 @@ jobs:
             rm -rf node_modules
             sleep 10
           done
-
-      - name: Prepare release version
-        id: version
-        run: |
-          set -euo pipefail
-
-          if [ "${{ needs.prepare-release.outputs.should_bump_patch }}" = "true" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-            npm version patch --no-git-tag-version
-            version="$(node -p "require('./package.json').version")"
-            tag="v${version}"
-
-            if git rev-parse "${tag}" >/dev/null 2>&1; then
-              echo "Tag ${tag} already exists locally." >&2
-              exit 1
-            fi
-            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-              echo "Tag ${tag} already exists on origin." >&2
-              exit 1
-            fi
-
-            git add package.json package-lock.json
-            git commit -m "chore: release ${tag}"
-            git tag "${tag}"
-            release_sha="$(git rev-parse HEAD)"
-            git push origin HEAD:refs/heads/${GITHUB_REF_NAME}
-            git push origin "${tag}"
-          else
-            tag="${{ needs.prepare-release.outputs.tag }}"
-            if [ -z "${tag}" ]; then
-              echo "No release tag resolved." >&2
-              exit 1
-            fi
-            git fetch --tags origin "${tag}"
-            git checkout "${tag}"
-            version="${tag#v}"
-            release_sha="$(git rev-parse HEAD)"
-          fi
-
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "sha=${release_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Install Chromaprint
         run: brew install chromaprint
@@ -275,7 +280,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.flavor }}-${{ steps.version.outputs.tag }}
+          name: macos-${{ matrix.flavor }}-${{ needs.prepare-release.outputs.tag }}
           path: |
             dist-electron/*.dmg
             dist-electron/*.zip
@@ -286,11 +291,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ steps.version.outputs.sha }}
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          target_commitish: ${{ needs.prepare-release.outputs.sha }}
           files: |
             dist-electron/*.dmg
             dist-electron/*.zip
           generate_release_notes: true
-          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+          prerelease: ${{ contains(needs.prepare-release.outputs.tag, '-') }}
           make_latest: ${{ github.event_name == 'workflow_dispatch' && toJSON(inputs.make_latest) || 'legacy' }}
