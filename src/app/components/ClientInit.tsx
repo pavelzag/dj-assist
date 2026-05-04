@@ -80,6 +80,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const addMusicSourceModal = document.getElementById('add-music-source-modal') as HTMLElement | null;
     const googleAuthMainBtn = document.getElementById('google-auth-main-btn') as HTMLButtonElement | null;
     const googleAuthMainLabel = document.getElementById('google-auth-main-label') as HTMLElement | null;
+    const vpnWarningModal = document.getElementById('vpn-warning-modal') as HTMLElement | null;
     const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
     const closeGoogleAuthUpsellBtn = document.getElementById('close-google-auth-upsell') as HTMLButtonElement | null;
     const closeGoogleDriveFolderModalBtn = document.getElementById('close-google-drive-folder-modal') as HTMLButtonElement | null;
@@ -221,6 +222,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       deleteFiles?: boolean;
     } = null;
     let googleDriveImportProgressTimer: number | null = null;
+    let googleSignInPendingAt: number | null = null;
+    let googleSignInPollTimer: ReturnType<typeof setInterval> | null = null;
     let googleDriveImportToastSignature = '';
     let googleDriveImportUiSignature = '';
     let googleDriveImportStage: GoogleDriveImportStage = 'idle';
@@ -1395,6 +1398,49 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
+    function stopGoogleSignInPoll() {
+      if (googleSignInPollTimer) {
+        clearInterval(googleSignInPollTimer);
+        googleSignInPollTimer = null;
+      }
+      googleSignInPendingAt = null;
+    }
+
+    async function checkGoogleSignInCompleted(): Promise<boolean> {
+      try {
+        const res = await fetch('/api/settings/server', { cache: 'no-store' });
+        if (!res.ok) return false;
+        const payload = await res.json() as Record<string, unknown>;
+        const server = payload.server && typeof payload.server === 'object'
+          ? payload.server as Record<string, unknown>
+          : null;
+        if (server) runtimeHealth = { ...(runtimeHealth ?? {}), server };
+        return String((server?.user as Record<string, unknown> | undefined)?.type ?? '') === 'google';
+      } catch {
+        return false;
+      }
+    }
+
+    function startGoogleSignInPoll() {
+      stopGoogleSignInPoll();
+      googleSignInPendingAt = Date.now();
+      const VPN_WARNING_MS = 25_000;
+      googleSignInPollTimer = setInterval(async () => {
+        const done = await checkGoogleSignInCompleted();
+        if (done) {
+          stopGoogleSignInPoll();
+          closeModal(vpnWarningModal);
+          await loadRuntimeHealth();
+          return;
+        }
+        if (googleSignInPendingAt && Date.now() - googleSignInPendingAt >= VPN_WARNING_MS) {
+          if (!vpnWarningModal?.classList.contains('open')) {
+            openModal(vpnWarningModal);
+          }
+        }
+      }, 3000);
+    }
+
     async function signInWithGoogle() {
       if (!googleAuthUiEnabled) return;
       try {
@@ -1419,7 +1465,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const result = await desktopApi.openExternal(targetUrl);
         if (result === false) {
           showToast('Could not open the browser for Google sign-in.', 'error');
+          return;
         }
+        startGoogleSignInPoll();
         return;
       }
       window.location.href = targetUrl;
@@ -5708,6 +5756,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       syncGoogleAuthEntryPoint();
       syncAddMusicUi();
       if (googleSignedInUser()) {
+        stopGoogleSignInPoll();
+        closeModal(vpnWarningModal);
         closeModal(googleAuthUpsellModal);
       }
       maybeOpenGoogleAuthUpsell();
@@ -6954,6 +7004,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           closeModal(coverModal);
           return;
         }
+        if (vpnWarningModal?.classList.contains('open')) {
+          stopGoogleSignInPoll();
+          closeModal(vpnWarningModal);
+          return;
+        }
         if (hasActiveCollectionFilters()) {
           clearCollectionFiltersAndScope();
           return;
@@ -7244,6 +7299,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     closeGoogleAuthUpsellBtn?.addEventListener('click', () => {
       dismissGoogleAuthUpsell();
     });
+    document.getElementById('close-vpn-warning')?.addEventListener('click', () => {
+      stopGoogleSignInPoll();
+      closeModal(vpnWarningModal);
+    });
+    document.getElementById('vpn-warning-dismiss-btn')?.addEventListener('click', () => {
+      stopGoogleSignInPoll();
+      closeModal(vpnWarningModal);
+    });
+    document.getElementById('vpn-warning-try-again-btn')?.addEventListener('click', () => {
+      closeModal(vpnWarningModal);
+      void signInWithGoogle();
+    });
     closeGoogleDriveFolderModalBtn?.addEventListener('click', () => {
       closeModal(googleDriveFolderModal);
     });
@@ -7295,6 +7362,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     addMusicSourceModal?.addEventListener('click', (event) => {
       if (event.target === addMusicSourceModal) closeModal(addMusicSourceModal);
+    });
+    vpnWarningModal?.addEventListener('click', (event) => {
+      if (event.target === vpnWarningModal) { stopGoogleSignInPoll(); closeModal(vpnWarningModal); }
     });
     deleteTrackModal?.addEventListener('keydown', (event) => {
       if (event.key !== 'Tab') return;

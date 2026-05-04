@@ -228,6 +228,24 @@ export default function AppShell({
         </div>
       </div>
 
+      <div className="modal" id="vpn-warning-modal" aria-hidden="true">
+        <div className="modal-card">
+          <div className="modal-head">
+            <h3>Sign-In Taking a While?</h3>
+            <button className="close" id="close-vpn-warning" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <div className="scan-preflight">
+              Google sign-in uses a local callback that some VPNs block. If you&apos;re connected to a VPN, try <strong>disabling it</strong> and signing in again.
+            </div>
+            <div className="buttons">
+              <button className="btn" id="vpn-warning-try-again-btn" type="button">Try Again</button>
+              <button className="btn secondary" id="vpn-warning-dismiss-btn" type="button">Dismiss</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="modal" id="tap-bpm-modal" aria-hidden="true">
         <div className="modal-card">
           <div className="modal-head">
