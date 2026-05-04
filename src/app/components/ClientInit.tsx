@@ -7,6 +7,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
   useEffect(() => {
     const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' ? 'prod' : 'debug';
     const isProdFlavor = appFlavor === 'prod';
+    const shouldShowSpotifyArtFallbackHint = !isProdFlavor;
     type ScanSummary = {
       scanned: number;
       analyzed: number;
@@ -4584,6 +4585,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const coverSource = String(track.album_art_source ?? (track.album_art_url ? 'unknown' : 'none'));
       const coverConfidence = Number(track.album_art_confidence ?? 0);
       const coverStatusClass = coverReviewStatus === 'approved' ? 'success' : coverReviewStatus === 'missing' ? 'subtle' : 'warn';
+      const isSelectedDetailTrack = selectedDetailTrackId === trackId;
+      const spotifyMissing = Array.isArray(runtimeHealth?.spotify_missing)
+        ? runtimeHealth.spotify_missing.filter((value): value is string => typeof value === 'string')
+        : [];
+      const spotifyConfigured = Boolean(spotifyRuntimeSummary()?.configured);
+      const artDiagnosticMessage = (() => {
+        if (!isSelectedDetailTrack || track.album_art_url) return '';
+        if (isProdFlavor) {
+          if (!spotifyConfigured || spotifyMissing.length) {
+            return 'Artwork lookup ran without Spotify and returned no match.';
+          }
+          return 'Artwork lookup ran and returned no match.';
+        }
+        if (!spotifyConfigured || spotifyMissing.length) {
+          return 'Spotify is not configured, so the scanner is using embedded art and fallback providers only.';
+        }
+        return 'Artwork lookup is using Spotify plus fallback providers.';
+      })();
       const tunebatUrl = tunebatUrlForTrack(track);
       const bpmDisplay = track.effective_bpm
         ? `<span class="bpm-val" id="bpm-display-${trackId}" data-bpm="${track.effective_bpm}" title="Click to edit">${displayBpm(track.effective_bpm, trackId)}</span>`
@@ -4624,6 +4643,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               ${track.bpm_source ? `<span class="chip subtle">BPM ${esc(track.bpm_source)}</span>` : ''}
               ${track.decode_failed === 'true' ? '<span class="chip warn">Unreadable audio</span>' : ''}
             </div>
+            ${artDiagnosticMessage ? `<div class="scan-preflight subtle">${esc(artDiagnosticMessage)}</div>` : ''}
           </div>
         </div>
         <div class="detail-inner">
@@ -5562,7 +5582,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const accountEntitlementChips = serverEntitlements.size
         ? [...serverEntitlements].sort().map((capability) => `<span class="chip subtle">${esc(formatCapabilityLabel(capability))}</span>`).join('')
         : '<span class="chip subtle">No premium capabilities active</span>';
-      const googleDriveCardMarkup = (!isProdFlavor || canUseGoogleDriveFeature()) ? `
+      const googleDriveCardMarkup = isProdFlavor ? '' : `
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
             <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist. Imported Drive items are added to the Songs list locally and synced to the server.</div>
@@ -5608,14 +5628,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   `).join('')
                   : '<div class="empty">No Drive audio files loaded yet.</div>')
                 : `<div class="empty">Preview Google Drive files from ${esc(selectedGoogleDriveFolderLabel())} to inspect what the app can see before importing.</div>`}
-            </div>
-          </section>
-      ` : `
-          <section class="library-card">
-            <div class="scan-log-head"><strong>Google Drive Import</strong></div>
-            <div class="scan-preflight">${esc(googleDriveFeatureStatusLabel())}</div>
-            <div class="buttons">
-              <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleSignedInUser() ? 'Manage Google' : 'Sign in with Google'}</button>
             </div>
           </section>
       `;
@@ -6231,7 +6243,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           if (Boolean(event.replay)) return;
           const rawLevel = String(event.level ?? 'info');
           const level = (rawLevel === 'error' || rawLevel === 'warning' || rawLevel === 'success' ? rawLevel : 'info') as 'info' | 'warning' | 'error' | 'success';
-          appendScanLog(String(event.message ?? ''), level, undefined, {
+          const message = String(event.message ?? '');
+          if (
+            !shouldShowSpotifyArtFallbackHint
+            && message === 'Spotify disabled, but fallback artwork providers remain available.'
+          ) {
+            return;
+          }
+          appendScanLog(message, level, undefined, {
             timestamp: typeof event.created_at === 'string' ? event.created_at : undefined,
             eventType: typeof event.eventType === 'string' ? event.eventType : undefined,
           });
@@ -6540,6 +6559,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       activeTrackId = Number(id);
       nowPlayingTrackId = activeTrackId;
       try { sessionStorage.setItem(activeTrackKey, String(activeTrackId)); } catch { /* ignore */ }
+      if (currentPanel !== 'track') {
+        openPanel('track');
+      }
       renderList(tracks);
       if (ensureVisible) {
         requestAnimationFrame(() => {

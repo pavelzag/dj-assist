@@ -330,13 +330,6 @@ export default function AppShell({
                   <span>Pick a local folder and run the regular desktop scan.</span>
                 </span>
               </button>
-              <button className="add-music-source-option" id="add-music-source-google-drive-btn" type="button">
-                <span className="add-music-source-option-icon" aria-hidden="true">G</span>
-                <span className="add-music-source-option-copy">
-                  <strong>Google Drive</strong>
-                  <span>Browse a Drive folder and import its audio metadata with read-only access.</span>
-                </span>
-              </button>
             </div>
           </div>
         </div>
