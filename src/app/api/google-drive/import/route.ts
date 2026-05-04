@@ -4,7 +4,7 @@ import {
   getClientId,
   getGoogleDriveAccessToken,
 } from '@/lib/runtime-settings';
-import { listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
+import { collectFolderTree, listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
 import { importGoogleDriveTracks, purgeIgnoredGoogleDriveTracks, updateGoogleDriveTrackLocalMetadata } from '@/lib/db';
 import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
 import { ensureLocalGoogleDriveTrackFile, readLocalAudioMetadata } from '@/lib/google-drive-cache';
@@ -120,6 +120,22 @@ export async function POST(request: NextRequest) {
       },
     );
 
+    // Collect the full folder subtree so that audio files in subfolders are
+    // included (the Drive API only queries direct-parent relationships).
+    let allFolderIds: string[] | undefined;
+    if (folderId) {
+      allFolderIds = await collectFolderTree({ accessToken, rootFolderId: folderId });
+      logGoogleDriveImport('info', 'folder_tree_collected', {
+        rootFolderId: folderId,
+        totalFolders: allFolderIds.length,
+      });
+      await logGoogleDriveProgress(
+        'info',
+        `Folder tree collected: ${allFolderIds.length} folder${allFolderIds.length === 1 ? '' : 's'} to search (including subfolders).`,
+        { event: 'folder_tree_collected', rootFolderId: folderId, totalFolders: allFolderIds.length },
+      );
+    }
+
     const localFiles: Awaited<ReturnType<typeof listGoogleDriveAudioFiles>>['files'] = [];
     let nextPageToken: string | null = null;
     let pagesFetched = 0;
@@ -127,6 +143,7 @@ export async function POST(request: NextRequest) {
       const page = await listGoogleDriveAudioFiles({
         accessToken,
         folderId: folderId || undefined,
+        allFolderIds,
         limit: Math.min(200, maxFiles - localFiles.length),
         pageToken: nextPageToken ?? undefined,
       });
