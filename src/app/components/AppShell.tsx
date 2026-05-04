@@ -44,10 +44,12 @@ export default function AppShell({
             <div className="quick-filter-bar" id="quick-filter-bar" />
           </div>
           <div className="header-global-actions">
-            <button type="button" className="google-auth-main-btn" id="google-auth-main-btn" title="Connect Google">
-              <span className="google-mark" aria-hidden="true">G</span>
-              <span id="google-auth-main-label">Google</span>
-            </button>
+            {isProdFlavor ? null : (
+              <button type="button" className="google-auth-main-btn" id="google-auth-main-btn" title="Connect Google">
+                <span className="google-mark" aria-hidden="true">G</span>
+                <span id="google-auth-main-label">Google</span>
+              </button>
+            )}
             <button type="button" className="icon-btn" id="mute-btn" aria-pressed="false" title="Mute">Mute</button>
           </div>
         </div>
@@ -253,31 +255,33 @@ export default function AppShell({
         </div>
       </div>
 
-      <div className="modal" id="google-auth-upsell-modal" aria-hidden="true">
-        <div className="modal-card google-auth-upsell-card">
-          <div className="modal-head">
-            <h3>Connect Google</h3>
-            <button className="close" id="close-google-auth-upsell" type="button">&times;</button>
-          </div>
-          <div className="metadata-editor">
-            <div className="google-auth-sheet">
-              <div className="google-auth-sheet-mark" aria-hidden="true">G</div>
-              <div className="google-auth-sheet-copy">
-                <strong>Google account</strong>
-                <span id="google-auth-upsell-status">Sign in to connect Google Drive.</span>
-              </div>
+      {isProdFlavor ? null : (
+        <div className="modal" id="google-auth-upsell-modal" aria-hidden="true">
+          <div className="modal-card google-auth-upsell-card">
+            <div className="modal-head">
+              <h3>Connect Google</h3>
+              <button className="close" id="close-google-auth-upsell" type="button">&times;</button>
             </div>
-            <div className="buttons">
-              <button className="google-sign-in-primary" id="google-auth-upsell-sign-in-btn" type="button">
-                <span className="google-mark" aria-hidden="true">G</span>
-                <span id="google-auth-upsell-sign-in-label">Sign in with Google</span>
-              </button>
-              <button className="btn secondary" id="google-auth-modal-sign-out-btn" type="button" hidden>Sign out</button>
-              {/* <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button" hidden>Continue Without Sign-In</button> */}
+            <div className="metadata-editor">
+              <div className="google-auth-sheet">
+                <div className="google-auth-sheet-mark" aria-hidden="true">G</div>
+                <div className="google-auth-sheet-copy">
+                  <strong>Google account</strong>
+                  <span id="google-auth-upsell-status">Sign in to connect Google Drive.</span>
+                </div>
+              </div>
+              <div className="buttons">
+                <button className="google-sign-in-primary" id="google-auth-upsell-sign-in-btn" type="button">
+                  <span className="google-mark" aria-hidden="true">G</span>
+                  <span id="google-auth-upsell-sign-in-label">Sign in with Google</span>
+                </button>
+                <button className="btn secondary" id="google-auth-modal-sign-out-btn" type="button" hidden>Sign out</button>
+                {/* <button className="btn secondary" id="google-auth-upsell-decline-btn" type="button" hidden>Continue Without Sign-In</button> */}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="modal" id="google-drive-folder-modal" aria-hidden="true">
         <div className="modal-card google-drive-folder-card">

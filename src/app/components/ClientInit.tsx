@@ -7,6 +7,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
   useEffect(() => {
     const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' ? 'prod' : 'debug';
     const isProdFlavor = appFlavor === 'prod';
+    const googleAuthUiEnabled = !isProdFlavor;
     const shouldShowSpotifyArtFallbackHint = !isProdFlavor;
     type ScanSummary = {
       scanned: number;
@@ -1234,7 +1235,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const user = googleSignedInUser();
       const googleConfigured = serverRuntimeSummary()?.googleAuthConfigured === true;
       if (googleAuthMainBtn) {
-        googleAuthMainBtn.hidden = !googleConfigured;
+        googleAuthMainBtn.hidden = !googleAuthUiEnabled || !googleConfigured;
         googleAuthMainBtn.dataset.connected = user ? 'true' : 'false';
         googleAuthMainBtn.title = user ? `Google connected: ${String(user.email ?? user.name ?? 'signed in')}` : 'Google signed out';
       }
@@ -1244,6 +1245,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function openGoogleAuthModal() {
+      if (!googleAuthUiEnabled) return;
       const user = googleSignedInUser();
       const drive = googleDriveRuntimeSummary();
       const subscription = serverAccountSession?.subscription && typeof serverAccountSession.subscription === 'object'
@@ -1272,6 +1274,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function maybeOpenGoogleAuthUpsell() {
+      if (!googleAuthUiEnabled) return;
       if (googleAuthUpsellEvaluated) return;
       const server = serverRuntimeSummary();
       const user = server?.user && typeof server.user === 'object' ? server.user as Record<string, unknown> : null;
@@ -1387,6 +1390,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     async function signInWithGoogle() {
+      if (!googleAuthUiEnabled) return;
       try {
         localStorage.setItem(googleAuthUpsellDismissedKey, '1');
       } catch {
@@ -5482,7 +5486,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const res = await fetch('/api/health');
       if (!res.ok) return;
       runtimeHealth = (await res.json()).runtime ?? null;
-      await refreshServerAccountAccess({ registerDevice: true });
+      if (googleAuthUiEnabled) {
+        await refreshServerAccountAccess({ registerDevice: true });
+      }
       const issues: string[] = [];
       if (!runtimeHealth?.python_ok) issues.push(`Python runtime unavailable${runtimeHealth?.python_error ? `: ${String(runtimeHealth.python_error)}` : ''}`);
       if (!runtimeHealth?.database_url_set) issues.push('Local database unavailable');
@@ -5581,7 +5587,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         : null;
       const accountEntitlementChips = serverEntitlements.size
         ? [...serverEntitlements].sort().map((capability) => `<span class="chip subtle">${esc(formatCapabilityLabel(capability))}</span>`).join('')
-        : '<span class="chip subtle">No premium capabilities active</span>';
+        : '';
       const googleDriveCardMarkup = isProdFlavor ? '' : `
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
@@ -5634,23 +5640,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       libraryPanel.innerHTML = `
         <div class="library-grid">
-          <section class="library-card">
-            <div class="scan-log-head"><strong>Account Status</strong></div>
-            <div class="scan-preflight">
-              ${googleUser
-                ? `${esc(String(accountUser?.email ?? googleUser.email ?? googleUser.name ?? 'Google user'))} · ${esc(accountPlanSummary())}`
-                : (isProdFlavor ? 'Not signed in. Premium capabilities stay locked until you connect your account.' : 'Debug build keeps premium capabilities available without account gating.')}
-            </div>
-            <div class="scan-preflight">
-              ${isProdFlavor
-                ? (googleUser ? `Active capabilities: ${serverEntitlements.size}` : 'Capabilities will load after Google sign-in.')
-                : 'Debug build: account checks are visible, but premium features stay unlocked for development.'}
-            </div>
-            <div class="chips">${accountEntitlementChips}</div>
-            <div class="buttons">
-              <button type="button" class="btn secondary" id="account-status-google-btn">${googleUser ? 'Manage Google' : 'Sign in with Google'}</button>
-            </div>
-          </section>
+          ${googleAuthUiEnabled ? `
+            <section class="library-card">
+              <div class="scan-log-head"><strong>Account Status</strong></div>
+              <div class="scan-preflight">
+                ${googleUser
+                  ? `${esc(String(accountUser?.email ?? googleUser.email ?? googleUser.name ?? 'Google user'))} · ${esc(accountPlanSummary())}`
+                  : 'Debug build keeps premium capabilities available without account gating.'}
+              </div>
+              <div class="scan-preflight">
+                Debug build: account checks are visible, but premium features stay unlocked for development.
+              </div>
+              ${accountEntitlementChips ? `<div class="chips">${accountEntitlementChips}</div>` : ''}
+              <div class="buttons">
+                <button type="button" class="btn secondary" id="account-status-google-btn">${googleUser ? 'Manage Google' : 'Sign in with Google'}</button>
+              </div>
+            </section>
+          ` : ''}
           <section class="library-card">
             <div class="scan-log-head"><strong>Library Reset</strong></div>
             <div class="scan-preflight">Clear tracks, playlists, scan history, and watched folders from this app database.</div>

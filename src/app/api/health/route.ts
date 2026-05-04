@@ -14,6 +14,9 @@ import { getClientLogPath } from '@/lib/app-log';
 export const runtime = 'nodejs';
 
 export async function GET() {
+  const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' || process.env.DJ_ASSIST_APP_FLAVOR === 'prod'
+    ? 'prod'
+    : 'debug';
   let python: string | null = null;
   let pythonError: string | null = null;
   try {
@@ -25,9 +28,11 @@ export async function GET() {
   const databasePath = getDatabasePath();
   const spotify = await effectiveSpotifyCredentials();
   if (spotify.credentials) applySpotifyCredentialsToEnv(spotify.credentials);
-  const googleOauth = await effectiveGoogleOauthCredentials();
+  const googleOauth = appFlavor === 'prod'
+    ? { credentials: null, summary: { configured: false, source: 'none', client_id_masked: null, has_secret: false, missing: [] as string[] } }
+    : await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
-  const googleOauthDiag = await googleOauthDiagnostics();
+  const googleOauthDiag = appFlavor === 'prod' ? null : await googleOauthDiagnostics();
   const server = await serverRuntimeSummary();
 
   return NextResponse.json({
