@@ -313,6 +313,13 @@ export default function AppShell({
             <div className="google-drive-browser-head">
               <div className="scan-preflight" id="google-drive-folder-status">Browse your Google Drive folders. DJ Assist only uses read access.</div>
               <div className="google-drive-folder-breadcrumb" id="google-drive-folder-path">Current folder: My Drive</div>
+              <input
+                className="google-drive-folder-search"
+                id="google-drive-folder-search"
+                type="search"
+                placeholder="Search folders or files"
+                aria-label="Search Google Drive folders or files"
+              />
             </div>
             <div className="google-drive-browser-shell">
               <aside className="google-drive-sidebar" id="google-drive-folder-sidebar">

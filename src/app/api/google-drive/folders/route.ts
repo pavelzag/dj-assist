@@ -32,19 +32,36 @@ function logGoogleDriveFolders(
 
 const MAX_FOLDERS_PER_REQUEST = 1000;
 
+function escapeDriveQueryValue(value: string): string {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { accessToken } = await getGoogleDriveAccessToken();
     const { searchParams } = new URL(request.url);
     const parentId = String(searchParams.get('parentId') ?? '').trim();
+    const search = String(searchParams.get('search') ?? '').trim();
     logGoogleDriveFolders('info', 'started', {
       parentId: parentId || 'root',
+      search: search || null,
       hasAccessToken: Boolean(accessToken),
     });
 
-    const query = parentId
-      ? `trashed = false and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents`
-      : "trashed = false and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents";
+    const queryParts = [
+      'trashed = false',
+      "mimeType = 'application/vnd.google-apps.folder'",
+    ];
+    if (search) {
+      queryParts.push(`name contains '${escapeDriveQueryValue(search)}'`);
+    } else if (parentId) {
+      queryParts.push(`'${escapeDriveQueryValue(parentId)}' in parents`);
+    } else {
+      queryParts.push("'root' in parents");
+    }
+    const query = queryParts.join(' and ');
 
     const folders: GoogleDriveFolder[] = [];
     let pageToken: string | undefined;
@@ -95,6 +112,7 @@ export async function GET(request: NextRequest) {
 
     logGoogleDriveFolders('info', 'completed', {
       parentId: parentId || 'root',
+      search: search || null,
       returned: folders.length,
       pages,
       truncated: folders.length >= MAX_FOLDERS_PER_REQUEST,

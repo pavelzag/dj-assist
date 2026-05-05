@@ -32,8 +32,10 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(Math.max(Math.trunc(Number(searchParams.get('limit') ?? 100) || 100), 1), 200);
     const pageToken = String(searchParams.get('pageToken') ?? '').trim();
     const folderId = String(searchParams.get('folderId') ?? '').trim();
+    const search = String(searchParams.get('search') ?? '').trim();
     logGoogleDriveFiles('info', 'started', {
       folderId: folderId || null,
+      search: search || null,
       limit,
       hasPageToken: Boolean(pageToken),
       hasAccessToken: Boolean(accessToken),
@@ -41,14 +43,16 @@ export async function GET(request: NextRequest) {
     const payload = await listGoogleDriveAudioFiles({
       accessToken,
       folderId,
+      search,
       limit,
       pageToken,
     });
     logGoogleDriveFiles('info', 'completed', {
-      folderId: folderId || null,
-      returned: payload.files.length,
-      hasNextPage: Boolean(payload.nextPageToken),
-    });
+        folderId: folderId || null,
+        search: search || null,
+        returned: payload.files.length,
+        hasNextPage: Boolean(payload.nextPageToken),
+      });
 
     return NextResponse.json({
       files: payload.files,

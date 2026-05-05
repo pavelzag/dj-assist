@@ -164,6 +164,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveFiles: Record<string, unknown>[] = [];
     let googleDriveFolders: Record<string, unknown>[] = [];
     let googleDriveFolderFiles: Record<string, unknown>[] = [];
+    let googleDriveFolderSearchQuery = '';
+    let googleDriveFolderSearchRequestSeq = 0;
     let spotifySettingsBusy = false;
     let googleOauthSettingsBusy = false;
     let googleDriveImportBusy = false;
@@ -193,6 +195,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let gdriveDragSelecting = false;
     let gdriveDragSelectAction: 'add' | 'remove' = 'add';
     const gdriveDragProcessedIds = new Set<string>();
+    let gdriveDragGestureRowId: string | null = null;
     let googleDriveFolderTrail: Array<{ id: string; name: string }> = [];
     let pendingScanLogEntries: Array<{
       message: string;
@@ -587,6 +590,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       removeToastByKey('google-drive-import-progress');
     }
 
+    function isGoogleDriveImportToastEvent(event: string) {
+      return !event.startsWith('local_metadata_');
+    }
+
     function showProgressToast(
       toastKey: 'local-scan-progress' | 'google-drive-import-progress',
       message: string,
@@ -765,7 +772,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           googleDriveImportUiSignature = signature;
           applyGoogleDriveImportUiProgress(latest);
         }
-        if (preferences.scanProgressToasts && signature !== googleDriveImportToastSignature) {
+        const event = String((latest.context && typeof latest.context === 'object' ? (latest.context as Record<string, unknown>).event : '') ?? '').trim();
+        if (preferences.scanProgressToasts && signature !== googleDriveImportToastSignature && isGoogleDriveImportToastEvent(event)) {
           googleDriveImportToastSignature = signature;
           const level = String(latest.level ?? 'info');
           const tone = level === 'error' ? 'error' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'info';
@@ -1652,14 +1660,27 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return [size !== '--' ? size : '', modified !== '--' ? modified : ''].filter(Boolean).join(' · ') || 'Audio file';
     }
 
+    function googleDriveSearchMatches(value: string, query: string) {
+      const needle = query.trim().toLowerCase();
+      if (!needle) return true;
+      return String(value ?? '').toLowerCase().includes(needle);
+    }
+
     function renderGoogleDriveFolderPicker() {
       const listEl = document.getElementById('google-drive-folder-list') as HTMLElement | null;
       const sidebarEl = document.getElementById('google-drive-folder-sidebar') as HTMLElement | null;
       const pathEl = document.getElementById('google-drive-folder-path') as HTMLElement | null;
+      const searchEl = document.getElementById('google-drive-folder-search') as HTMLInputElement | null;
       const backBtn = document.getElementById('google-drive-folder-back-btn') as HTMLButtonElement | null;
       const useCurrentBtn = document.getElementById('google-drive-folder-use-current-btn') as HTMLButtonElement | null;
       const useSelectedBtn = document.getElementById('google-drive-use-selected-btn') as HTMLButtonElement | null;
-      if (pathEl) pathEl.textContent = googleDriveFolderPathLabel();
+      const searchQuery = googleDriveFolderSearchQuery.trim();
+      if (pathEl) pathEl.textContent = searchQuery
+        ? `Search results for "${searchQuery}"`
+        : googleDriveFolderPathLabel();
+      if (searchEl && searchEl.value !== googleDriveFolderSearchQuery) {
+        searchEl.value = googleDriveFolderSearchQuery;
+      }
       if (backBtn) backBtn.disabled = googleDriveFoldersBusy || googleDriveFolderTrail.length === 0;
       if (useCurrentBtn) {
         useCurrentBtn.disabled = googleDriveFoldersBusy || googleDriveFolderTrail.length === 0;
@@ -1730,18 +1751,30 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       if (!listEl) return;
       if (googleDriveFoldersBusy || googleDriveFolderFilesBusy) {
-        listEl.innerHTML = '<div class="empty">Loading Google Drive folder contents…</div>';
+        listEl.innerHTML = searchQuery
+          ? `<div class="empty">Searching Google Drive for “${esc(searchQuery)}”…</div>`
+          : '<div class="empty">Loading Google Drive folder contents…</div>';
         return;
       }
-      const folderMarkup = googleDriveFolders.map((folder) => {
+      const filteredFolders = googleDriveFolders.filter((folder) => {
+        const name = String(folder.name ?? 'Untitled folder');
+        return googleDriveSearchMatches(name, searchQuery);
+      });
+      const filteredFiles = googleDriveFolderFiles.filter((file) => {
+        const name = String(file.name ?? 'Untitled');
+        const mimeType = String(file.mimeType ?? '');
+        return googleDriveSearchMatches(name, searchQuery) || googleDriveSearchMatches(mimeType, searchQuery);
+      });
+      const folderMarkup = filteredFolders.map((folder) => {
         const fid = String(folder.id ?? '');
         const fname = String(folder.name ?? 'Untitled folder');
         const isSelected = selectedGoogleDriveFolders.some((f) => f.id === fid);
         const isFavorited = favoritedGoogleDriveFolders.some((f) => f.id === fid);
         return `
-          <button
-            type="button"
+          <div
             class="google-drive-browser-row folder${isSelected ? ' selected' : ''}"
+            role="button"
+            tabindex="0"
             data-drive-folder-id="${esc(fid)}"
             data-drive-folder-name="${esc(fname)}"
             data-drive-open-folder="true"
@@ -1761,10 +1794,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               aria-label="${isFavorited ? 'Remove from favorites' : 'Add to favorites'}"
             >${isFavorited ? '★' : '☆'}</button>
             <span class="google-drive-browser-row-trailing" aria-hidden="true">${isSelected ? '✓' : '›'}</span>
-          </button>
+          </div>
         `;
       }).join('');
-      const fileMarkup = googleDriveFolderFiles.map((file) => `
+      const fileMarkup = filteredFiles.map((file) => `
         <div class="google-drive-browser-row file">
           <span class="google-drive-browser-row-icon audio" aria-hidden="true">♪</span>
           <span class="google-drive-browser-row-copy">
@@ -1775,8 +1808,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       `).join('');
       listEl.innerHTML = folderMarkup || fileMarkup
         ? `${folderMarkup}${fileMarkup}`
-        : '<div class="empty">No folders or audio files found here.</div>';
+        : `<div class="empty">${searchQuery ? `No Google Drive folders or audio files match “${esc(searchQuery)}”.` : 'No folders or audio files found here.'}</div>`;
       listEl.querySelectorAll('[data-drive-open-folder="true"]').forEach((button) => {
+        button.addEventListener('mousedown', (e) => {
+          const element = button.closest('[data-drive-folder-id]') as HTMLElement | null;
+          if (!element) return;
+          const handled = handleGoogleDriveFolderShiftGesture(element, e as MouseEvent);
+          if (!handled) return;
+        });
         button.addEventListener('click', (e) => {
           if ((e.target as HTMLElement).closest('[data-drive-fav-id]')) return;
           const element = button.closest('[data-drive-folder-id]') as HTMLElement | null;
@@ -1784,13 +1823,41 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const folderId = String(element.dataset.driveFolderId ?? '').trim();
           const folderName = String(element.dataset.driveFolderName ?? 'Untitled folder').trim() || 'Untitled folder';
           if (!folderId) return;
-          if ((e as MouseEvent).shiftKey) {
-            toggleGoogleDriveFolderSelection(folderId, folderName);
+          if (gdriveDragGestureRowId === folderId || gdriveDragProcessedIds.has(folderId)) {
             return;
+          }
+          const wasSearching = Boolean(googleDriveFolderSearchQuery.trim());
+          if (wasSearching) {
+            googleDriveFolderSearchQuery = '';
           }
           void loadGoogleDriveFolders({
             parentId: folderId,
-            trail: [...googleDriveFolderTrail, { id: folderId, name: folderName }],
+            trail: wasSearching
+              ? [{ id: folderId, name: folderName }]
+              : [...googleDriveFolderTrail, { id: folderId, name: folderName }],
+          });
+        });
+        button.addEventListener('keydown', (event) => {
+          const keyboardEvent = event as KeyboardEvent;
+          if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
+          keyboardEvent.preventDefault();
+          const element = button.closest('[data-drive-folder-id]') as HTMLElement | null;
+          if (!element) return;
+          if (handleGoogleDriveFolderShiftGesture(element, keyboardEvent)) {
+            return;
+          }
+          const folderId = String(element.dataset.driveFolderId ?? '').trim();
+          const folderName = String(element.dataset.driveFolderName ?? 'Untitled folder').trim() || 'Untitled folder';
+          if (!folderId) return;
+          const wasSearching = Boolean(googleDriveFolderSearchQuery.trim());
+          if (wasSearching) {
+            googleDriveFolderSearchQuery = '';
+          }
+          void loadGoogleDriveFolders({
+            parentId: folderId,
+            trail: wasSearching
+              ? [{ id: folderId, name: folderName }]
+              : [...googleDriveFolderTrail, { id: folderId, name: folderName }],
           });
         });
       });
@@ -1803,35 +1870,62 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           toggleGdriveFavorite(folderId, folderName);
         });
       });
+
+      if (searchEl) {
+        searchEl.placeholder = googleDriveFoldersBusy || googleDriveFolderFilesBusy
+          ? 'Searching Google Drive…'
+          : 'Search folders or files';
+      }
     }
 
     async function loadGoogleDriveFolders(options: {
       parentId?: string;
       trail?: Array<{ id: string; name: string }>;
+      search?: string;
     } = {}) {
-      if (googleDriveFoldersBusy || googleDriveFolderFilesBusy) return;
+      const search = String(options.search ?? '').trim();
+      const requestSeq = ++googleDriveFolderSearchRequestSeq;
       googleDriveFoldersBusy = true;
       googleDriveFolderFilesBusy = true;
       googleDriveFolderTrail = options.trail ?? [];
       googleDriveFolderFiles = [];
       renderGoogleDriveFolderPicker();
-      setGoogleDriveFolderStatus('Loading Google Drive folders with read-only access…', 'saving');
+      setGoogleDriveFolderStatus(
+        search
+          ? `Searching Google Drive for "${search}"…`
+          : 'Loading Google Drive folders with read-only access…',
+        'saving',
+      );
       appendScanLog(
-        `Google Drive folders loading: parent=${String(options.parentId ?? '').trim() || 'root'}`,
+        search
+          ? `Google Drive search loading: query=${search}`
+          : `Google Drive folders loading: parent=${String(options.parentId ?? '').trim() || 'root'}`,
         'info',
         {
           category: 'google-drive-folders',
           parentId: String(options.parentId ?? '').trim() || null,
+          search: search || null,
           trail: googleDriveFolderTrail,
         },
-        { eventType: 'google_drive_folders_loading' },
+        { eventType: search ? 'google_drive_search_loading' : 'google_drive_folders_loading' },
       );
       try {
         const parentId = String(options.parentId ?? '').trim();
         const query = new URLSearchParams();
-        if (parentId) query.set('parentId', parentId);
+        if (search) {
+          query.set('search', search);
+        } else if (parentId) {
+          query.set('parentId', parentId);
+        }
         const foldersPromise = fetch(`/api/google-drive/folders${query.toString() ? `?${query.toString()}` : ''}`);
-        const filesPromise = parentId
+        const filesPromise = search
+          ? (() => {
+            const filesQuery = new URLSearchParams();
+            filesQuery.set('search', search);
+            filesQuery.set('limit', '100');
+            return fetch(`/api/google-drive/files?${filesQuery.toString()}`);
+          })()
+          : parentId
           ? (() => {
             const filesQuery = new URLSearchParams();
             filesQuery.set('folderId', parentId);
@@ -1844,70 +1938,93 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const filesPayload = filesResponse
           ? await filesResponse.json().catch(() => ({})) as Record<string, unknown>
           : {};
+        if (requestSeq !== googleDriveFolderSearchRequestSeq) return;
         if (!foldersResponse.ok) {
-          setGoogleDriveFolderStatus(String(foldersPayload.error ?? 'Could not load Google Drive folders.'), 'error');
+          setGoogleDriveFolderStatus(
+            String(foldersPayload.error ?? (search ? 'Could not search Google Drive folders.' : 'Could not load Google Drive folders.')),
+            'error',
+          );
           googleDriveFolders = [];
           googleDriveFolderFiles = [];
           appendScanLog(
-            `Google Drive folders failed: ${String(foldersPayload.error ?? 'Could not load folders.')}`,
+            search
+              ? `Google Drive search failed: ${String(foldersPayload.error ?? 'Could not search folders.')}`
+              : `Google Drive folders failed: ${String(foldersPayload.error ?? 'Could not load folders.')}`,
             'error',
             {
               category: 'google-drive-folders',
               status: foldersResponse.status,
               payload: foldersPayload,
+              search: search || null,
             },
-            { eventType: 'google_drive_folders_failed' },
+            { eventType: search ? 'google_drive_search_failed' : 'google_drive_folders_failed' },
           );
           return;
         }
         if (filesResponse && !filesResponse.ok) {
-          setGoogleDriveFolderStatus(String(filesPayload.error ?? 'Could not load Google Drive files.'), 'error');
+          setGoogleDriveFolderStatus(
+            String(filesPayload.error ?? (search ? 'Could not search Google Drive files.' : 'Could not load Google Drive files.')),
+            'error',
+          );
           googleDriveFolders = Array.isArray(foldersPayload.folders) ? foldersPayload.folders as Record<string, unknown>[] : [];
           googleDriveFolderFiles = [];
           appendScanLog(
-            `Google Drive files failed: ${String(filesPayload.error ?? 'Could not load files.')}`,
+            search
+              ? `Google Drive search files failed: ${String(filesPayload.error ?? 'Could not search files.')}`
+              : `Google Drive files failed: ${String(filesPayload.error ?? 'Could not load files.')}`,
             'error',
             {
               category: 'google-drive-files',
               parentId: parentId || null,
               status: filesResponse.status,
               payload: filesPayload,
+              search: search || null,
             },
-            { eventType: 'google_drive_files_failed' },
+            { eventType: search ? 'google_drive_search_files_failed' : 'google_drive_files_failed' },
           );
           return;
         }
         googleDriveFolders = Array.isArray(foldersPayload.folders) ? foldersPayload.folders as Record<string, unknown>[] : [];
         googleDriveFolderFiles = filesResponse && Array.isArray(filesPayload.files) ? filesPayload.files as Record<string, unknown>[] : [];
         setGoogleDriveFolderStatus(
-          `Showing ${googleDriveFolders.length} folders and ${googleDriveFolderFiles.length} audio files. DJ Assist only uses read access.`,
+          search
+            ? `Showing ${googleDriveFolders.length} folders and ${googleDriveFolderFiles.length} audio files matching "${search}".`
+            : `Showing ${googleDriveFolders.length} folders and ${googleDriveFolderFiles.length} audio files. DJ Assist only uses read access.`,
           'success',
         );
         appendScanLog(
-          `Google Drive folders loaded: folders=${googleDriveFolders.length} files=${googleDriveFolderFiles.length} parent=${parentId || 'root'}`,
+          search
+            ? `Google Drive search loaded: folders=${googleDriveFolders.length} files=${googleDriveFolderFiles.length} query=${search}`
+            : `Google Drive folders loaded: folders=${googleDriveFolders.length} files=${googleDriveFolderFiles.length} parent=${parentId || 'root'}`,
           'success',
           {
             category: 'google-drive-folders',
             parentId: parentId || null,
             count: googleDriveFolders.length,
             fileCount: googleDriveFolderFiles.length,
+            search: search || null,
           },
-          { eventType: 'google_drive_folders_loaded' },
+          { eventType: search ? 'google_drive_search_loaded' : 'google_drive_folders_loaded' },
         );
       } catch (error) {
+        if (requestSeq !== googleDriveFolderSearchRequestSeq) return;
         googleDriveFolders = [];
         googleDriveFolderFiles = [];
         setGoogleDriveFolderStatus(error instanceof Error ? error.message : String(error), 'error');
         appendScanLog(
-          `Google Drive folders exception: ${error instanceof Error ? error.message : String(error)}`,
+          search
+            ? `Google Drive search exception: ${error instanceof Error ? error.message : String(error)}`
+            : `Google Drive folders exception: ${error instanceof Error ? error.message : String(error)}`,
           'error',
           {
             category: 'google-drive-folders',
             parentId: String(options.parentId ?? '').trim() || null,
+            search: search || null,
           },
-          { eventType: 'google_drive_folders_exception' },
+          { eventType: search ? 'google_drive_search_exception' : 'google_drive_folders_exception' },
         );
       } finally {
+        if (requestSeq !== googleDriveFolderSearchRequestSeq) return;
         googleDriveFoldersBusy = false;
         googleDriveFolderFilesBusy = false;
         renderGoogleDriveFolderPicker();
@@ -1961,6 +2078,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       updateScanDirectoryDisplay();
       syncAddMusicUi();
       renderGoogleDriveFolderPicker();
+    }
+
+    function handleGoogleDriveFolderShiftGesture(element: HTMLElement, event: MouseEvent | KeyboardEvent) {
+      const folderId = String(element.dataset.driveFolderId ?? '').trim();
+      const folderName = String(element.dataset.driveFolderName ?? 'Untitled folder').trim() || 'Untitled folder';
+      if (!folderId) return false;
+      if (event instanceof MouseEvent && event.shiftKey) {
+        if (typeof event.preventDefault === 'function') event.preventDefault();
+        if (typeof event.stopPropagation === 'function') event.stopPropagation();
+        gdriveDragGestureRowId = folderId;
+        gdriveDragSelecting = true;
+        gdriveDragProcessedIds.clear();
+        gdriveDragProcessedIds.add(folderId);
+        toggleGoogleDriveFolderSelection(folderId, folderName);
+        return true;
+      }
+      return false;
     }
 
     // Confirm the Shift-built multi-selection and close the modal.
@@ -6289,6 +6423,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('google-drive-folder-picker-btn')?.addEventListener('click', () => {
         void openGoogleDriveFolderModal();
       });
+      document.getElementById('google-drive-folder-search')?.addEventListener('input', (event) => {
+        googleDriveFolderSearchQuery = String((event.currentTarget as HTMLInputElement | null)?.value ?? '');
+        const search = googleDriveFolderSearchQuery.trim();
+        const currentFolder = googleDriveFolderTrail[googleDriveFolderTrail.length - 1] ?? null;
+        if (search) {
+          void loadGoogleDriveFolders({
+            search,
+            trail: googleDriveFolderTrail,
+          });
+          return;
+        }
+        void loadGoogleDriveFolders({
+          parentId: currentFolder?.id ?? '',
+          trail: googleDriveFolderTrail,
+        });
+      });
       document.getElementById('google-drive-folder-back-btn')?.addEventListener('click', () => {
         if (!googleDriveFolderTrail.length) return;
         const nextTrail = googleDriveFolderTrail.slice(0, -1);
@@ -6356,6 +6506,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (!gdriveDragSelecting) return;
         gdriveDragSelecting = false;
         gdriveDragProcessedIds.clear();
+        gdriveDragGestureRowId = null;
         renderGoogleDriveFolderPicker();
         scanSourceMode = 'google_drive';
         updateScanDirectoryDisplay();
@@ -6869,7 +7020,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         setScanStatus('Choose a music source', 'error');
         setScanProgress(0, 0, 'Choose a music source');
         showToast('Choose a music source first.', 'warning');
-        openAddMusicSourceModal();
         return;
       }
 

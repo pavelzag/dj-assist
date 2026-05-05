@@ -8,6 +8,12 @@ export type GoogleDriveAudioFile = {
   md5Checksum: string | null;
 };
 
+function escapeDriveQueryValue(value: string): string {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
 export function isIgnoredGoogleDriveAudioFileName(name: string): boolean {
   const normalized = String(name ?? '').trim();
   return normalized.startsWith('._');
@@ -80,10 +86,17 @@ async function fetchDirectSubfolderIds(parentId: string, accessToken: string): P
 
 // Build Drive API query clauses for a set of folder IDs.  If no IDs are given,
 // falls back to searching all audio files across the entire Drive.
-function buildFolderQuery(folderIds: string[]): string {
-  if (folderIds.length === 0) return "trashed = false and mimeType contains 'audio/'";
-  const conditions = folderIds.map((id) => `'${id}' in parents`).join(' or ');
-  return `trashed = false and mimeType contains 'audio/' and (${conditions})`;
+function buildFolderQuery(folderIds: string[], search?: string): string {
+  const clauses: string[] = ["trashed = false", "mimeType contains 'audio/'"];
+  const searchTerm = String(search ?? '').trim();
+  if (searchTerm) {
+    clauses.push(`name contains '${escapeDriveQueryValue(searchTerm)}'`);
+  }
+  if (folderIds.length > 0) {
+    const conditions = folderIds.map((id) => `'${escapeDriveQueryValue(id)}' in parents`).join(' or ');
+    clauses.push(`(${conditions})`);
+  }
+  return clauses.join(' and ');
 }
 
 async function fetchAudioFilePage(input: {
@@ -144,19 +157,21 @@ export async function listGoogleDriveAudioFiles(input: {
   folderId?: string;
   // When provided, searches all listed folder IDs (supports recursive imports).
   allFolderIds?: string[];
+  search?: string;
   limit: number;
   pageToken?: string;
 }) {
   const limit = Math.min(Math.max(Math.trunc(input.limit || 100), 1), 5000);
   const pageSize = Math.min(limit, 200);
   const folderId = String(input.folderId ?? '').trim();
+  const search = String(input.search ?? '').trim();
 
   // Determine which folder IDs to query across.
   const folderIds = input.allFolderIds ?? (folderId ? [folderId] : []);
 
   if (folderIds.length <= FOLDER_BATCH_SIZE) {
     // Single query covering all folders (or the whole Drive).
-    const query = buildFolderQuery(folderIds);
+    const query = buildFolderQuery(folderIds, search);
     return fetchAudioFilePage({
       accessToken: input.accessToken,
       query,
@@ -171,7 +186,7 @@ export async function listGoogleDriveAudioFiles(input: {
   const collected: GoogleDriveAudioFile[] = [];
   for (let i = 0; i < folderIds.length && collected.length < limit; i += FOLDER_BATCH_SIZE) {
     const batch = folderIds.slice(i, i + FOLDER_BATCH_SIZE);
-    const query = buildFolderQuery(batch);
+    const query = buildFolderQuery(batch, search);
     let batchToken: string | undefined;
     do {
       const page = await fetchAudioFilePage({
