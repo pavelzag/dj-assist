@@ -230,6 +230,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       deleteFiles?: boolean;
     } = null;
     let googleDriveImportProgressTimer: number | null = null;
+    let autoArtFetchTimer: ReturnType<typeof setTimeout> | null = null;
     let googleSignInPendingAt: number | null = null;
     let googleSignInPollTimer: ReturnType<typeof setInterval> | null = null;
     let googleDriveImportToastSignature = '';
@@ -7161,6 +7162,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function applyTrackSelection(id: string, ensureVisible = false) {
+      if (autoArtFetchTimer) { clearTimeout(autoArtFetchTimer); autoArtFetchTimer = null; }
       activeTrackId = Number(id);
       nowPlayingTrackId = activeTrackId;
       try { sessionStorage.setItem(activeTrackKey, String(activeTrackId)); } catch { /* ignore */ }
@@ -7212,6 +7214,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (autoPlay) {
         const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
         localAudio?.play().catch(() => {});
+      }
+
+      // Auto-fetch art for tracks that don't have it yet.
+      // Waits 1.5 s so rapid browsing doesn't trigger unnecessary analysis.
+      const detailTrack = payload.track && typeof payload.track === 'object'
+        ? payload.track as Record<string, unknown>
+        : null;
+      if (detailTrack && !detailTrack.album_art_url && Number(detailTrack.id) === requestedTrackId) {
+        if (autoArtFetchTimer) clearTimeout(autoArtFetchTimer);
+        autoArtFetchTimer = setTimeout(async () => {
+          autoArtFetchTimer = null;
+          if (activeTrackId !== requestedTrackId) return;
+          try {
+            await reanalyzeArtForTrack(requestedTrackId, { force: false, reloadDetail: true });
+          } catch {
+            // Best-effort — don't surface errors from automatic background fetches.
+          }
+        }, 1500);
       }
     }
 

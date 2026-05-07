@@ -152,7 +152,7 @@ async function uploadObject(
       'Content-Type': contentType,
       'Cache-Control': 'public, max-age=31536000, immutable',
     },
-    body: data,
+    body: new Uint8Array(data),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) {

@@ -543,6 +543,39 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
             "timeline": timeline,
         }
 
+    # Step 1: try the server — another user may have already resolved art for
+    # this track, making a full Spotify round-trip unnecessary.
+    if track.file_hash:
+        from .scanner import _lookup_server_track
+        server_track, server_reason = _lookup_server_track(track.file_hash)
+        mark("server_lookup_done", reason=server_reason, found=bool(server_track and server_track.get("album_art_url")))
+        if server_track and server_track.get("album_art_url"):
+            server_art_url = str(server_track["album_art_url"])
+            mark("server_art_found", source=server_track.get("album_art_source") or "server")
+            db.add_track({
+                "path": track.path,
+                "album_art_url": server_art_url,
+                "album_art_source": str(server_track.get("album_art_source") or "server_lookup"),
+                "album_art_confidence": float(server_track.get("album_art_confidence") or 0.0),
+                "album_art_review_status": str(server_track.get("album_art_review_status") or "approved"),
+                "album_art_review_notes": "artwork from server track match",
+                "album_group_key": str(server_track.get("album_group_key") or ""),
+                "embedded_album_art": bool(server_track.get("embedded_album_art")),
+            })
+            refreshed = db.get_track_by_id(track_id)
+            result.update({
+                "art_saved": True,
+                "art_source": "server_lookup",
+                "message": f"artwork from server ({server_track.get('album_art_source') or 'server_lookup'})",
+                "album_art_url": refreshed.album_art_url if refreshed else server_art_url,
+                "album_art_source": refreshed.album_art_source if refreshed else "server_lookup",
+            })
+            mark("complete", final_album_art_source=result["album_art_source"])
+            return result
+    else:
+        mark("server_lookup_skipped", reason="no_file_hash")
+
+    # Step 2: fall back to local Spotify / provider analysis.
     missing = SpotifyClient().missing_credentials()
     spotify_enabled = not bool(missing)
     if missing:
