@@ -1177,6 +1177,27 @@ main {
 .suggestion:hover { background: var(--orange-dim); border-color: var(--orange-border); border-left-color: var(--orange); }
 .suggestion strong { font-size: 13px; font-weight: 500; }
 .suggestion small  { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.playlist-intelligence-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.playlist-intelligence-row .intelligence-add-btn {
+  flex: 0 0 auto;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--orange);
+}
+.playlist-intelligence-row .intelligence-add-btn:hover {
+  color: var(--text);
+  border-color: var(--orange-border);
+  background: rgba(255, 108, 0, 0.08);
+}
 
 /* ── Misc ────────────────────────────────────────────────────────────────── */
 .embed-wrap { display: none; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #000; }
@@ -1367,6 +1388,23 @@ body[data-list-density="compact"] .row span {
 .set-item-meta { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .set-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .set-tracks-list { margin-top: 8px; display: grid; gap: 3px; }
+.set-drop-zone {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(255, 108, 0, 0.24);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  background: rgba(255,255,255,0.02);
+}
+.set-drop-zone.drag-over,
+.set-item-head.drag-over,
+.set-tracks-list.drag-over {
+  border-color: rgba(255, 108, 0, 0.55);
+  background: rgba(255, 108, 0, 0.08);
+  color: var(--text);
+}
 .set-track-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 4px; background: rgba(255,255,255,0.03); font-size: 12px; border-left: 2px solid var(--line2); }
 .set-track-row span { color: var(--muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .new-set-form { display: flex; gap: 8px; margin-bottom: 12px; }

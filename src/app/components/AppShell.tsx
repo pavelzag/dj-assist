@@ -59,16 +59,6 @@ export default function AppShell({
         <div className="browse-scope" id="browse-scope">
           <span className="browse-scope-empty">Viewing full collection</span>
         </div>
-        <div className="artwork-analysis-progress" id="artwork-analysis-progress" hidden>
-          <div className="artwork-analysis-progress-head">
-            <strong id="artwork-analysis-status">Artwork analysis idle</strong>
-            <span id="artwork-analysis-meta">0 / 0</span>
-          </div>
-          <div className="artwork-analysis-progress-track">
-            <div className="artwork-analysis-progress-bar" id="artwork-analysis-progress-bar" />
-          </div>
-          <div className="artwork-analysis-progress-detail" id="artwork-analysis-detail">Waiting to start.</div>
-        </div>
       </header>
 
       <div className="banner" id="warning-banner" style={{ display: 'none' }} />

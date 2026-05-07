@@ -32,11 +32,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement | null;
     const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
     const browseScopeEl = document.getElementById('browse-scope') as HTMLElement;
-    const artworkAnalysisProgressEl = document.getElementById('artwork-analysis-progress') as HTMLElement | null;
-    const artworkAnalysisStatusEl = document.getElementById('artwork-analysis-status') as HTMLElement | null;
-    const artworkAnalysisMetaEl = document.getElementById('artwork-analysis-meta') as HTMLElement | null;
-    const artworkAnalysisProgressBarEl = document.getElementById('artwork-analysis-progress-bar') as HTMLElement | null;
-    const artworkAnalysisDetailEl = document.getElementById('artwork-analysis-detail') as HTMLElement | null;
     const bulkToolbarEl = document.getElementById('bulk-toolbar') as HTMLElement;
     const sortsEl = document.getElementById('sorts') as HTMLElement;
     const listDensityEl = document.getElementById('list-density') as HTMLSelectElement | null;
@@ -112,6 +107,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const quickChooseFolderBtn = document.getElementById('quick-choose-folder-btn') as HTMLButtonElement | null;
     const quickStartScanBtn = document.getElementById('quick-start-scan-btn') as HTMLButtonElement | null;
     const quickAnalyzeAllArtworkBtn = document.getElementById('quick-analyze-all-artwork-btn') as HTMLButtonElement | null;
+    function getArtworkAnalysisProgressElements() {
+      return {
+        progressEl: document.getElementById('artwork-analysis-progress') as HTMLElement | null,
+        statusEl: document.getElementById('artwork-analysis-status') as HTMLElement | null,
+        metaEl: document.getElementById('artwork-analysis-meta') as HTMLElement | null,
+        barEl: document.getElementById('artwork-analysis-progress-bar') as HTMLElement | null,
+        detailEl: document.getElementById('artwork-analysis-detail') as HTMLElement | null,
+      };
+    }
 
     // ── State ─────────────────────────────────────────────────────────────────
     const activeTrackKey = 'dj-assist-active-track-id';
@@ -178,6 +182,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportBusy = false;
     let googleDriveFilesBusy = false;
     let googleDriveFilesLoaded = false;
+    let artworkAnalysisState: ArtworkAnalysisState = 'idle';
+    let artworkAnalysisCurrent = 0;
+    let artworkAnalysisTotal = 0;
+    let artworkAnalysisSucceeded = 0;
+    let artworkAnalysisFailed = 0;
+    let artworkAnalysisDetail = 'Waiting to start.';
     let googleDriveFoldersBusy = false;
     let googleDriveFolderFilesBusy = false;
     let serverSettingsBusy = false;
@@ -275,6 +285,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const nextTracksPageByTrackId: Record<number, number> = {};
     const detailSectionCollapsed: Record<string, boolean> = {};
     const detailModeByTrackId: Record<number, 'overview' | 'match' | 'related'> = {};
+    const setSuggestionPageBySetId: Record<number, number> = {};
     const selectedTrackIds = new Set<number>();
     let preferences: Preferences = { ...defaultPreferences };
 
@@ -2964,12 +2975,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const succeeded = Math.max(0, options.succeeded ?? 0);
       const failed = Math.max(0, options.failed ?? 0);
       const percent = total > 0 ? Math.min(100, (current / total) * 100) : 0;
-      if (artworkAnalysisProgressEl) {
-        artworkAnalysisProgressEl.hidden = options.state === 'idle';
-        artworkAnalysisProgressEl.dataset.state = options.state;
+      artworkAnalysisState = options.state;
+      artworkAnalysisCurrent = current;
+      artworkAnalysisTotal = total;
+      artworkAnalysisSucceeded = succeeded;
+      artworkAnalysisFailed = failed;
+      artworkAnalysisDetail = options.detail
+        ?? (options.state === 'running'
+          ? `Succeeded ${succeeded} · Failed ${failed}`
+          : `Processed ${current} of ${total} · Succeeded ${succeeded} · Failed ${failed}`);
+      const { progressEl, statusEl, metaEl, barEl, detailEl } = getArtworkAnalysisProgressElements();
+      if (progressEl) {
+        progressEl.hidden = options.state === 'idle';
+        progressEl.dataset.state = options.state;
       }
-      if (artworkAnalysisStatusEl) {
-        artworkAnalysisStatusEl.textContent = options.state === 'running'
+      if (statusEl) {
+        statusEl.textContent = options.state === 'running'
           ? 'Artwork analysis running'
           : options.state === 'success'
             ? 'Artwork analysis complete'
@@ -2977,14 +2998,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               ? 'Artwork analysis finished with errors'
               : 'Artwork analysis idle';
       }
-      if (artworkAnalysisMetaEl) artworkAnalysisMetaEl.textContent = `${current} / ${total}`;
-      if (artworkAnalysisProgressBarEl) artworkAnalysisProgressBarEl.style.width = `${percent}%`;
-      if (artworkAnalysisDetailEl) {
-        artworkAnalysisDetailEl.textContent = options.detail
-          ?? (options.state === 'running'
-            ? `Succeeded ${succeeded} · Failed ${failed}`
-            : `Processed ${current} of ${total} · Succeeded ${succeeded} · Failed ${failed}`);
-      }
+      if (metaEl) metaEl.textContent = `${current} / ${total}`;
+      if (barEl) barEl.style.width = `${percent}%`;
+      if (detailEl) detailEl.textContent = artworkAnalysisDetail;
     }
 
     function updateNowPlayingBar(audio?: HTMLAudioElement | null) {
@@ -3051,6 +3067,57 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (metaAlbum && document.activeElement !== metaAlbum) metaAlbum.value = String(track.album ?? '');
       const metaKey = document.getElementById('meta-key') as HTMLInputElement | null;
       if (metaKey && document.activeElement !== metaKey) metaKey.value = String(track.key ?? track.effective_key ?? '');
+      const artUrl = String(track.album_art_url ?? '').trim();
+      const artSource = String(track.album_art_source ?? (artUrl ? 'unknown' : 'none'));
+      const artConfidence = Number(track.album_art_confidence ?? 0);
+      const artReviewStatus = String(track.album_art_review_status ?? (artUrl ? 'approved' : 'missing'));
+      const artReviewNotes = String(track.album_art_review_notes ?? '');
+      const coverLabel = String(track.album ?? track.title ?? 'Unknown');
+      const coverClass = artReviewStatus === 'approved' ? 'success' : artReviewStatus === 'missing' ? 'subtle' : 'warn';
+
+      const heroArt = document.querySelector('.hero-art') as HTMLElement | null;
+      if (heroArt) {
+        heroArt.style.backgroundImage = artUrl ? `url("${artUrl.replace(/"/g, '\\"')}")` : '';
+      }
+
+      const heroCover = document.querySelector('.hero-cover') as HTMLElement | null;
+      if (heroCover) {
+        heroCover.classList.toggle('no-art', !artUrl);
+        heroCover.innerHTML = artUrl
+          ? `<img src="${esc(artUrl)}" alt="Album cover" />`
+          : `<div class="cover-placeholder"><div class="icon">♪</div><div>No cover</div><small>${esc(coverLabel)}</small></div>`;
+      }
+
+      const coverButton = document.getElementById('cover-btn') as HTMLButtonElement | null;
+      if (coverButton) coverButton.hidden = !artUrl;
+      const albumArtChip = document.getElementById('detail-album-art-chip');
+      if (albumArtChip) {
+        albumArtChip.textContent = artUrl ? 'Album art' : 'No album art';
+        albumArtChip.className = artUrl ? 'chip success' : 'chip subtle';
+      }
+
+      const setChip = (id: string, text: string, className: string) => {
+        const chip = document.getElementById(id);
+        if (!chip) return;
+        chip.textContent = text;
+        chip.className = className;
+      };
+      setChip('detail-cover-status-chip-top', `Cover ${artReviewStatus}`, `chip ${coverClass}`);
+      setChip('detail-cover-source-chip-top', `Source ${artSource || 'none'}`, 'chip subtle');
+      setChip('detail-cover-score-chip-top', `Score ${artConfidence.toFixed(1)}`, 'chip subtle');
+      setChip('detail-cover-status-chip-overview', `Cover ${artReviewStatus}`, `chip ${coverClass}`);
+      setChip('detail-cover-source-chip-overview', `Source ${artSource || 'none'}`, 'chip subtle');
+      setChip('detail-cover-score-chip-overview', `Score ${artConfidence.toFixed(1)}`, 'chip subtle');
+      const coverMatchSource = document.getElementById('detail-cover-match-source');
+      if (coverMatchSource) coverMatchSource.textContent = artSource || 'none';
+      const coverMatchConfidence = document.getElementById('detail-cover-match-confidence');
+      if (coverMatchConfidence) coverMatchConfidence.textContent = artConfidence.toFixed(1);
+      const coverMatchStatus = document.getElementById('detail-cover-match-status');
+      if (coverMatchStatus) coverMatchStatus.textContent = artReviewStatus;
+      const coverMatchEmbedded = document.getElementById('detail-cover-match-embedded');
+      if (coverMatchEmbedded) coverMatchEmbedded.textContent = String(track.embedded_album_art ? 'yes' : 'no');
+      const coverMatchNotes = document.getElementById('detail-cover-match-notes');
+      if (coverMatchNotes) coverMatchNotes.textContent = artReviewNotes || '';
     }
 
     function seekCurrentAudio(deltaSeconds: number) {
@@ -4267,6 +4334,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         else tracks = [refreshed, ...tracks];
       }
       if (refreshed || propagated > 0) renderList(tracks);
+      if (refreshed && (selectedDetailTrackId === trackId || activeTrackId === trackId)) {
+        updateRenderedTrackDetail(refreshed);
+      }
       if (reloadDetail) {
         await loadTrackDetail(String(trackId), false);
       }
@@ -5228,8 +5298,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       detailEl.innerHTML = `
         <div class="hero">
-          <div class="hero-art" style="${coverUrl ? `background-image:url('${esc(coverUrl)}')` : ''}"></div>
-          <div class="hero-cover ${coverUrl ? '' : 'no-art'}">
+          <div class="hero-art" id="detail-hero-art" style="${coverUrl ? `background-image:url('${esc(coverUrl)}')` : ''}"></div>
+          <div class="hero-cover ${coverUrl ? '' : 'no-art'}" id="detail-hero-cover">
             ${coverUrl ? `<img src="${esc(coverUrl)}" alt="Album cover" />` : `<div class="cover-placeholder"><div class="icon">♪</div><div>No cover</div><small>${esc(coverLabel)}</small></div>`}
           </div>
           <div class="hero-copy">
@@ -5247,7 +5317,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="chips">
               ${albumNameFor(track) ? `<button type="button" class="chip nav-chip" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>` : ''}
               ${trackSourcesMarkup(track)}
-              ${track.album_art_url ? '<span class="chip success">Album art</span>' : '<span class="chip subtle">No album art</span>'}
+              ${track.album_art_url ? '<span class="chip success" id="detail-album-art-chip">Album art</span>' : '<span class="chip subtle" id="detail-album-art-chip">No album art</span>'}
               ${String(track.track_notes ?? '').trim() ? '<span class="chip subtle">Has notes</span>' : ''}
               ${track.analysis_status ? `<span class="chip subtle">${esc(track.analysis_status)}</span>` : ''}
               ${track.bpm_source ? `<span class="chip subtle">BPM ${esc(track.bpm_source)}</span>` : ''}
@@ -5294,9 +5364,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <div class="chips detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview" style="margin-bottom:14px;">
             ${track.analysis_stage ? `<span class="chip subtle">Stage ${esc(track.analysis_stage)}</span>` : ''}
             ${track.spotify_id ? `<span class="chip success">Spotify matched</span>` : `<span class="chip subtle">No Spotify match</span>`}
-            <span class="chip ${coverStatusClass}">Cover ${esc(coverReviewStatus)}</span>
-            <span class="chip subtle">Source ${esc(coverSource || 'none')}</span>
-            <span class="chip subtle">Score ${esc(coverConfidence.toFixed(1))}</span>
+            <span class="chip ${coverStatusClass}" id="detail-cover-status-chip-overview">Cover ${esc(coverReviewStatus)}</span>
+            <span class="chip subtle" id="detail-cover-source-chip-overview">Source ${esc(coverSource || 'none')}</span>
+            <span class="chip subtle" id="detail-cover-score-chip-overview">Score ${esc(coverConfidence.toFixed(1))}</span>
             ${track.analysis_error ? `<span class="chip warn">${esc(track.analysis_error)}</span>` : ''}
           </div>
           ${isGoogleDriveTrack ? '<div class="scan-preflight subtle">Google Drive track — first play will download to local cache.</div>' : ''}
@@ -5393,10 +5463,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
             <div class="detail-section-body metadata-editor cover-review-panel" id="cover-match-body" ${coverCollapsed ? 'hidden' : ''}>
               <div class="scan-summary">
-                <div class="scan-summary-item"><span>Source</span><strong>${esc(coverSource || 'none')}</strong></div>
-                <div class="scan-summary-item"><span>Confidence</span><strong>${esc(coverConfidence.toFixed(1))}</strong></div>
-                <div class="scan-summary-item"><span>Status</span><strong>${esc(coverReviewStatus)}</strong></div>
-                <div class="scan-summary-item"><span>Embedded</span><strong>${track.embedded_album_art ? 'yes' : 'no'}</strong></div>
+                <div class="scan-summary-item"><span>Source</span><strong id="detail-cover-match-source">${esc(coverSource || 'none')}</strong></div>
+                <div class="scan-summary-item"><span>Confidence</span><strong id="detail-cover-match-confidence">${esc(coverConfidence.toFixed(1))}</strong></div>
+                <div class="scan-summary-item"><span>Status</span><strong id="detail-cover-match-status">${esc(coverReviewStatus)}</strong></div>
+                <div class="scan-summary-item"><span>Embedded</span><strong id="detail-cover-match-embedded">${track.embedded_album_art ? 'yes' : 'no'}</strong></div>
               </div>
               <div class="chips">
                 ${track.album_art_url ? '<button class="btn" id="approve-cover-btn" type="button">Approve Cover</button>' : ''}
@@ -5405,7 +5475,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <input id="upload-cover-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
                 <button class="btn" id="mark-cover-review-btn" type="button">Needs Review</button>
               </div>
-              ${coverReviewNotes ? `<div class="scan-preflight">${esc(coverReviewNotes)}</div>` : ''}
+              ${coverReviewNotes ? `<div class="scan-preflight" id="detail-cover-match-notes">${esc(coverReviewNotes)}</div>` : ''}
             </div>
           </section>
         </div>
@@ -5998,7 +6068,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           activeSetId = setId;
           tracksDiv.style.display = '';
           if (!set.tracks?.length) {
-            tracksDiv.innerHTML = '<div class="empty" style="padding:8px 0;">Empty playlist.</div>';
+            tracksDiv.innerHTML = '<div class="empty" style="padding:8px 0;">Empty playlist.</div><div class="set-drop-zone" data-set-id="' + setId + '">Drop tracks here to add</div>';
+            bindSetDropZone(tracksDiv, setId);
             return;
           }
           tracksDiv.innerHTML = set.tracks.map((t: Record<string, unknown>) => `
@@ -6009,7 +6080,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
               <button class="icon-btn danger remove-track-btn" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}" title="Remove">✕</button>
             </div>
-          `).join('') + `<div class="set-suggestions" id="set-suggestions-${setId}"><div class="scan-log-entry info">Loading intelligent suggestions…</div></div>`;
+          `).join('') + `<div class="set-drop-zone" data-set-id="${setId}">Drop tracks here to add</div><div class="set-suggestions" id="set-suggestions-${setId}"><div class="scan-log-entry info">Loading intelligent suggestions…</div></div>`;
+          bindSetDropZone(tracksDiv, setId);
           bindLibraryNavLinks(tracksDiv);
           tracksDiv.querySelectorAll('.remove-track-btn').forEach((btn) => {
             btn.addEventListener('click', async () => {
@@ -6027,13 +6099,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             const suggestions = (nextPayload.next_tracks ?? []) as Record<string, unknown>[];
             const container = document.getElementById(`set-suggestions-${setId}`);
             if (container) {
+              const pageSize = 6;
+              const pageCount = Math.max(1, Math.ceil(suggestions.length / pageSize));
+              const currentPage = Math.min(setSuggestionPageBySetId[setId] ?? 0, pageCount - 1);
+              setSuggestionPageBySetId[setId] = currentPage;
+              const pageSuggestions = suggestions.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
               container.innerHTML = `
-                <h4>Playlist Intelligence</h4>
+                <div class="detail-section-head" style="margin:0 0 8px;">
+                  <h4 style="margin:0;">Playlist Intelligence</h4>
+                  <div class="detail-section-actions">
+                    <span class="detail-page-indicator">Page ${currentPage + 1} / ${pageCount}</span>
+                    <button type="button" class="icon-btn detail-page-btn" data-suggestion-page="prev" data-set-id="${setId}" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
+                    <button type="button" class="icon-btn detail-page-btn" data-suggestion-page="next" data-set-id="${setId}" ${currentPage >= pageCount - 1 ? 'disabled' : ''}>Next</button>
+                  </div>
+                </div>
                 <div class="suggestions compact">
-                  ${suggestions.slice(0, 6).map((item) => `
-                    <div class="suggestion" data-track-id="${item.id}">
-                      <strong>${esc(item.artist ?? 'Unknown')} - ${esc(item.title ?? 'Untitled')}</strong><br>
-                      <small>${esc(item.reason ?? 'Suggested')} · ${displayBpm(item.effective_bpm, item.id as number)} BPM · ${esc(item.effective_key ?? '--')}</small>
+                  ${pageSuggestions.map((item) => `
+                    <div class="suggestion playlist-intelligence-row" data-track-id="${item.id}">
+                      <div>
+                        <strong>${esc(item.artist ?? 'Unknown')} - ${esc(item.title ?? 'Untitled')}</strong><br>
+                        <small>${esc(item.reason ?? 'Suggested')} · ${displayBpm(item.effective_bpm, item.id as number)} BPM · ${esc(item.effective_key ?? '--')}</small>
+                      </div>
+                      <button type="button" class="icon-btn intelligence-add-btn" data-track-id="${item.id}" title="Add to playlist" aria-label="Add to playlist">+</button>
                     </div>
                   `).join('') || '<div class="empty">No recommendations available.</div>'}
                 </div>
@@ -6044,10 +6131,75 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   void selectTrack((card as HTMLElement).dataset.trackId!, false);
                 });
               });
+              container.querySelectorAll('.intelligence-add-btn[data-track-id]').forEach((button) => {
+                button.addEventListener('click', async (event) => {
+                  event.stopPropagation();
+                  const trackId = Number((button as HTMLElement).dataset.trackId ?? 0);
+                  if (!trackId) return;
+                  const response = await fetch(`/api/sets/${setId}/tracks`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ track_id: trackId }),
+                  });
+                  if (!response.ok) {
+                    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+                    showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
+                    return;
+                  }
+                  showToast('Track added to playlist.', 'success');
+                  renderSetsPanel();
+                });
+              });
+              container.querySelectorAll<HTMLButtonElement>('[data-suggestion-page][data-set-id]').forEach((button) => {
+                button.addEventListener('click', () => {
+                  const buttonSetId = Number(button.dataset.setId ?? 0);
+                  if (buttonSetId !== setId) return;
+                  const direction = button.dataset.suggestionPage === 'next' ? 1 : -1;
+                  const nextPage = Math.max(0, Math.min(pageCount - 1, (setSuggestionPageBySetId[setId] ?? 0) + direction));
+                  if (nextPage === setSuggestionPageBySetId[setId]) return;
+                  setSuggestionPageBySetId[setId] = nextPage;
+                  renderSetsPanel();
+                });
+              });
             }
           }
         });
       });
+
+      function bindSetDropZone(root: HTMLElement, setId: number) {
+        const addTrackToSet = async (trackId: number) => {
+          const response = await fetch(`/api/sets/${setId}/tracks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ track_id: trackId }),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+            showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
+            return false;
+          }
+          showToast('Track added to playlist.', 'success');
+          renderSetsPanel();
+          return true;
+        };
+
+        root.querySelectorAll<HTMLElement>(`.set-drop-zone[data-set-id="${setId}"], .set-item-head[data-set-id="${setId}"], .set-tracks-list[data-set-id="${setId}"]`).forEach((zone) => {
+          zone.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            zone.classList.add('drag-over');
+          });
+          zone.addEventListener('dragleave', () => {
+            zone.classList.remove('drag-over');
+          });
+          zone.addEventListener('drop', async (event) => {
+            event.preventDefault();
+            zone.classList.remove('drag-over');
+            const trackId = Number((event as DragEvent).dataTransfer?.getData('text/track-id') ?? 0);
+            if (!trackId) return;
+            await addTrackToSet(trackId);
+          });
+        });
+      }
 
       setsPanel.querySelectorAll('.delete-set-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {
@@ -6059,30 +6211,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
 
       setsPanel.querySelectorAll<HTMLElement>('.set-item[data-set-id]').forEach((item) => {
-        item.addEventListener('dragover', (e) => {
-          e.preventDefault();
-          item.classList.add('drag-over');
-        });
-        item.addEventListener('dragleave', (e) => {
-          if (!item.contains((e as DragEvent).relatedTarget as Node)) {
-            item.classList.remove('drag-over');
-          }
-        });
-        item.addEventListener('drop', async (e) => {
-          e.preventDefault();
-          item.classList.remove('drag-over');
-          const trackId = (e as DragEvent).dataTransfer?.getData('text/track-id');
-          if (!trackId || !Number(trackId)) return;
-          const setId = parseInt(item.dataset.setId!, 10);
-          if (!setId) return;
-          await fetch(`/api/sets/${setId}/tracks`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ track_id: parseInt(trackId, 10) }),
-          });
-          showToast('Track added to playlist.', 'success');
-          renderSetsPanel();
-        });
+        const setId = parseInt(item.dataset.setId!, 10);
+        const tracksList = document.getElementById(`set-tracks-${setId}`);
+        if (tracksList) tracksList.dataset.setId = String(setId);
       });
 
     }
@@ -6261,24 +6392,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <span id="google-drive-import-stage-scope">${esc(selectedGoogleDriveFolderLabel())}</span>
               </div>
             </div>
+            <div class="scan-preflight subtle">Detailed import events are shown in Activity.</div>
             <div class="buttons">
               <button type="button" class="btn" id="google-drive-import-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Import Google Drive Metadata</button>
               <button type="button" class="btn secondary" id="google-drive-preview-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>${googleDriveFilesLoaded ? 'Refresh Drive Files' : 'Preview Drive Files'}</button>
               <button type="button" class="btn secondary" id="google-drive-folder-picker-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Choose Drive Folder</button>
               <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleUser ? 'Manage Google' : 'Sign in with Google'}</button>
-            </div>
-            <div class="scan-history">
-              ${googleDriveFilesLoaded
-                ? (googleDriveFiles.length
-                  ? googleDriveFiles.map((file) => `
-                    <div class="scan-history-item">
-                      <strong>${esc(String(file.name ?? 'Untitled'))}</strong>
-                      <span>${esc(formatDriveFileSize(file.size))} · ${esc(formatDriveModifiedTime(file.modifiedTime))}</span>
-                      <span>${esc(String(file.mimeType ?? 'audio'))}</span>
-                    </div>
-                  `).join('')
-                  : '<div class="empty">No Drive audio files loaded yet.</div>')
-                : `<div class="empty">Preview Google Drive files from ${esc(selectedGoogleDriveFolderLabel())} to inspect what the app can see before importing.</div>`}
             </div>
           </section>
       `;
@@ -6349,6 +6468,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const artworkToolsMarkup = `
         <section class="library-card">
           <div class="scan-log-head"><strong>Artwork Analysis</strong></div>
+          <div class="artwork-analysis-progress" id="artwork-analysis-progress"${artworkAnalysisState === 'idle' ? ' hidden' : ''} data-state="${esc(artworkAnalysisState)}">
+            <div class="artwork-analysis-progress-head">
+              <strong id="artwork-analysis-status">${artworkAnalysisState === 'running'
+                ? 'Artwork analysis running'
+                : artworkAnalysisState === 'success'
+                  ? 'Artwork analysis complete'
+                  : artworkAnalysisState === 'error'
+                    ? 'Artwork analysis finished with errors'
+                    : 'Artwork analysis idle'}</strong>
+              <span id="artwork-analysis-meta">${artworkAnalysisCurrent} / ${artworkAnalysisTotal}</span>
+            </div>
+            <div class="artwork-analysis-progress-track">
+              <div class="artwork-analysis-progress-bar" id="artwork-analysis-progress-bar" style="width:${artworkAnalysisTotal > 0 ? `${Math.min(100, (artworkAnalysisCurrent / Math.max(1, artworkAnalysisTotal)) * 100)}%` : '0%'}" />
+            </div>
+            <div class="artwork-analysis-progress-detail" id="artwork-analysis-detail">${esc(artworkAnalysisDetail)}</div>
+          </div>
           <div class="scan-preflight">${totalTrackCount ? `${totalMissingArtCount} of ${totalTrackCount} loaded tracks are still missing art.` : 'Load the collection to analyze artwork.'}</div>
           <div class="scan-preflight">Use the visible action for the current filtered list, or force a full artwork pass across every loaded track.</div>
           <div class="buttons">
@@ -7432,7 +7567,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           autoArtFetchTimer = null;
           if (activeTrackId !== requestedTrackId) return;
           try {
-            await reanalyzeArtForTrack(requestedTrackId, { force: false, reloadDetail: true });
+            await reanalyzeArtForTrack(requestedTrackId, { force: false, reloadDetail: false });
           } catch {
             // Best-effort — don't surface errors from automatic background fetches.
           }
