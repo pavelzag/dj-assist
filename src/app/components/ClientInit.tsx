@@ -4240,22 +4240,31 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         ? payload.track as Record<string, unknown>
         : null;
       const propagated = Number(payload.propagated ?? 0);
-      const propagatedIds = Array.isArray(payload.propagatedTrackIds)
-        ? (payload.propagatedTrackIds as unknown[]).map(Number).filter(Number.isFinite)
-        : [];
-      if (refreshed) {
+      const albumGroupKey = String(refreshed?.album_group_key ?? '').trim();
+      if (refreshed && albumGroupKey) {
+        const artUrl = String(refreshed.album_art_url ?? '').trim();
+        const artConfidence = Number(refreshed.album_art_confidence ?? 0) || null;
+        const artReviewStatus = String(refreshed.album_art_review_status ?? '').trim() || 'approved';
+        const artReviewNotes = String(refreshed.album_art_review_notes ?? '').trim();
+        const artSource = String(refreshed.album_art_source ?? '').trim() || 'album_propagated';
+        tracks = tracks.map((item) => {
+          if (String(item.album_group_key ?? '').trim() !== albumGroupKey) return item;
+          const isSourceTrack = Number(item.id) === trackId;
+          return {
+            ...item,
+            album_art_url: artUrl,
+            album_art_source: isSourceTrack ? artSource : 'album_propagated',
+            album_art_confidence: artConfidence,
+            album_art_review_status: artReviewStatus,
+            album_art_review_notes: isSourceTrack
+              ? artReviewNotes
+              : 'propagated from reanalysis of same album',
+          };
+        });
+      } else if (refreshed) {
         const trackIndex = tracks.findIndex((item) => Number(item.id) === trackId);
-        if (trackIndex !== -1) tracks[trackIndex] = refreshed;
+        if (trackIndex !== -1) tracks[trackIndex] = { ...tracks[trackIndex], ...refreshed };
         else tracks = [refreshed, ...tracks];
-      }
-      // Propagate the found art URL into sibling tracks already in memory so the
-      // list updates immediately without a full reload.
-      if (propagated > 0 && refreshed?.album_art_url && propagatedIds.length) {
-        const artUrl = String(refreshed.album_art_url);
-        for (const siblingId of propagatedIds) {
-          const idx = tracks.findIndex((t) => Number(t.id) === siblingId);
-          if (idx !== -1) tracks[idx] = { ...tracks[idx], album_art_url: artUrl, album_art_source: 'album_propagated', album_art_review_status: 'approved' };
-        }
       }
       if (refreshed || propagated > 0) renderList(tracks);
       if (reloadDetail) {
