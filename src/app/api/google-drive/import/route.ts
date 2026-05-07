@@ -1,17 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   effectiveServerSettings,
   getClientId,
   getGoogleDriveAccessToken,
 } from '@/lib/runtime-settings';
 import { collectFolderTree, listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
-import { importGoogleDriveTracks, purgeIgnoredGoogleDriveTracks, updateGoogleDriveTrackLocalMetadata } from '@/lib/db';
+import {
+  getTracksByPaths,
+  importGoogleDriveTracks,
+  purgeIgnoredGoogleDriveTracks,
+  reuseExistingAlbumArtForTrack,
+  updateGoogleDriveTrackLocalMetadata,
+  type Track,
+} from '@/lib/db';
 import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
 import { ensureLocalGoogleDriveTrackFile, readLocalAudioMetadata } from '@/lib/google-drive-cache';
+import { resolveWorkingPython } from '@/lib/scan';
 import { fetchServerEntitlements } from '@/lib/server-account';
 
 export const runtime = 'nodejs';
 const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
+const IMPORT_REANALYZE_ART_TIMEOUT_MS = 45_000;
+const execFileAsync = promisify(execFile);
 
 function logGoogleDriveImport(
   level: 'info' | 'warn' | 'error',
@@ -64,6 +76,202 @@ function buildServerHeaders(input: {
     headers.set('X-Google-Id-Token', googleIdToken);
   }
   return headers;
+}
+
+function parseStderrEvents(stderr: string | null | undefined): Array<Record<string, unknown>> | string {
+  const text = String(stderr || '').trim();
+  if (!text) return text;
+  const lines = text.split('\n').filter(Boolean);
+  const events = lines.map((line) => {
+    const match = line.match(/^\[([^\]]+)\]\s+(.*)$/);
+    if (match) {
+      const [, category, content] = match;
+      try {
+        return { category, ...JSON.parse(content) };
+      } catch {
+        return { category, raw: content };
+      }
+    }
+    return { raw: line };
+  });
+  return events.length > 0 ? events : text;
+}
+
+function sanitizeArtworkUrlForServer(value: string | null | undefined): string | null {
+  const normalized = String(value ?? '').trim();
+  if (!normalized || normalized.startsWith('data:')) return null;
+  return normalized;
+}
+
+function serializeTrackForServer(track: Track) {
+  const artworkUrl = sanitizeArtworkUrlForServer(track.album_art_url);
+  const hasArtwork = Boolean(artworkUrl);
+  return {
+    client_track_id: track.file_hash || track.path || String(track.id),
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    duration: track.duration,
+    bitrate: track.bitrate,
+    bpm: track.bpm,
+    bpm_confidence: track.bpm_confidence,
+    key: track.key,
+    key_numeric: track.key_numeric,
+    spotify_id: track.spotify_id,
+    spotify_uri: track.spotify_uri,
+    spotify_url: track.spotify_url,
+    spotify_tempo: track.spotify_tempo,
+    spotify_key: track.spotify_key,
+    spotify_mode: track.spotify_mode,
+    bpm_source: track.bpm_source,
+    analysis_status: track.analysis_status,
+    analysis_error: track.analysis_error,
+    decode_failed: track.decode_failed,
+    file_hash: track.file_hash,
+    file_size: track.file_size,
+    file_mtime: track.file_mtime,
+    effective_bpm: track.bpm ?? track.spotify_tempo,
+    effective_key: track.key || track.spotify_key || track.key_numeric,
+    artwork_url: artworkUrl,
+    artwork_source: hasArtwork ? track.album_art_source : null,
+    artwork_status: hasArtwork ? 'present' : 'missing',
+    album_art_url: artworkUrl,
+    album_art_source: hasArtwork ? track.album_art_source : null,
+    album_art_status: hasArtwork ? 'present' : 'missing',
+  };
+}
+
+async function uploadTracksToServer(input: {
+  serverUrl: string;
+  googleIdToken?: string;
+  googleAccessToken: string;
+  clientId: string;
+  userData: Record<string, unknown>;
+  tracks: Track[];
+}) {
+  if (!input.tracks.length) {
+    return { status: 200, tracksReceived: 0, rawPreview: '{"tracks_received":0}' };
+  }
+  const response = await fetch(`${input.serverUrl}/api/v1/ingest`, {
+    method: 'POST',
+    headers: buildServerHeaders({
+      googleIdToken: String(input.googleIdToken ?? '').trim() || undefined,
+      googleAccessToken: input.googleAccessToken,
+    }),
+    body: JSON.stringify({
+      client_id: input.clientId,
+      user_data: input.userData,
+      sent_at: new Date().toISOString(),
+      tracks: input.tracks.map(serializeTrackForServer),
+      usage_events: [],
+    }),
+    signal: AbortSignal.timeout(GOOGLE_DRIVE_IMPORT_TIMEOUT_MS),
+  });
+  const raw = await response.text();
+  let payload: Record<string, unknown> | null = null;
+  try {
+    payload = raw ? JSON.parse(raw) as Record<string, unknown> : null;
+  } catch {
+    payload = raw ? { error: raw } : null;
+  }
+  if (!response.ok) {
+    const detail = String(payload?.error ?? raw ?? response.statusText).slice(0, 500);
+    throw new Error(`server ingest failed status=${response.status}${detail ? ` detail=${detail}` : ''}`);
+  }
+  return {
+    status: response.status,
+    tracksReceived: Number(payload?.tracks_received ?? 0),
+    rawPreview: raw.slice(0, 500),
+  };
+}
+
+async function reanalyzeImportedArtwork(input: {
+  tracks: Track[];
+  port: string;
+  onProgress: (entry: {
+    trackId: number;
+    title: string;
+    index: number;
+    total: number;
+    ok: boolean;
+    message: string;
+    debug?: Record<string, unknown>;
+  }) => Promise<void>;
+}) {
+  const targets = input.tracks.filter((track) => {
+    const source = String(track.album_art_source ?? '').trim().toLowerCase();
+    const hasArt = Boolean(String(track.album_art_url ?? '').trim());
+    return !hasArt || source === 'embedded';
+  });
+  if (!targets.length) {
+    return { attempted: 0, succeeded: 0, failed: 0 };
+  }
+
+  const python = await resolveWorkingPython();
+  let succeeded = 0;
+  let failed = 0;
+  for (let index = 0; index < targets.length; index += 1) {
+    const track = targets[index];
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        python,
+        ['-m', 'dj_assist.cli', 'reanalyze-art', String(track.id), '--force', '--json-output'],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            DJ_ASSIST_LIVE_SPOTIFY_DEBUG: '1',
+            DJ_ASSIST_FAIL_FAST_ON_SPOTIFY_429: '1',
+            DJ_ASSIST_LOCAL_APP_URL: `http://localhost:${input.port}`,
+          },
+          timeout: IMPORT_REANALYZE_ART_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
+      } catch {
+        parsed = { ok: true, message: String(stdout || '').trim() };
+      }
+      succeeded += 1;
+      await input.onProgress({
+        trackId: track.id,
+        title: String(track.title ?? '').trim() || `Track ${track.id}`,
+        index: index + 1,
+        total: targets.length,
+        ok: true,
+        message: String(parsed.message ?? 'Artwork refresh complete.'),
+        debug: {
+          stdout: parsed,
+          stderr: parseStderrEvents(stderr),
+        },
+      });
+    } catch (error) {
+      failed += 1;
+      const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
+      await input.onProgress({
+        trackId: track.id,
+        title: String(track.title ?? '').trim() || `Track ${track.id}`,
+        index: index + 1,
+        total: targets.length,
+        ok: false,
+        message: execError.message || 'Unable to refresh artwork.',
+        debug: {
+          code: execError?.code ?? null,
+          signal: execError?.signal ?? null,
+          stdout: String(execError?.stdout ?? '').trim(),
+          stderr: parseStderrEvents(execError?.stderr),
+        },
+      });
+    }
+  }
+
+  return {
+    attempted: targets.length,
+    succeeded,
+    failed,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -216,6 +424,7 @@ export async function POST(request: NextRequest) {
 
     let localMetadataEnriched = 0;
     let localMetadataFailed = 0;
+    let localAlbumArtReused = 0;
     for (let index = 0; index < localFiles.length; index += 1) {
       const file = localFiles[index];
       const fileId = String(file.id ?? '').trim();
@@ -248,6 +457,12 @@ export async function POST(request: NextRequest) {
           key: metadata.key,
           embedded_album_art_url: metadata.embedded_album_art_url || null,
         });
+        const reusedArt = await reuseExistingAlbumArtForTrack(Number(
+          (await getTracksByPaths([`gdrive:${fileId}`]))[0]?.id ?? 0,
+        ));
+        if (reusedArt.reused) {
+          localAlbumArtReused += 1;
+        }
         localMetadataEnriched += 1;
         logGoogleDriveImport('info', 'local_metadata_completed', {
           index: index + 1,
@@ -260,6 +475,9 @@ export async function POST(request: NextRequest) {
           bpm: metadata.bpm,
           key: metadata.key,
           hasEmbeddedArt: Boolean(metadata.embedded_album_art_url),
+          reusedAlbumArt: reusedArt.reused,
+          reusedAlbumArtFromTrackId: reusedArt.sourceTrackId ?? null,
+          reusedAlbumArtSource: reusedArt.albumArtSource ?? null,
         });
       } catch (error) {
         localMetadataFailed += 1;
@@ -287,12 +505,13 @@ export async function POST(request: NextRequest) {
     }
     await logGoogleDriveProgress(
       localMetadataFailed ? 'warning' : 'success',
-      `Local Google Drive metadata enrichment completed: ${localMetadataEnriched} succeeded, ${localMetadataFailed} failed.`,
+      `Local Google Drive metadata enrichment completed: ${localMetadataEnriched} succeeded, ${localMetadataFailed} failed, ${localAlbumArtReused} album art reuse${localAlbumArtReused === 1 ? '' : 's'}.`,
       {
         event: 'local_metadata_summary',
         succeeded: localMetadataEnriched,
         failed: localMetadataFailed,
         total: localFiles.length,
+        albumArtReused: localAlbumArtReused,
       },
     );
     await logGoogleDriveProgress(
@@ -305,56 +524,89 @@ export async function POST(request: NextRequest) {
         folderName: folderName || null,
       },
     );
-
-    const response = await fetch(`${serverUrl}/api/v1/google-drive/import`, {
-      method: 'POST',
-      headers: buildServerHeaders({
-        googleIdToken: userData.google_id_token,
-        googleAccessToken: accessToken,
-      }),
-      body: JSON.stringify({
-        client_id: clientId,
-        user_data: userData,
-        max_files: maxFiles,
-        folder_id: folderId || undefined,
-        fallback_download_scan: fallbackDownloadScan,
-        fallback_download_limit: fallbackDownloadScan ? fallbackDownloadLimit : undefined,
-      }),
-      signal: AbortSignal.timeout(GOOGLE_DRIVE_IMPORT_TIMEOUT_MS),
+    let syncedTracks = await getTracksByPaths(localFiles.map((file) => `gdrive:${String(file.id ?? '').trim()}`));
+    const artworkRefresh = await reanalyzeImportedArtwork({
+      tracks: syncedTracks,
+      port: process.env.PORT ?? '3000',
+      onProgress: async (entry) => {
+        const level = entry.ok ? 'info' : 'warning';
+        const context = {
+          event: 'initial_artwork_enrichment',
+          trackId: entry.trackId,
+          title: entry.title,
+          index: entry.index,
+          total: entry.total,
+          ok: entry.ok,
+          message: entry.message,
+          debug: entry.debug ?? null,
+        };
+        logGoogleDriveImport(entry.ok ? 'info' : 'warn', 'initial_artwork_enrichment', context);
+        await logGoogleDriveProgress(
+          level,
+          `Artwork enrichment ${entry.index}/${entry.total}: ${entry.title} ${entry.ok ? 'completed' : 'failed'}${entry.message ? ` (${entry.message})` : ''}`,
+          context,
+        );
+      },
     });
-
-    const raw = await response.text();
-    logGoogleDriveImport(response.ok ? 'info' : 'warn', 'server_import_response', {
-      status: response.status,
-      ok: response.ok,
-      rawPreview: raw.slice(0, 500),
+    if (artworkRefresh.attempted > 0) {
+      await logGoogleDriveProgress(
+        artworkRefresh.failed > 0 ? 'warning' : 'success',
+        `Initial artwork enrichment completed: ${artworkRefresh.succeeded} succeeded, ${artworkRefresh.failed} failed.`,
+        {
+          event: 'initial_artwork_enrichment_summary',
+          attempted: artworkRefresh.attempted,
+          succeeded: artworkRefresh.succeeded,
+          failed: artworkRefresh.failed,
+        },
+      );
+    }
+    syncedTracks = await getTracksByPaths(localFiles.map((file) => `gdrive:${String(file.id ?? '').trim()}`));
+    const uploadResult = await uploadTracksToServer({
+      serverUrl,
+      googleIdToken: String(userData.google_id_token ?? '').trim() || undefined,
+      googleAccessToken: accessToken,
+      clientId,
+      userData,
+      tracks: syncedTracks,
+    });
+    logGoogleDriveImport('info', 'server_import_response', {
+      status: uploadResult.status,
+      ok: true,
+      rawPreview: uploadResult.rawPreview,
+      tracksPrepared: syncedTracks.length,
+      tracksReceived: uploadResult.tracksReceived,
     });
     await logGoogleDriveProgress(
-      response.ok ? 'success' : 'warning',
-      `Google Drive server import response: status=${response.status} ok=${response.ok ? 'yes' : 'no'}.`,
+      'success',
+      `Google Drive server import response: status=${uploadResult.status} ok=yes.`,
       {
         event: 'server_import_response',
-        status: response.status,
-        ok: response.ok,
-        rawPreview: raw.slice(0, 500),
+        status: uploadResult.status,
+        ok: true,
+        rawPreview: uploadResult.rawPreview,
+        tracksPrepared: syncedTracks.length,
+        tracksReceived: uploadResult.tracksReceived,
       },
     );
-    let payload: Record<string, unknown> | null = null;
-    try {
-      payload = raw ? JSON.parse(raw) as Record<string, unknown> : null;
-    } catch {
-      payload = raw ? { error: raw } : null;
-    }
 
     return NextResponse.json(
       {
-        ...(payload ?? { ok: response.ok }),
+        accepted: true,
+        ok: true,
+        tracks_received: uploadResult.tracksReceived,
+        drive_files_scanned: localFiles.length,
+        folder_id: folderId || null,
+        fallback_download_scan: fallbackDownloadScan,
         local_tracks_imported: localImport.imported,
         local_tracks_updated: localImport.updated,
         local_metadata_enriched: localMetadataEnriched,
         local_metadata_failed: localMetadataFailed,
+        local_album_art_reused: localAlbumArtReused,
+        initial_artwork_enrichment_attempted: artworkRefresh.attempted,
+        initial_artwork_enrichment_succeeded: artworkRefresh.succeeded,
+        initial_artwork_enrichment_failed: artworkRefresh.failed,
       },
-      { status: response.status },
+      { status: 200 },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

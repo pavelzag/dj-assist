@@ -1109,6 +1109,63 @@ export async function updateGoogleDriveTrackLocalMetadata(
   );
 }
 
+export async function reuseExistingAlbumArtForTrack(trackId: number): Promise<{
+  reused: boolean;
+  sourceTrackId?: number;
+  albumArtSource?: string;
+}> {
+  const current = queryOne<Record<string, unknown>>(
+    'SELECT id, album_group_key, album_art_url FROM tracks WHERE id = ? LIMIT 1',
+    trackId,
+  );
+  const albumGroupKey = String(current?.album_group_key ?? '').trim();
+  const currentArtUrl = String(current?.album_art_url ?? '').trim();
+  if (!albumGroupKey || currentArtUrl) return { reused: false };
+
+  const source = queryOne<Record<string, unknown>>(
+    `SELECT id, album_art_url, album_art_source, album_art_confidence, album_art_review_status, album_art_review_notes
+       FROM tracks
+      WHERE album_group_key = ?
+        AND id != ?
+        AND album_art_url IS NOT NULL
+        AND TRIM(album_art_url) <> ''
+      ORDER BY
+        CASE
+          WHEN LOWER(COALESCE(album_art_source, '')) IN ('spotify', 'musicbrainz', 'discogs', 'theaudiodb', 'server_lookup') THEN 0
+          WHEN LOWER(COALESCE(album_art_source, '')) = 'album_propagated' THEN 1
+          WHEN LOWER(COALESCE(album_art_source, '')) = 'embedded' THEN 2
+          ELSE 3
+        END,
+        id ASC
+      LIMIT 1`,
+    albumGroupKey,
+    trackId,
+  );
+  const albumArtUrl = String(source?.album_art_url ?? '').trim();
+  if (!albumArtUrl) return { reused: false };
+
+  execute(
+    `UPDATE tracks
+        SET album_art_url = ?,
+            album_art_source = 'album_reused',
+            album_art_confidence = ?,
+            album_art_review_status = ?,
+            album_art_review_notes = ?
+      WHERE id = ?`,
+    albumArtUrl,
+    Number(source?.album_art_confidence ?? 0) || null,
+    String(source?.album_art_review_status ?? '').trim() || 'approved',
+    `reused artwork from existing album group ${albumGroupKey} via track ${Number(source?.id ?? 0)}`,
+    trackId,
+  );
+
+  return {
+    reused: true,
+    sourceTrackId: Number(source?.id ?? 0) || undefined,
+    albumArtSource: String(source?.album_art_source ?? '').trim() || undefined,
+  };
+}
+
 export async function purgeIgnoredGoogleDriveTracks(): Promise<number> {
   const before = Number(
     queryOne<Record<string, unknown>>(
@@ -1158,6 +1215,13 @@ export async function getTracksByIds(ids: number[]): Promise<Track[]> {
   if (!uniqueIds.length) return [];
   const placeholders = uniqueIds.map(() => '?').join(', ');
   return queryAll<Record<string, unknown>>(`SELECT * FROM tracks WHERE id IN (${placeholders})`, ...uniqueIds).map(mapTrack);
+}
+
+export async function getTracksByPaths(paths: string[]): Promise<Track[]> {
+  const uniquePaths = [...new Set(paths.map((path) => String(path ?? '').trim()).filter(Boolean))];
+  if (!uniquePaths.length) return [];
+  const placeholders = uniquePaths.map(() => '?').join(', ');
+  return queryAll<Record<string, unknown>>(`SELECT * FROM tracks WHERE path IN (${placeholders})`, ...uniquePaths).map(mapTrack);
 }
 
 export async function importGoogleDriveTracks(input: {

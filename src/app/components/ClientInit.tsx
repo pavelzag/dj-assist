@@ -4862,7 +4862,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         <label class="row-check">
           <input type="checkbox" class="track-select" data-track-id="${track.id}" ${selectedTrackIds.has(Number(track.id)) ? 'checked' : ''} />
         </label>
-        ${track.album_art_url ? `<img class="thumb" src="${esc(track.album_art_url)}" alt="" />` : '<div class="thumb placeholder">♪</div>'}
+        ${track.album_art_url ? `<img class="thumb" src="${esc(track.album_art_url)}" alt="" data-track-id="${track.id}" data-art-url="${esc(track.album_art_url)}" />` : '<div class="thumb placeholder">♪</div>'}
         <div>
           <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</strong>
           <span>${trackSubtitleParts(track).join(' · ')}</span>
@@ -4891,6 +4891,29 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         else selectedTrackIds.delete(trackId);
         renderBulkToolbar();
       });
+      const thumb = row.querySelector('.thumb[data-track-id][data-art-url]') as HTMLImageElement | null;
+      if (thumb && thumb.dataset.boundError !== 'true') {
+        thumb.addEventListener('error', () => {
+          const failedUrl = String(thumb.dataset.artUrl ?? '').trim();
+          const trackId = Number.parseInt(String(thumb.dataset.trackId ?? '0'), 10);
+          const currentTrack = tracks.find((item) => Number(item.id) === trackId);
+          appendScanLog(
+            `Album art failed to load for track ${trackId}: ${String(currentTrack?.artist ?? 'Unknown Artist')} - ${String(currentTrack?.title ?? 'Untitled')}`,
+            'warning',
+            {
+              category: 'album-art',
+              trackId,
+              albumArtUrl: failedUrl,
+              albumArtSource: String(currentTrack?.album_art_source ?? ''),
+            },
+          );
+          const placeholder = document.createElement('div');
+          placeholder.className = 'thumb placeholder';
+          placeholder.textContent = '♪';
+          thumb.replaceWith(placeholder);
+        }, { once: true });
+        thumb.dataset.boundError = 'true';
+      }
       const bpmCell = row.querySelector('.bpm-cell[data-track-id]') as HTMLElement | null;
       bpmCell?.addEventListener('click', (e) => {
         e.stopPropagation();
