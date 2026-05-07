@@ -227,46 +227,72 @@ def _seed_metadata_from_server(metadata: dict, server_track: dict) -> dict:
     return seeded
 
 
+def _local_app_url(path: str) -> str:
+    base = os.getenv("DJ_ASSIST_LOCAL_APP_URL", "").strip().rstrip("/")
+    return f"{base}{path}" if base else ""
+
+
 def _server_album_art_url(track_data: dict) -> str:
+    """Return a GCS-backed URL for the track's album art.
+
+    Delegates the actual upload to the local Next.js server via
+    POST /api/art/store-gcs.  This means:
+    - No google-cloud-storage Python dependency needed on the user's machine.
+    - GCS credentials are configured once on the Next.js server (via
+      DJ_ASSIST_GCS_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS),
+      not per user.
+    - The same in-process cache avoids redundant uploads within a scan run.
+    - Graceful fallback: if the local server is unavailable or GCS is not
+      configured, external URLs are passed through unchanged and data: URIs
+      (which can't be served as a URL) are dropped.
+    """
     global _SERVER_ART_UPLOAD_WARNING
 
     album_art_url = str(track_data.get("album_art_url") or "").strip()
     if not album_art_url:
         return ""
-    if not album_art_url.startswith("data:"):
-        return album_art_url
 
+    # Fast path: already resolved during this scan run.
     cached = _SERVER_ART_UPLOAD_CACHE.get(album_art_url)
     if cached:
         return cached
 
+    endpoint = _local_app_url("/api/art/store-gcs")
+    if not endpoint:
+        # Local server URL not configured — fall back gracefully.
+        return "" if album_art_url.startswith("data:") else album_art_url
+
     try:
-        from .art_store import (
-            download_art,
-            gcs_bucket_from_env,
-            gcs_prefix_from_env,
-            gcs_public_base_url,
-            upload_art_to_gcs,
+        data = json.dumps({"url": album_art_url}).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
 
-        bucket_name = gcs_bucket_from_env().strip()
-        if not bucket_name:
-            raise RuntimeError("DJ_ASSIST_GCS_BUCKET is not configured")
+        gcs_url = str(payload.get("gcs_url") or "").strip()
+        if gcs_url:
+            _SERVER_ART_UPLOAD_CACHE[album_art_url] = gcs_url
+            return gcs_url
 
-        stored = upload_art_to_gcs(
-            download_art(album_art_url),
-            bucket_name=bucket_name,
-            prefix=gcs_prefix_from_env(),
-            public_base_url=gcs_public_base_url(bucket_name),
-        )
-        _SERVER_ART_UPLOAD_CACHE[album_art_url] = stored.public_url
-        return stored.public_url
+        # GCS not configured on the server side — fall back.
+        reason = str(payload.get("reason") or "")
+        if reason and reason != "gcs_not_configured":
+            warning = f"server album art upload skipped: {reason}"
+            if _SERVER_ART_UPLOAD_WARNING != warning:
+                _SERVER_ART_UPLOAD_WARNING = warning
+                print(f"[dj-assist] {warning}", file=sys.stderr)
+        return "" if album_art_url.startswith("data:") else album_art_url
+
     except Exception as exc:
         warning = f"server album art upload skipped: {exc}"
         if _SERVER_ART_UPLOAD_WARNING != warning:
             _SERVER_ART_UPLOAD_WARNING = warning
             print(f"[dj-assist] {warning}", file=sys.stderr)
-        return ""
+        return "" if album_art_url.startswith("data:") else album_art_url
 
 
 def _serialize_track_for_server(track_data: dict, client_track_id: str) -> dict:

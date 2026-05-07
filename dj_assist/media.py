@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
 import json
@@ -131,7 +131,7 @@ class SpotifyMatch:
     album_name: str = ""
     match_score: float = 0.0
     high_confidence: bool = False
-    debug: str = ""
+    debug: dict = field(default_factory=dict)
     track_number: int = 0
     release_year: int = 0
 
@@ -145,7 +145,7 @@ class AcoustIdMatch:
     acoustid_id: str = ""
     recording_id: str = ""
     fingerprint_duration: int = 0
-    debug: str = ""
+    debug: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -155,21 +155,21 @@ class TheAudioDbMatch:
     album_name: str = ""
     album_art_provider: str = ""
     artist_image_provider: str = ""
-    debug: str = ""
+    debug: dict = field(default_factory=dict)
 
 
 @dataclass
 class MusicBrainzArtMatch:
     album_art_url: str = ""
     album_art_provider: str = ""
-    debug: str = ""
+    debug: dict = field(default_factory=dict)
 
 
 @dataclass
 class DiscogsArtMatch:
     album_art_url: str = ""
     album_art_provider: str = ""
-    debug: str = ""
+    debug: dict = field(default_factory=dict)
 
 
 class SpotifyClient:
@@ -364,7 +364,7 @@ class SpotifyClient:
     ) -> SpotifyMatch:
         self.debug_events = []
         if not self.enabled() or not title:
-            return SpotifyMatch(debug=json.dumps({"enabled": self.enabled(), "has_title": bool(title)}))
+            return SpotifyMatch(debug={"enabled": self.enabled(), "has_title": bool(title)})
 
         artist = _collapse_query_whitespace(artist) or None
         title = _collapse_query_whitespace(title) or None
@@ -462,7 +462,7 @@ class SpotifyClient:
                         album_name=album.get("name", "") or "",
                         match_score=best_score,
                         high_confidence=best_score >= self._art_confidence_threshold(),
-                        debug=json.dumps({**debug, "matched": best_item.get("id", ""), "score": best_score, "events": self.debug_events}),
+                        debug={**debug, "matched": best_item.get("id", ""), "score": best_score, "events": self.debug_events},
                         track_number=album_track_number,
                         release_year=album_release_year,
                     )
@@ -471,7 +471,7 @@ class SpotifyClient:
                 self._debug("search_query_error", query=query, error=str(exc))
                 continue
 
-        return SpotifyMatch(debug=json.dumps({**debug, "events": self.debug_events}))
+        return SpotifyMatch(debug={**debug, "events": self.debug_events})
 
     @staticmethod
     def _pick_best_match(
@@ -646,7 +646,7 @@ class TheAudioDbClient:
         album = _normalize_query_tokens(album)
         title = _normalize_query_tokens(title)
         if not self.enabled() or not artist:
-            return TheAudioDbMatch(debug=json.dumps({"enabled": self.enabled(), "has_artist": bool(artist)}))
+            return TheAudioDbMatch(debug={"enabled": self.enabled(), "has_artist": bool(artist)})
         try:
             self._debug(
                 "theaudiodb_search_start",
@@ -679,7 +679,7 @@ class TheAudioDbClient:
                                     album_art_url=album_art_url,
                                     album_name=str(selected.get("strAlbum") or variant_album or album or "").strip(),
                                     album_art_provider="theaudiodb_album",
-                                    debug=json.dumps({"album_payload": album_payload, "events": self.debug_events}),
+                                    debug={"album_payload": album_payload, "events": self.debug_events},
                                 )
 
             track_payload: dict[str, object] = {}
@@ -715,13 +715,11 @@ class TheAudioDbClient:
                                     album_name=str(selected_track.get("strAlbum") or album or "").strip(),
                                     album_art_provider="theaudiodb_track" if album_art_url else "",
                                     artist_image_provider="theaudiodb_artist" if artist_image_url else "",
-                                    debug=json.dumps(
-                                        {
+                                    debug={
                                             "album_payload": album_payload,
                                             "track_payload": track_payload,
                                             "events": self.debug_events,
-                                        }
-                                    ),
+                                        },
                                 )
                     self._debug("artist_image_missing", provider="theaudiodb_track", artist=variant_artist, title=variant_title, matched=False)
 
@@ -745,20 +743,18 @@ class TheAudioDbClient:
                         return TheAudioDbMatch(
                             artist_image_url=artist_image_url,
                             artist_image_provider="theaudiodb_artist" if artist_image_url else "",
-                            debug=json.dumps(
-                                {
+                            debug={
                                     "album_payload": album_payload,
                                     "track_payload": track_payload,
                                     "artist_payload": artist_payload,
                                     "events": self.debug_events,
-                                }
-                            ),
+                                },
                         )
                 self._debug("artist_image_missing", provider="theaudiodb_artist", artist=variant, matched=False)
-            return TheAudioDbMatch(debug=json.dumps({"album_payload": album_payload, "track_payload": track_payload, "events": self.debug_events}))
+            return TheAudioDbMatch(debug={"album_payload": album_payload, "track_payload": track_payload, "events": self.debug_events})
         except Exception as exc:
             self._debug("theaudiodb_error", artist=artist or "", album=album or "", error=str(exc))
-            return TheAudioDbMatch(debug=json.dumps({"error": str(exc), "events": self.debug_events}))
+            return TheAudioDbMatch(debug={"error": str(exc), "events": self.debug_events})
 
 
 class MusicBrainzClient:
@@ -867,7 +863,7 @@ class MusicBrainzClient:
         album = _normalize_query_tokens(album)
         title = _normalize_query_tokens(title)
         if not self.enabled():
-            return MusicBrainzArtMatch(debug=json.dumps({"enabled": False}))
+            return MusicBrainzArtMatch(debug={"enabled": False})
         timed_out = False
         if artist and album:
             queries = []
@@ -933,7 +929,7 @@ class MusicBrainzClient:
                             return MusicBrainzArtMatch(
                                 album_art_url=art_url,
                                 album_art_provider="musicbrainz_release_group",
-                                debug=json.dumps({"payload": payload, "events": self.debug_events}),
+                                debug={"payload": payload, "events": self.debug_events},
                             )
         if artist and title and not timed_out:
             queries = []
@@ -1003,9 +999,9 @@ class MusicBrainzClient:
                                 return MusicBrainzArtMatch(
                                     album_art_url=art_url,
                                     album_art_provider="musicbrainz_release",
-                                    debug=json.dumps({"payload": payload, "events": self.debug_events}),
+                                    debug={"payload": payload, "events": self.debug_events},
                                 )
-        return MusicBrainzArtMatch(debug=json.dumps({"timed_out": timed_out, "events": self.debug_events}))
+        return MusicBrainzArtMatch(debug={"timed_out": timed_out, "events": self.debug_events})
 
 
 class DiscogsClient:
@@ -1053,7 +1049,7 @@ class DiscogsClient:
         album = _normalize_query_tokens(album)
         title = _normalize_query_tokens(title)
         if not self.enabled():
-            return DiscogsArtMatch(debug=json.dumps({"enabled": False}))
+            return DiscogsArtMatch(debug={"enabled": False})
         queries: list[dict[str, str]] = []
         if artist and album:
             for variant in _query_variants(artist, album=album):
@@ -1124,12 +1120,12 @@ class DiscogsClient:
                         return DiscogsArtMatch(
                             album_art_url=art_url,
                             album_art_provider="discogs_release",
-                            debug=json.dumps({"payload": payload, "events": self.debug_events}),
+                            debug={"payload": payload, "events": self.debug_events},
                         )
-            return DiscogsArtMatch(debug=json.dumps({"events": self.debug_events}))
+            return DiscogsArtMatch(debug={"events": self.debug_events})
         except Exception as exc:
             self._debug("discogs_error", artist=artist or "", album=album or "", title=title or "", error=str(exc))
-            return DiscogsArtMatch(debug=json.dumps({"error": str(exc), "events": self.debug_events}))
+            return DiscogsArtMatch(debug={"error": str(exc), "events": self.debug_events})
 
 
 class AcoustIdClient:
@@ -1161,13 +1157,13 @@ class AcoustIdClient:
         }
         if not self.enabled():
             debug["error"] = "missing_api_key"
-            return AcoustIdMatch(debug=json.dumps(debug))
+            return AcoustIdMatch(debug=debug)
         if not file_path:
             debug["error"] = "missing_file_path"
-            return AcoustIdMatch(debug=json.dumps(debug))
+            return AcoustIdMatch(debug=debug)
         if not self.fpcalc_path:
             debug["error"] = "fpcalc_missing"
-            return AcoustIdMatch(debug=json.dumps(debug))
+            return AcoustIdMatch(debug=debug)
 
         try:
             fingerprint_duration, fingerprint = self._fingerprint_file(file_path)
@@ -1190,7 +1186,7 @@ class AcoustIdClient:
             debug["result_count"] = len(results)
             if not results:
                 debug["error"] = "no_results"
-                return AcoustIdMatch(fingerprint_duration=fingerprint_duration, debug=json.dumps(debug))
+                return AcoustIdMatch(fingerprint_duration=fingerprint_duration, debug=debug)
 
             best = self._pick_best_result(
                 results,
@@ -1201,16 +1197,16 @@ class AcoustIdClient:
             )
             if not best:
                 debug["error"] = "no_recording_match"
-                return AcoustIdMatch(fingerprint_duration=fingerprint_duration, debug=json.dumps(debug))
+                return AcoustIdMatch(fingerprint_duration=fingerprint_duration, debug=debug)
 
             match, debug_extra = best
             debug.update(debug_extra)
             match.fingerprint_duration = fingerprint_duration
-            match.debug = json.dumps(debug)
+            match.debug = debug
             return match
         except Exception as exc:
             debug["error"] = str(exc)
-            return AcoustIdMatch(debug=json.dumps(debug))
+            return AcoustIdMatch(debug=debug)
 
     def _fingerprint_file(self, file_path: str) -> tuple[int, str]:
         result = subprocess.run(
@@ -1332,10 +1328,10 @@ def _empty_media_links() -> dict[str, str | float | bool | int]:
         "spotify_album_name": "",
         "spotify_match_score": 0.0,
         "spotify_high_confidence": False,
-        "spotify_debug": "",
-        "theaudiodb_debug": "",
-        "musicbrainz_debug": "",
-        "discogs_debug": "",
+        "spotify_debug": {},
+        "theaudiodb_debug": {},
+        "musicbrainz_debug": {},
+        "discogs_debug": {},
         "spotify_track_number": 0,
         "spotify_release_year": 0,
         "acoustid_artist": "",
@@ -1344,7 +1340,7 @@ def _empty_media_links() -> dict[str, str | float | bool | int]:
         "acoustid_match_score": 0.0,
         "acoustid_id": "",
         "acoustid_recording_id": "",
-        "acoustid_debug": "",
+        "acoustid_debug": {},
     }
 
 
@@ -1374,7 +1370,7 @@ def build_media_links(
             duration=duration,
         )
     else:
-        acoustid = AcoustIdMatch(debug=json.dumps({"enabled": False, "reason": "not_needed_for_scan"}))
+        acoustid = AcoustIdMatch(debug={"enabled": False, "reason": "not_needed_for_scan"})
     if not resolved_artist and acoustid.artist:
         resolved_artist = acoustid.artist
     if (not resolved_title or not resolved_title.strip()) and acoustid.title:
@@ -1414,13 +1410,13 @@ def build_media_links(
     if fetch_album_art and enable_theaudiodb:
         theaudiodb = TheAudioDbClient().search_art(resolved_artist, resolved_album, resolved_title)
     else:
-        theaudiodb = TheAudioDbMatch(debug=json.dumps({"enabled": bool(fetch_album_art and enable_theaudiodb), "has_artist": bool(resolved_artist)}))
+        theaudiodb = TheAudioDbMatch(debug={"enabled": bool(fetch_album_art and enable_theaudiodb), "has_artist": bool(resolved_artist)})
     if fetch_album_art:
         musicbrainz = MusicBrainzClient().search_art(resolved_artist, resolved_album, resolved_title)
         discogs = DiscogsClient().search_art(resolved_artist, resolved_album, resolved_title)
     else:
-        musicbrainz = MusicBrainzArtMatch(debug=json.dumps({"enabled": False}))
-        discogs = DiscogsArtMatch(debug=json.dumps({"enabled": False}))
+        musicbrainz = MusicBrainzArtMatch(debug={"enabled": False})
+        discogs = DiscogsArtMatch(debug={"enabled": False})
 
     fallback_album_art_url = spotify.album_art_url or theaudiodb.album_art_url or musicbrainz.album_art_url or discogs.album_art_url
     fallback_album_art_provider = (

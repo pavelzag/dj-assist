@@ -185,6 +185,7 @@ export async function spawnScanProcess(request: ScanRequest): Promise<ScanProces
       DJ_ASSIST_SERVER_URL: serverUrl,
       DJ_ASSIST_SERVER_LOCAL_DEBUG: server.localDebug ? 'true' : 'false',
       DJ_ASSIST_USER_DATA: JSON.stringify(userData),
+      DJ_ASSIST_LOCAL_APP_URL: `http://localhost:${process.env.PORT ?? '3000'}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

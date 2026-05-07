@@ -591,10 +591,11 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
     result["spotify_match_score"] = float(previews.get("spotify_match_score") or 0.0)
     result["spotify_album_art_url"] = previews.get("album_art_url") or ""
     result["spotify_artist_image_url"] = previews.get("artist_image_url") or ""
-    result["spotify_debug"] = previews.get("spotify_debug") or ""
-    result["theaudiodb_debug"] = previews.get("theaudiodb_debug") or ""
-    result["musicbrainz_debug"] = previews.get("musicbrainz_debug") or ""
-    result["discogs_debug"] = previews.get("discogs_debug") or ""
+    result["spotify_debug"] = previews.get("spotify_debug") or {}
+    result["theaudiodb_debug"] = previews.get("theaudiodb_debug") or {}
+    result["musicbrainz_debug"] = previews.get("musicbrainz_debug") or {}
+    result["discogs_debug"] = previews.get("discogs_debug") or {}
+    result["acoustid_debug"] = previews.get("acoustid_debug") or {}
     result["album_art_provider"] = previews.get("album_art_provider") or ""
     result["artist_image_provider"] = previews.get("artist_image_provider") or ""
 

@@ -9,6 +9,25 @@ export const runtime = 'nodejs';
 const execFileAsync = promisify(execFile);
 const REANALYZE_ART_TIMEOUT_MS = 45000;
 
+function parseStderrEvents(stderr: string | null | undefined): Array<Record<string, unknown>> | string {
+  const text = String(stderr || '').trim();
+  if (!text) return text;
+  const lines = text.split('\n').filter(Boolean);
+  const events = lines.map(line => {
+    const match = line.match(/^\[([^\]]+)\]\s+(.*)$/);
+    if (match) {
+      const [, category, content] = match;
+      try {
+        return { category, ...JSON.parse(content) };
+      } catch {
+        return { category, raw: content };
+      }
+    }
+    return { raw: line };
+  });
+  return events.length > 0 ? events : text;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -35,6 +54,7 @@ export async function POST(
           ...process.env,
           DJ_ASSIST_LIVE_SPOTIFY_DEBUG: '1',
           DJ_ASSIST_FAIL_FAST_ON_SPOTIFY_429: '1',
+          DJ_ASSIST_LOCAL_APP_URL: `http://localhost:${process.env.PORT ?? '3000'}`,
         },
         timeout: REANALYZE_ART_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
@@ -47,6 +67,7 @@ export async function POST(
     } catch {
       // keep stdout as string
     }
+
     const refreshed = await getTrackById(trackId);
     if (!refreshed) return NextResponse.json({ error: 'not found' }, { status: 404 });
     const { propagated, updatedIds } = refreshed.album_art_url
@@ -60,7 +81,7 @@ export async function POST(
       debug: {
         durationMs,
         stdout: debug,
-        stderr: String(stderr || '').trim(),
+        stderr: parseStderrEvents(stderr),
       },
     });
   } catch (error) {
@@ -79,7 +100,7 @@ export async function POST(
           trackId,
           force,
           stdout: String(execError?.stdout ?? '').trim(),
-          stderr: String(execError?.stderr ?? '').trim(),
+          stderr: parseStderrEvents(execError?.stderr),
         },
       },
       { status: 500 },

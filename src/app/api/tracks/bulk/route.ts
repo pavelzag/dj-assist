@@ -11,6 +11,25 @@ const execFileAsync = promisify(execFile);
 const BULK_REANALYZE_ART_TIMEOUT_MS = 45000;
 const BULK_REANALYZE_BPM_TIMEOUT_MS = 45000;
 
+function parseStderrEvents(stderr: string | null | undefined): Array<Record<string, unknown>> | string {
+  const text = String(stderr || '').trim();
+  if (!text) return text;
+  const lines = text.split('\n').filter(Boolean);
+  const events = lines.map(line => {
+    const match = line.match(/^\[([^\]]+)\]\s+(.*)$/);
+    if (match) {
+      const [, category, content] = match;
+      try {
+        return { category, ...JSON.parse(content) };
+      } catch {
+        return { category, raw: content };
+      }
+    }
+    return { raw: line };
+  });
+  return events.length > 0 ? events : text;
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const ids = Array.isArray(body.ids) ? body.ids.map((value: unknown) => parseInt(String(value), 10)).filter((value: number) => Number.isFinite(value)) : [];
@@ -51,7 +70,7 @@ export async function POST(request: NextRequest) {
           message: String(parsed.message ?? 'Artwork refresh complete.'),
           debug: {
             stdout: parsed,
-            stderr: String(stderr || '').trim(),
+            stderr: parseStderrEvents(stderr),
           },
         });
       } catch (error) {
@@ -64,7 +83,7 @@ export async function POST(request: NextRequest) {
             code: execError?.code ?? null,
             signal: execError?.signal ?? null,
             stdout: String(execError?.stdout ?? '').trim(),
-            stderr: String(execError?.stderr ?? '').trim(),
+            stderr: parseStderrEvents(execError?.stderr),
           },
         });
       }
@@ -136,7 +155,7 @@ export async function POST(request: NextRequest) {
           message: `BPM ${String(parsed.bpm ?? parsed.effective_bpm ?? '') || 'updated'}`,
           debug: {
             stdout: parsed,
-            stderr: String(stderr || '').trim(),
+            stderr: parseStderrEvents(stderr),
             googleDriveDownload,
           },
         });
@@ -150,7 +169,7 @@ export async function POST(request: NextRequest) {
             code: execError?.code ?? null,
             signal: execError?.signal ?? null,
             stdout: String(execError?.stdout ?? '').trim(),
-            stderr: String(execError?.stderr ?? '').trim(),
+            stderr: parseStderrEvents(execError?.stderr),
           },
         });
       }
