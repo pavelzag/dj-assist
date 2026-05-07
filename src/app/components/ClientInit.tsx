@@ -18,6 +18,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     };
     type ScanSourceMode = 'local' | 'google_drive';
     type GoogleDriveImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
+    type ArtworkAnalysisState = 'idle' | 'running' | 'success' | 'error';
 
     // ── DOM refs ──────────────────────────────────────────────────────────────
     const listEl = document.getElementById('track-list') as HTMLElement;
@@ -31,6 +32,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement | null;
     const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
     const browseScopeEl = document.getElementById('browse-scope') as HTMLElement;
+    const artworkAnalysisProgressEl = document.getElementById('artwork-analysis-progress') as HTMLElement | null;
+    const artworkAnalysisStatusEl = document.getElementById('artwork-analysis-status') as HTMLElement | null;
+    const artworkAnalysisMetaEl = document.getElementById('artwork-analysis-meta') as HTMLElement | null;
+    const artworkAnalysisProgressBarEl = document.getElementById('artwork-analysis-progress-bar') as HTMLElement | null;
+    const artworkAnalysisDetailEl = document.getElementById('artwork-analysis-detail') as HTMLElement | null;
     const bulkToolbarEl = document.getElementById('bulk-toolbar') as HTMLElement;
     const sortsEl = document.getElementById('sorts') as HTMLElement;
     const listDensityEl = document.getElementById('list-density') as HTMLSelectElement | null;
@@ -105,6 +111,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const toastStack = document.getElementById('toast-stack') as HTMLElement;
     const quickChooseFolderBtn = document.getElementById('quick-choose-folder-btn') as HTMLButtonElement | null;
     const quickStartScanBtn = document.getElementById('quick-start-scan-btn') as HTMLButtonElement | null;
+    const quickAnalyzeAllArtworkBtn = document.getElementById('quick-analyze-all-artwork-btn') as HTMLButtonElement | null;
 
     // ── State ─────────────────────────────────────────────────────────────────
     const activeTrackKey = 'dj-assist-active-track-id';
@@ -589,6 +596,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (preferences.scanProgressToasts) return;
       removeToastByKey('local-scan-progress');
       removeToastByKey('google-drive-import-progress');
+      removeToastByKey('artwork-analysis-progress');
     }
 
     function isGoogleDriveImportToastEvent(event: string) {
@@ -596,7 +604,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function showProgressToast(
-      toastKey: 'local-scan-progress' | 'google-drive-import-progress',
+      toastKey: 'local-scan-progress' | 'google-drive-import-progress' | 'artwork-analysis-progress',
       message: string,
       tone: 'info' | 'success' | 'warning' | 'error' = 'info',
       done = false,
@@ -2943,6 +2951,42 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (scanProgressFileEl) scanProgressFileEl.textContent = file;
     }
 
+    function setArtworkAnalysisProgress(options: {
+      state: ArtworkAnalysisState;
+      current: number;
+      total: number;
+      succeeded?: number;
+      failed?: number;
+      detail?: string;
+    }) {
+      const current = Math.max(0, options.current);
+      const total = Math.max(0, options.total);
+      const succeeded = Math.max(0, options.succeeded ?? 0);
+      const failed = Math.max(0, options.failed ?? 0);
+      const percent = total > 0 ? Math.min(100, (current / total) * 100) : 0;
+      if (artworkAnalysisProgressEl) {
+        artworkAnalysisProgressEl.hidden = options.state === 'idle';
+        artworkAnalysisProgressEl.dataset.state = options.state;
+      }
+      if (artworkAnalysisStatusEl) {
+        artworkAnalysisStatusEl.textContent = options.state === 'running'
+          ? 'Artwork analysis running'
+          : options.state === 'success'
+            ? 'Artwork analysis complete'
+            : options.state === 'error'
+              ? 'Artwork analysis finished with errors'
+              : 'Artwork analysis idle';
+      }
+      if (artworkAnalysisMetaEl) artworkAnalysisMetaEl.textContent = `${current} / ${total}`;
+      if (artworkAnalysisProgressBarEl) artworkAnalysisProgressBarEl.style.width = `${percent}%`;
+      if (artworkAnalysisDetailEl) {
+        artworkAnalysisDetailEl.textContent = options.detail
+          ?? (options.state === 'running'
+            ? `Succeeded ${succeeded} · Failed ${failed}`
+            : `Processed ${current} of ${total} · Succeeded ${succeeded} · Failed ${failed}`);
+      }
+    }
+
     function updateNowPlayingBar(audio?: HTMLAudioElement | null) {
       const track = nowPlayingTrackId == null
         ? activeTrack()
@@ -3050,7 +3094,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const rawPath = String(track?.path ?? '').trim();
       if (!rawPath) return false;
       try {
-        await navigator.clipboard.writeText(shellEscapePath(rawPath));
+        await writeTextToClipboard(shellEscapePath(rawPath));
         showToast('Song path copied.', 'success');
         return true;
       } catch {
@@ -3065,7 +3109,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const text = list.innerText.trim();
       if (!text) return false;
       try {
-        await navigator.clipboard.writeText(text);
+        await writeTextToClipboard(text);
         showToast('Frontend logs copied.', 'success');
         return true;
       } catch {
@@ -3080,13 +3124,34 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const text = list.innerText.trim();
       if (!text) return false;
       try {
-        await navigator.clipboard.writeText(text);
+        await writeTextToClipboard(text);
         showToast('Backend logs copied.', 'success');
         return true;
       } catch {
         showToast('Could not copy backend logs.', 'error');
         return false;
       }
+    }
+
+    async function writeTextToClipboard(text: string) {
+      const value = String(text ?? '');
+      if (!value) return;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', 'true');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      if (!copied) throw new Error('Clipboard copy command failed.');
     }
 
     function readCollapsedState(key: string, fallback: boolean): boolean {
@@ -3384,12 +3449,39 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return 'info';
     }
 
+    function formatStructuredLogValue(value: unknown): string {
+      if (value == null) return '';
+      if (typeof value === 'string') return value.trim();
+      if (Array.isArray(value)) {
+        return value
+          .map((item) => formatStructuredLogValue(item))
+          .filter(Boolean)
+          .join('\n');
+      }
+      if (typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        if (typeof record.raw === 'string' && record.raw.trim()) return record.raw.trim();
+        if (typeof record.category === 'string' && record.category.trim()) {
+          const clone = { ...record };
+          delete clone.category;
+          const rest = Object.keys(clone).length ? ` ${JSON.stringify(clone)}` : '';
+          return `[${record.category}]${rest}`;
+        }
+        try {
+          return JSON.stringify(record);
+        } catch {
+          return String(record);
+        }
+      }
+      return String(value).trim();
+    }
+
     function appendSpotifyStderrLog(
       prefix: string,
       stderrRaw: unknown,
       baseContext?: Record<string, unknown>,
     ) {
-      const stderr = String(stderrRaw ?? '').trim();
+      const stderr = formatStructuredLogValue(stderrRaw);
       if (!stderr) return;
       const lines = stderr.split('\n').map((line) => line.trim()).filter(Boolean);
       let appended = false;
@@ -4118,9 +4210,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function reanalyzeArtForTrack(
       trackId: number,
-      options: { force?: boolean; reloadDetail?: boolean } = {},
+      options: { force?: boolean; reloadDetail?: boolean; suppressPropagationToast?: boolean } = {},
     ) {
-      const { force = false, reloadDetail = true } = options;
+      const { force = false, reloadDetail = true, suppressPropagationToast = false } = options;
       appendScanLog(`Reanalyze Art started for track ${trackId}`, 'info', {
         category: 'reanalyze-art',
         trackId,
@@ -4169,7 +4261,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (reloadDetail) {
         await loadTrackDetail(String(trackId), false);
       }
-      if (propagated > 0) {
+      if (propagated > 0 && !suppressPropagationToast) {
         showToast(`Album art applied to ${propagated} other track${propagated === 1 ? '' : 's'} from the same album.`, 'success');
       }
       appendScanLog(`Reanalyze Art finished for track ${trackId}: ${String(payload.message ?? 'Artwork refresh complete.')}${propagated > 0 ? ` (propagated to ${propagated} album sibling${propagated === 1 ? '' : 's'})` : ''}`, 'success', {
@@ -4194,21 +4286,60 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         trackIds: ids,
         force,
       });
-      const response = await fetch('/api/tracks/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids, action: 'reanalyze_art', force }),
+      setArtworkAnalysisProgress({
+        state: 'running',
+        current: 0,
+        total: ids.length,
+        succeeded: 0,
+        failed: 0,
+        detail: `Starting artwork analysis for ${ids.length} ${label}.`,
       });
-      const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-      if (!response.ok) {
-        appendScanLog(`Fill Missing Art failed: ${String(payload.error ?? 'Bulk artwork refresh failed.')}`, 'error', {
-          category: 'reanalyze-art-bulk',
-          debug: payload,
+      showProgressToast('artwork-analysis-progress', `Artwork analysis 0/${ids.length} · starting ${label}`, 'info', false);
+      const results: Array<Record<string, unknown>> = [];
+      let succeeded = 0;
+      let failed = 0;
+      for (let index = 0; index < ids.length; index += 1) {
+        const trackId = ids[index];
+        try {
+          const result = await reanalyzeArtForTrack(trackId, {
+            force,
+            reloadDetail: false,
+            suppressPropagationToast: true,
+          });
+          const payload = result.payload && typeof result.payload === 'object'
+            ? result.payload as Record<string, unknown>
+            : {};
+          results.push({
+            id: trackId,
+            ok: true,
+            message: String(payload.message ?? 'Artwork refresh complete.'),
+            debug: payload.debug,
+          });
+          succeeded += 1;
+        } catch (error) {
+          results.push({
+            id: trackId,
+            ok: false,
+            message: error instanceof Error ? error.message : 'Artwork refresh failed.',
+          });
+          failed += 1;
+        }
+        const processed = index + 1;
+        setArtworkAnalysisProgress({
+          state: 'running',
+          current: processed,
+          total: ids.length,
+          succeeded,
+          failed,
+          detail: `Processed ${processed} of ${ids.length} · Succeeded ${succeeded} · Failed ${failed}`,
         });
-        showToast(String(payload.error ?? 'Bulk artwork refresh failed.'), 'error');
-        return;
+        showProgressToast(
+          'artwork-analysis-progress',
+          `Artwork analysis ${processed}/${ids.length} · ${succeeded} ok · ${failed} failed`,
+          failed ? 'warning' : 'info',
+          false,
+        );
       }
-      const results = Array.isArray(payload.results) ? payload.results as Record<string, unknown>[] : [];
       for (const item of results) {
         appendScanLog(`Art refresh track ${item.id}: ${String(item.message ?? '')}`, item.ok ? 'info' : 'error', {
           category: 'reanalyze-art-bulk',
@@ -4221,9 +4352,33 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (selectedDetailTrackId != null) {
         await loadTrackDetail(String(selectedDetailTrackId), false);
       }
-      const succeeded = Number(payload.succeeded ?? 0);
-      const failed = Number(payload.failed ?? 0);
+      setArtworkAnalysisProgress({
+        state: failed > 0 ? 'error' : 'success',
+        current: ids.length,
+        total: ids.length,
+        succeeded,
+        failed,
+        detail: `Finished ${label} · Succeeded ${succeeded} · Failed ${failed}`,
+      });
+      showProgressToast(
+        'artwork-analysis-progress',
+        `Artwork analysis finished ${ids.length}/${ids.length} · ${succeeded} ok · ${failed} failed`,
+        failed ? 'warning' : 'success',
+        true,
+      );
       showToast(`Fill Missing Art finished: ${succeeded} succeeded, ${failed} failed.`, failed ? 'warning' : 'success');
+    }
+
+    function analyzeAllArtworkFromLoadedTracks() {
+      const ids = tracks
+        .map((track) => Number(track.id))
+        .filter((id) => Number.isFinite(id));
+      if (!ids.length) {
+        showToast('No loaded tracks available for artwork analysis.', 'info');
+        return;
+      }
+      showToast(`Analyze All Artwork started for ${ids.length} loaded track${ids.length === 1 ? '' : 's'}.`, 'info');
+      void reanalyzeArtBulk(ids, { force: true, label: 'all loaded tracks' });
     }
 
     async function reanalyzeBpmBulk(ids: number[], options: { label?: string } = {}) {
@@ -6156,6 +6311,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           </div>
         </section>
       `;
+      const visibleMissingArtCount = visibleTracksOrdered().filter((track) => !track.album_art_url).length;
+      const totalTrackCount = tracks.length;
+      const totalMissingArtCount = tracks.filter((track) => !track.album_art_url).length;
+      const artworkToolsMarkup = `
+        <section class="library-card">
+          <div class="scan-log-head"><strong>Artwork Analysis</strong></div>
+          <div class="scan-preflight">${totalTrackCount ? `${totalMissingArtCount} of ${totalTrackCount} loaded tracks are still missing art.` : 'Load the collection to analyze artwork.'}</div>
+          <div class="scan-preflight">Use the visible action for the current filtered list, or force a full artwork pass across every loaded track.</div>
+          <div class="buttons">
+            <button type="button" class="btn" id="fill-visible-missing-art-btn" ${visibleMissingArtCount > 0 ? '' : 'disabled'}>Fill Visible Missing Art</button>
+            <button type="button" class="btn secondary" id="analyze-all-artwork-btn" ${totalTrackCount > 0 ? '' : 'disabled'}>Analyze All Artwork</button>
+          </div>
+        </section>
+      `;
 
       libraryPanel.innerHTML = `
         <div class="library-grid">
@@ -6185,6 +6354,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           </section>
           ${recentImportsMarkup}
           ${duplicateGroupsMarkup}
+          ${artworkToolsMarkup}
           ${googleDriveCardMarkup}
           <section class="library-card">
             <div class="scan-log-head"><strong>Preferences</strong></div>
@@ -6306,6 +6476,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           .map((track) => Number(track.id))
           .filter((id) => Number.isFinite(id));
         void reanalyzeArtBulk(ids, { label: 'visible filtered tracks' });
+      });
+      document.getElementById('analyze-all-artwork-btn')?.addEventListener('click', () => {
+        analyzeAllArtworkFromLoadedTracks();
       });
       libraryPanel.querySelectorAll('.artist-browser-btn[data-artist]').forEach((button) => {
         button.addEventListener('click', () => {
@@ -7820,6 +7993,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     quickStartScanBtn?.addEventListener('click', () => {
       void triggerScan();
+    });
+    quickAnalyzeAllArtworkBtn?.addEventListener('click', () => {
+      analyzeAllArtworkFromLoadedTracks();
     });
     const unsubscribeQuitRequest = adapter.onQuitRequested(() => {
       openQuitAppModal();

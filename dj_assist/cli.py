@@ -5,6 +5,8 @@ import json
 import time
 from pathlib import Path
 from typing import Any
+import urllib.error
+import urllib.request
 
 import click
 from rich.console import Console
@@ -660,6 +662,68 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
         mark("resolve_album_art_empty")
         result["message"] = "no album art or artist image could be resolved"
         return result
+
+    local_app_base = str(__import__("os").getenv("DJ_ASSIST_LOCAL_APP_URL", "")).strip().rstrip("/")
+    if local_app_base:
+        endpoint = f"{local_app_base}/api/art/store-gcs"
+        mark("gcs_store_start", endpoint=endpoint, source_url=album_art_url[:200])
+        try:
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps({"url": album_art_url}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            gcs_url = str(payload.get("gcs_url") or "").strip()
+            if gcs_url:
+                mark("gcs_store_done", uploaded=True, gcs_url=gcs_url[:200])
+                result["gcs_upload"] = {
+                    "attempted": True,
+                    "ok": True,
+                    "endpoint": endpoint,
+                    "source_url": album_art_url,
+                    "gcs_url": gcs_url,
+                }
+                album_art_url = gcs_url
+            else:
+                reason = str(payload.get("reason") or "upload_failed")
+                mark("gcs_store_done", uploaded=False, reason=reason)
+                result["gcs_upload"] = {
+                    "attempted": True,
+                    "ok": False,
+                    "endpoint": endpoint,
+                    "source_url": album_art_url,
+                    "reason": reason,
+                }
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            mark("gcs_store_error", status=exc.code, detail=detail[:200])
+            result["gcs_upload"] = {
+                "attempted": True,
+                "ok": False,
+                "endpoint": endpoint,
+                "source_url": album_art_url,
+                "status": exc.code,
+                "detail": detail[:500],
+            }
+        except Exception as exc:
+            mark("gcs_store_error", error=str(exc))
+            result["gcs_upload"] = {
+                "attempted": True,
+                "ok": False,
+                "endpoint": endpoint,
+                "source_url": album_art_url,
+                "error": str(exc),
+            }
+    else:
+        mark("gcs_store_skipped", reason="DJ_ASSIST_LOCAL_APP_URL not configured")
+        result["gcs_upload"] = {
+            "attempted": False,
+            "ok": False,
+            "reason": "DJ_ASSIST_LOCAL_APP_URL not configured",
+        }
 
     mark("db_save_art_start", album_art_source=album_art.get("album_art_source") or "")
     db.add_track(

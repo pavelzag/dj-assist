@@ -252,6 +252,53 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.artwork-analysis-progress {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line2);
+  background: rgba(255,255,255,0.03);
+}
+.artwork-analysis-progress[data-state="running"] {
+  border-color: rgba(255, 190, 92, 0.28);
+}
+.artwork-analysis-progress[data-state="success"] {
+  border-color: rgba(156, 244, 199, 0.28);
+}
+.artwork-analysis-progress[data-state="error"] {
+  border-color: rgba(255, 129, 129, 0.28);
+}
+.artwork-analysis-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.artwork-analysis-progress-head strong {
+  font-size: 12px;
+}
+.artwork-analysis-progress-head span,
+.artwork-analysis-progress-detail {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.artwork-analysis-progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.04);
+}
+.artwork-analysis-progress-bar {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(124,92,255,0.72), rgba(255,108,0,0.88));
+  box-shadow: 0 0 16px rgba(124,92,255,0.22);
+  transition: width 0.15s ease;
+}
 .scan-option {
   display: inline-flex;
   align-items: center;

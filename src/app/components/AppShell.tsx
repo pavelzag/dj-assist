@@ -21,6 +21,7 @@ export default function AppShell({
             <button type="button" className="btn" id="quick-choose-folder-btn">Add Music</button>
             <span className="scan-status" id="scan-status">Idle</span>
             <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
+            <button type="button" className="btn secondary" id="quick-analyze-all-artwork-btn">Analyze All Artwork</button>
             <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
             <div className="scan-progress compact" id="scan-progress">
               <div className="scan-progress-track">
@@ -57,6 +58,16 @@ export default function AppShell({
         <div className="scan-preflight" id="scan-preflight">Choose a music source to add tracks.</div>
         <div className="browse-scope" id="browse-scope">
           <span className="browse-scope-empty">Viewing full collection</span>
+        </div>
+        <div className="artwork-analysis-progress" id="artwork-analysis-progress" hidden>
+          <div className="artwork-analysis-progress-head">
+            <strong id="artwork-analysis-status">Artwork analysis idle</strong>
+            <span id="artwork-analysis-meta">0 / 0</span>
+          </div>
+          <div className="artwork-analysis-progress-track">
+            <div className="artwork-analysis-progress-bar" id="artwork-analysis-progress-bar" />
+          </div>
+          <div className="artwork-analysis-progress-detail" id="artwork-analysis-detail">Waiting to start.</div>
         </div>
       </header>
 
