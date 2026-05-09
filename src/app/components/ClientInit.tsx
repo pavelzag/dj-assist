@@ -192,6 +192,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveFolderFilesBusy = false;
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
+    const playlistDropBindings = new WeakMap<HTMLElement, number>();
     let activeQuickFilter = '';
     let preScanTrackIds = new Set<number>();
     let hasScanBaseline = false;
@@ -6062,143 +6063,247 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           if ((e.target as HTMLElement).closest('.delete-set-btn')) return;
           const setId = parseInt((head as HTMLElement).dataset.setId!, 10);
           const tracksDiv = document.getElementById(`set-tracks-${setId}`)!;
-          if (tracksDiv.style.display !== 'none') { tracksDiv.style.display = 'none'; return; }
-          const res = await fetch(`/api/sets/${setId}`);
-          const { set } = await res.json();
-          activeSetId = setId;
-          tracksDiv.style.display = '';
-          if (!set.tracks?.length) {
-            tracksDiv.innerHTML = '<div class="empty" style="padding:8px 0;">Empty playlist.</div><div class="set-drop-zone" data-set-id="' + setId + '">Drop tracks here to add</div>';
-            bindSetDropZone(tracksDiv, setId);
+          if (tracksDiv.style.display !== 'none') {
+            appendScanLog(`Playlist collapsed: set=${setId}`, 'info', {
+              category: 'playlist-open',
+              setId,
+              source: 'header-click',
+              action: 'collapse',
+            });
+            tracksDiv.style.display = 'none';
+            if (activeSetId === setId) activeSetId = null;
             return;
           }
-          tracksDiv.innerHTML = set.tracks.map((t: Record<string, unknown>) => `
-            <div class="set-track-row" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}">
-              <div>
-                <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(t.artist ?? 'Unknown')}">${esc(t.artist ?? 'Unknown')}</button> - ${esc(t.title ?? 'Untitled')}</strong>
-                <span>${albumNameFor(t) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(t))}" data-nav-artist="${esc(t.artist ?? '')}">${esc(albumNameFor(t))}</button> · ` : ''}${t.bpm ? displayBpm(t.bpm, t.id as number) + ' BPM' : '--'} · ${esc(t.key ?? '--')}</span>
-              </div>
-              <button class="icon-btn danger remove-track-btn" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}" title="Remove">✕</button>
-            </div>
-          `).join('') + `<div class="set-drop-zone" data-set-id="${setId}">Drop tracks here to add</div><div class="set-suggestions" id="set-suggestions-${setId}"><div class="scan-log-entry info">Loading intelligent suggestions…</div></div>`;
-          bindSetDropZone(tracksDiv, setId);
-          bindLibraryNavLinks(tracksDiv);
-          tracksDiv.querySelectorAll('.remove-track-btn').forEach((btn) => {
-            btn.addEventListener('click', async () => {
-              const sid = parseInt((btn as HTMLElement).dataset.setId!, 10);
-              const entryId = String((btn as HTMLElement).dataset.entryId ?? '').trim();
-              if (!entryId) return;
-              await fetch(`/api/sets/${sid}/tracks/${encodeURIComponent(entryId)}`, { method: 'DELETE' });
-              renderSetsPanel();
-            });
-          });
-          const lastTrack = set.tracks[set.tracks.length - 1];
-          if (lastTrack?.id) {
-            const nextRes = await fetch(`/api/tracks/${lastTrack.id}?intent=${encodeURIComponent(nextTracksIntent)}`);
-            const nextPayload = await nextRes.json();
-            const suggestions = (nextPayload.next_tracks ?? []) as Record<string, unknown>[];
-            const container = document.getElementById(`set-suggestions-${setId}`);
-            if (container) {
-              const pageSize = 6;
-              const pageCount = Math.max(1, Math.ceil(suggestions.length / pageSize));
-              const currentPage = Math.min(setSuggestionPageBySetId[setId] ?? 0, pageCount - 1);
-              setSuggestionPageBySetId[setId] = currentPage;
-              const pageSuggestions = suggestions.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-              container.innerHTML = `
-                <div class="detail-section-head" style="margin:0 0 8px;">
-                  <h4 style="margin:0;">Playlist Intelligence</h4>
-                  <div class="detail-section-actions">
-                    <span class="detail-page-indicator">Page ${currentPage + 1} / ${pageCount}</span>
-                    <button type="button" class="icon-btn detail-page-btn" data-suggestion-page="prev" data-set-id="${setId}" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
-                    <button type="button" class="icon-btn detail-page-btn" data-suggestion-page="next" data-set-id="${setId}" ${currentPage >= pageCount - 1 ? 'disabled' : ''}>Next</button>
-                  </div>
-                </div>
-                <div class="suggestions compact">
-                  ${pageSuggestions.map((item) => `
-                    <div class="suggestion playlist-intelligence-row" data-track-id="${item.id}">
-                      <div>
-                        <strong>${esc(item.artist ?? 'Unknown')} - ${esc(item.title ?? 'Untitled')}</strong><br>
-                        <small>${esc(item.reason ?? 'Suggested')} · ${displayBpm(item.effective_bpm, item.id as number)} BPM · ${esc(item.effective_key ?? '--')}</small>
-                      </div>
-                      <button type="button" class="icon-btn intelligence-add-btn" data-track-id="${item.id}" title="Add to playlist" aria-label="Add to playlist">+</button>
-                    </div>
-                  `).join('') || '<div class="empty">No recommendations available.</div>'}
-                </div>
-              `;
-              container.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
-                card.addEventListener('click', () => {
-                  document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
-                  void selectTrack((card as HTMLElement).dataset.trackId!, false);
-                });
-              });
-              container.querySelectorAll('.intelligence-add-btn[data-track-id]').forEach((button) => {
-                button.addEventListener('click', async (event) => {
-                  event.stopPropagation();
-                  const trackId = Number((button as HTMLElement).dataset.trackId ?? 0);
-                  if (!trackId) return;
-                  const response = await fetch(`/api/sets/${setId}/tracks`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ track_id: trackId }),
-                  });
-                  if (!response.ok) {
-                    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-                    showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
-                    return;
-                  }
-                  showToast('Track added to playlist.', 'success');
-                  renderSetsPanel();
-                });
-              });
-              container.querySelectorAll<HTMLButtonElement>('[data-suggestion-page][data-set-id]').forEach((button) => {
-                button.addEventListener('click', () => {
-                  const buttonSetId = Number(button.dataset.setId ?? 0);
-                  if (buttonSetId !== setId) return;
-                  const direction = button.dataset.suggestionPage === 'next' ? 1 : -1;
-                  const nextPage = Math.max(0, Math.min(pageCount - 1, (setSuggestionPageBySetId[setId] ?? 0) + direction));
-                  if (nextPage === setSuggestionPageBySetId[setId]) return;
-                  setSuggestionPageBySetId[setId] = nextPage;
-                  renderSetsPanel();
-                });
-              });
-            }
-          }
+          void openSetPlaylist(setId, { source: 'header-click' });
         });
       });
 
       function bindSetDropZone(root: HTMLElement, setId: number) {
+        const existingBinding = playlistDropBindings.get(root);
+        if (existingBinding === setId) return;
+        playlistDropBindings.set(root, setId);
+
         const addTrackToSet = async (trackId: number) => {
+          appendScanLog(`Playlist add requested: set=${setId} track=${trackId} source=drag-drop`, 'info', {
+            category: 'playlist-add',
+            setId,
+            trackId,
+            source: 'drag-drop',
+          });
+          console.info('[playlist-drop] add requested', { setId, trackId, source: 'drag-drop', activeSetId, rootId: root.dataset.setId ?? '' });
           const response = await fetch(`/api/sets/${setId}/tracks`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ track_id: trackId }),
           });
+          console.info('[playlist-drop] add response', { setId, trackId, status: response.status, ok: response.ok });
           if (!response.ok) {
             const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+            appendScanLog(`Playlist add failed: set=${setId} track=${trackId} status=${response.status} error=${String(payload.error ?? 'unknown')}`, 'error', {
+              category: 'playlist-add',
+              setId,
+              trackId,
+              status: response.status,
+              payload,
+              source: 'drag-drop',
+            });
             showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
             return false;
           }
+          appendScanLog(`Playlist add succeeded: set=${setId} track=${trackId} source=drag-drop`, 'success', {
+            category: 'playlist-add',
+            setId,
+            trackId,
+            source: 'drag-drop',
+          });
           showToast('Track added to playlist.', 'success');
-          renderSetsPanel();
+          await openSetPlaylist(setId, { source: 'drag-drop', keepExpanded: true });
           return true;
         };
 
-        root.querySelectorAll<HTMLElement>(`.set-drop-zone[data-set-id="${setId}"], .set-item-head[data-set-id="${setId}"], .set-tracks-list[data-set-id="${setId}"]`).forEach((zone) => {
-          zone.addEventListener('dragover', (event) => {
-            event.preventDefault();
-            zone.classList.add('drag-over');
+        root.addEventListener('dragover', (event) => {
+          event.preventDefault();
+          root.classList.add('drag-over');
+          console.info('[playlist-drop] dragover', { setId, target: root.className, activeSetId });
+        });
+        root.addEventListener('dragleave', () => {
+          root.classList.remove('drag-over');
+        });
+        root.addEventListener('drop', async (event) => {
+          event.preventDefault();
+          root.classList.remove('drag-over');
+          const trackId = Number((event as DragEvent).dataTransfer?.getData('text/track-id') ?? 0);
+          appendScanLog(`Playlist drop received: set=${setId} track=${trackId || 'missing'} target=${String(root.dataset.setId ?? '')}`, trackId ? 'info' : 'warning', {
+            category: 'playlist-drop',
+            setId,
+            trackId: trackId || null,
+            target: String(root.dataset.setId ?? ''),
+            source: 'playlist-card',
           });
-          zone.addEventListener('dragleave', () => {
-            zone.classList.remove('drag-over');
+          console.info('[playlist-drop] drop received', { setId, trackId, target: root.className, activeSetId, minimized: root.querySelector<HTMLElement>(`.set-tracks-list[data-set-id="${setId}"]`)?.style.display === 'none' });
+          if (!trackId) return;
+          await addTrackToSet(trackId);
+        });
+      }
+
+      async function openSetPlaylist(
+        setId: number,
+        options: { source?: string; keepExpanded?: boolean } = {},
+      ) {
+        const setItem = setsPanel.querySelector<HTMLElement>(`.set-item[data-set-id="${setId}"]`);
+        const tracksDiv = document.getElementById(`set-tracks-${setId}`) as HTMLElement | null;
+        if (!setItem || !tracksDiv) return false;
+        const source = options.source ?? 'ui';
+        appendScanLog(`Opening playlist ${setId} from ${source}`, 'info', {
+          category: 'playlist-open',
+          setId,
+          source,
+          keepExpanded: Boolean(options.keepExpanded),
+        });
+        console.info('[playlist-open] opening', { setId, source, keepExpanded: Boolean(options.keepExpanded), activeSetId });
+        const response = await fetch(`/api/sets/${setId}`);
+        console.info('[playlist-open] fetch complete', { setId, source, status: response.status, ok: response.ok });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+          appendScanLog(`Failed to open playlist ${setId}: ${String(payload.error ?? `status ${response.status}`)}`, 'error', {
+            category: 'playlist-open',
+            setId,
+            status: response.status,
+            payload,
+            source,
           });
-          zone.addEventListener('drop', async (event) => {
-            event.preventDefault();
-            zone.classList.remove('drag-over');
-            const trackId = Number((event as DragEvent).dataTransfer?.getData('text/track-id') ?? 0);
-            if (!trackId) return;
-            await addTrackToSet(trackId);
+          showToast(String(payload.error ?? 'Could not load playlist.'), 'error');
+          return false;
+        }
+        const { set } = await response.json() as { set?: { tracks?: Record<string, unknown>[] } };
+        activeSetId = setId;
+        tracksDiv.style.display = '';
+        const tracks = Array.isArray(set?.tracks) ? set.tracks : [];
+        if (!tracks.length) {
+          tracksDiv.innerHTML = '<div class="empty" style="padding:8px 0;">Empty playlist.</div><div class="set-drop-zone" data-set-id="' + setId + '">Drop tracks here to add</div>';
+          bindSetDropZone(tracksDiv, setId);
+          return true;
+        }
+        tracksDiv.innerHTML = tracks.map((t: Record<string, unknown>) => `
+          <div class="set-track-row" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}">
+            <div>
+              <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(t.artist ?? 'Unknown')}">${esc(t.artist ?? 'Unknown')}</button> - ${esc(t.title ?? 'Untitled')}</strong>
+              <span>${albumNameFor(t) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(t))}" data-nav-artist="${esc(t.artist ?? '')}">${esc(albumNameFor(t))}</button> · ` : ''}${t.bpm ? displayBpm(t.bpm, t.id as number) + ' BPM' : '--'} · ${esc(t.key ?? '--')}</span>
+            </div>
+            <button class="icon-btn danger remove-track-btn" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}" title="Remove">✕</button>
+          </div>
+        `).join('') + `<div class="set-drop-zone" data-set-id="${setId}">Drop tracks here to add</div><div class="set-suggestions" id="set-suggestions-${setId}"><div class="scan-log-entry info">Loading intelligent suggestions…</div></div>`;
+        bindSetDropZone(setItem, setId);
+        bindLibraryNavLinks(tracksDiv);
+        tracksDiv.querySelectorAll('.remove-track-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const sid = parseInt((btn as HTMLElement).dataset.setId!, 10);
+            const entryId = String((btn as HTMLElement).dataset.entryId ?? '').trim();
+            if (!entryId) return;
+            appendScanLog(`Removing track from playlist: set=${sid} entry=${entryId}`, 'info', {
+              category: 'playlist-remove',
+              setId: sid,
+              entryId,
+            });
+            await fetch(`/api/sets/${sid}/tracks/${encodeURIComponent(entryId)}`, { method: 'DELETE' });
+            await renderSetsPanel();
           });
         });
+        const lastTrack = tracks[tracks.length - 1];
+        if (lastTrack?.id) {
+          const nextRes = await fetch(`/api/tracks/${lastTrack.id}?intent=${encodeURIComponent(nextTracksIntent)}`);
+          const nextPayload = await nextRes.json();
+          const suggestions = (nextPayload.next_tracks ?? []) as Record<string, unknown>[];
+          const container = document.getElementById(`set-suggestions-${setId}`);
+          if (container) {
+            const pageSize = 6;
+            const pageCount = Math.max(1, Math.ceil(suggestions.length / pageSize));
+            const currentPage = Math.min(setSuggestionPageBySetId[setId] ?? 0, pageCount - 1);
+            setSuggestionPageBySetId[setId] = currentPage;
+            const pageSuggestions = suggestions.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+            container.innerHTML = `
+              <div class="detail-section-head" style="margin:0 0 8px;">
+                <h4 style="margin:0;">Playlist Intelligence</h4>
+                <div class="detail-section-actions">
+                  <span class="detail-page-indicator">Page ${currentPage + 1} / ${pageCount}</span>
+                  <button type="button" class="icon-btn detail-page-btn" data-suggestion-page="prev" data-set-id="${setId}" ${currentPage === 0 ? 'disabled' : ''}>Previous</button>
+                  <button type="button" class="icon-btn detail-page-btn" data-suggestion-page="next" data-set-id="${setId}" ${currentPage >= pageCount - 1 ? 'disabled' : ''}>Next</button>
+                </div>
+              </div>
+              <div class="suggestions compact">
+                ${pageSuggestions.map((item) => `
+                  <div class="suggestion playlist-intelligence-row" data-track-id="${item.id}">
+                    <div>
+                      <strong>${esc(item.artist ?? 'Unknown')} - ${esc(item.title ?? 'Untitled')}</strong><br>
+                      <small>${esc(item.reason ?? 'Suggested')} · ${displayBpm(item.effective_bpm, item.id as number)} BPM · ${esc(item.effective_key ?? '--')}</small>
+                    </div>
+                    <button type="button" class="icon-btn intelligence-add-btn" data-track-id="${item.id}" title="Add to playlist" aria-label="Add to playlist">+</button>
+                  </div>
+                `).join('') || '<div class="empty">No recommendations available.</div>'}
+              </div>
+            `;
+            container.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
+              card.addEventListener('click', () => {
+                document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+                void selectTrack((card as HTMLElement).dataset.trackId!, false);
+              });
+            });
+            container.querySelectorAll('.intelligence-add-btn[data-track-id]').forEach((button) => {
+              button.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                const trackId = Number((button as HTMLElement).dataset.trackId ?? 0);
+                if (!trackId) return;
+                appendScanLog(`Playlist Intelligence add requested: set=${setId} track=${trackId}`, 'info', {
+                  category: 'playlist-intelligence',
+                  setId,
+                  trackId,
+                });
+                const response = await fetch(`/api/sets/${setId}/tracks`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ track_id: trackId }),
+                });
+                if (!response.ok) {
+                  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+                  appendScanLog(`Playlist Intelligence add failed: set=${setId} track=${trackId} status=${response.status} error=${String(payload.error ?? 'unknown')}`, 'error', {
+                    category: 'playlist-intelligence',
+                    setId,
+                    trackId,
+                    status: response.status,
+                    payload,
+                  });
+                  showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
+                  return;
+                }
+                appendScanLog(`Playlist Intelligence add succeeded: set=${setId} track=${trackId}`, 'success', {
+                  category: 'playlist-intelligence',
+                  setId,
+                  trackId,
+                });
+                showToast('Track added to playlist.', 'success');
+                await openSetPlaylist(setId, { source: 'playlist-intelligence', keepExpanded: true });
+              });
+            });
+            container.querySelectorAll<HTMLButtonElement>('[data-suggestion-page][data-set-id]').forEach((button) => {
+              button.addEventListener('click', () => {
+                const buttonSetId = Number(button.dataset.setId ?? 0);
+                if (buttonSetId !== setId) return;
+                const direction = button.dataset.suggestionPage === 'next' ? 1 : -1;
+                const nextPage = Math.max(0, Math.min(pageCount - 1, (setSuggestionPageBySetId[setId] ?? 0) + direction));
+                if (nextPage === setSuggestionPageBySetId[setId]) return;
+                setSuggestionPageBySetId[setId] = nextPage;
+                appendScanLog(`Playlist Intelligence page changed: set=${setId} page=${nextPage + 1}/${pageCount}`, 'info', {
+                  category: 'playlist-intelligence',
+                  setId,
+                  page: nextPage + 1,
+                  pageCount,
+                });
+                void renderSetsPanel();
+              });
+            });
+          }
+        }
+        return true;
       }
 
       setsPanel.querySelectorAll('.delete-set-btn').forEach((btn) => {
@@ -6215,6 +6320,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const tracksList = document.getElementById(`set-tracks-${setId}`);
         if (tracksList) tracksList.dataset.setId = String(setId);
       });
+      if (activeSetId !== null) {
+        const restoredSetId = activeSetId;
+        appendScanLog(`Restoring open playlist after render: set=${restoredSetId}`, 'info', {
+          category: 'playlist-open',
+          setId: restoredSetId,
+          source: 'render-restore',
+          action: 'restore',
+        });
+        void openSetPlaylist(restoredSetId, { source: 'render-restore', keepExpanded: true });
+      }
 
     }
 

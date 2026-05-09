@@ -1383,6 +1383,7 @@ body[data-list-density="compact"] .row span {
 .sets-panel { padding: 14px 16px; overflow: auto; min-height: 0; }
 .set-item { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 6px; background: rgba(255,255,255,0.02); transition: border-color 0.1s; }
 .set-item:hover { border-color: var(--line2); }
+.set-item.drag-over { border-color: rgba(255, 108, 0, 0.55); background: rgba(255, 108, 0, 0.08); }
 .set-item-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; cursor: pointer; }
 .set-item-head strong { font-size: 13px; font-weight: 500; }
 .set-item-meta { color: var(--muted); font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; }
@@ -1400,7 +1401,8 @@ body[data-list-density="compact"] .row span {
 }
 .set-drop-zone.drag-over,
 .set-item-head.drag-over,
-.set-tracks-list.drag-over {
+.set-tracks-list.drag-over,
+.set-item.drag-over {
   border-color: rgba(255, 108, 0, 0.55);
   background: rgba(255, 108, 0, 0.08);
   color: var(--text);
