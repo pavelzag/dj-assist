@@ -6,7 +6,11 @@ import {
   getClientId,
   getGoogleDriveAccessToken,
 } from '@/lib/runtime-settings';
-import { collectFolderTree, listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
+import {
+  collectFolderTree,
+  isIgnoredGoogleDriveAudioFileName,
+  listGoogleDriveAudioFiles,
+} from '@/lib/google-drive-files';
 import {
   getTracksByPaths,
   importGoogleDriveTracks,
@@ -386,6 +390,26 @@ export async function POST(request: NextRequest) {
       );
     } while (nextPageToken && localFiles.length < maxFiles);
 
+    const filteredLocalFiles = localFiles.filter((file) => !isIgnoredGoogleDriveAudioFileName(file.name));
+    const ignoredLocalFiles = localFiles.length - filteredLocalFiles.length;
+    if (ignoredLocalFiles > 0) {
+      logGoogleDriveImport('info', 'ignored_non_audio_files_filtered', {
+        ignored: ignoredLocalFiles,
+        totalBufferedBeforeFilter: localFiles.length,
+        totalBufferedAfterFilter: filteredLocalFiles.length,
+      });
+      await logGoogleDriveProgress(
+        'info',
+        `Filtered ${ignoredLocalFiles} ignored non-audio file${ignoredLocalFiles === 1 ? '' : 's'} from the Google Drive import buffer.`,
+        {
+          event: 'ignored_non_audio_files_filtered',
+          ignored: ignoredLocalFiles,
+          totalBufferedBeforeFilter: localFiles.length,
+          totalBufferedAfterFilter: filteredLocalFiles.length,
+        },
+      );
+    }
+
     const purgedIgnoredTracks = await purgeIgnoredGoogleDriveTracks();
     if (purgedIgnoredTracks > 0) {
       logGoogleDriveImport('info', 'purged_ignored_tracks', {
@@ -402,21 +426,21 @@ export async function POST(request: NextRequest) {
     }
 
     const localImport = await importGoogleDriveTracks({
-      files: localFiles,
+      files: filteredLocalFiles,
       folderId: folderId || undefined,
       folderName: folderName || undefined,
     });
     logGoogleDriveImport('info', 'local_import_completed', {
-      totalBuffered: localFiles.length,
+      totalBuffered: filteredLocalFiles.length,
       localImported: localImport.imported,
       localUpdated: localImport.updated,
     });
     await logGoogleDriveProgress(
       'info',
-      `Local Google Drive import completed: ${localImport.imported} added, ${localImport.updated} updated from ${localFiles.length} buffered files.`,
+      `Local Google Drive import completed: ${localImport.imported} added, ${localImport.updated} updated from ${filteredLocalFiles.length} buffered files.`,
       {
         event: 'local_import_completed',
-        totalBuffered: localFiles.length,
+        totalBuffered: filteredLocalFiles.length,
         localImported: localImport.imported,
         localUpdated: localImport.updated,
       },
@@ -425,18 +449,18 @@ export async function POST(request: NextRequest) {
     let localMetadataEnriched = 0;
     let localMetadataFailed = 0;
     let localAlbumArtReused = 0;
-    for (let index = 0; index < localFiles.length; index += 1) {
-      const file = localFiles[index];
+    for (let index = 0; index < filteredLocalFiles.length; index += 1) {
+      const file = filteredLocalFiles[index];
       const fileId = String(file.id ?? '').trim();
       if (!fileId) continue;
       try {
         await logGoogleDriveProgress(
           'info',
-          `Reading embedded metadata ${index + 1}/${localFiles.length}: ${file.name}`,
+          `Reading embedded metadata ${index + 1}/${filteredLocalFiles.length}: ${file.name}`,
           {
             event: 'local_metadata_started',
             index: index + 1,
-            total: localFiles.length,
+            total: filteredLocalFiles.length,
             fileId,
             name: file.name,
           },
@@ -470,7 +494,7 @@ export async function POST(request: NextRequest) {
         localMetadataEnriched += 1;
         logGoogleDriveImport('info', 'local_metadata_completed', {
           index: index + 1,
-          total: localFiles.length,
+          total: filteredLocalFiles.length,
           fileId,
           name: file.name,
           cached: localFile.cached,
@@ -503,7 +527,7 @@ export async function POST(request: NextRequest) {
           {
             event: 'local_metadata_failed',
             index: index + 1,
-            total: localFiles.length,
+            total: filteredLocalFiles.length,
             fileId,
             name: file.name,
             error: message,
@@ -518,7 +542,7 @@ export async function POST(request: NextRequest) {
         event: 'local_metadata_summary',
         succeeded: localMetadataEnriched,
         failed: localMetadataFailed,
-        total: localFiles.length,
+        total: filteredLocalFiles.length,
         albumArtReused: localAlbumArtReused,
       },
     );
@@ -527,12 +551,12 @@ export async function POST(request: NextRequest) {
       'Syncing imported Google Drive metadata to the server…',
       {
         event: 'server_import_started',
-        total: localFiles.length,
+        total: filteredLocalFiles.length,
         folderId: folderId || null,
         folderName: folderName || null,
       },
     );
-    let syncedTracks = await getTracksByPaths(localFiles.map((file) => `gdrive:${String(file.id ?? '').trim()}`));
+    let syncedTracks = await getTracksByPaths(filteredLocalFiles.map((file) => `gdrive:${String(file.id ?? '').trim()}`));
     const artworkRefresh = await reanalyzeImportedArtwork({
       tracks: syncedTracks,
       port: process.env.PORT ?? '3000',
@@ -568,7 +592,7 @@ export async function POST(request: NextRequest) {
         },
       );
     }
-    syncedTracks = await getTracksByPaths(localFiles.map((file) => `gdrive:${String(file.id ?? '').trim()}`));
+    syncedTracks = await getTracksByPaths(filteredLocalFiles.map((file) => `gdrive:${String(file.id ?? '').trim()}`));
     const uploadResult = await uploadTracksToServer({
       serverUrl,
       googleIdToken: String(userData.google_id_token ?? '').trim() || undefined,
@@ -602,7 +626,7 @@ export async function POST(request: NextRequest) {
         accepted: true,
         ok: true,
         tracks_received: uploadResult.tracksReceived,
-        drive_files_scanned: localFiles.length,
+        drive_files_scanned: filteredLocalFiles.length,
         folder_id: folderId || null,
         fallback_download_scan: fallbackDownloadScan,
         local_tracks_imported: localImport.imported,

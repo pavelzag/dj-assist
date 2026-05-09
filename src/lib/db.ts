@@ -10,6 +10,7 @@ import {
   syncCollectionDeletion,
   syncCollectionSnapshot,
 } from '@/lib/server-collections';
+import { isIgnoredGoogleDriveAudioFileName } from '@/lib/google-drive-files';
 import { parseTrackSearchQuery } from '@/lib/track-search';
 
 declare global {
@@ -1258,7 +1259,7 @@ export async function importGoogleDriveTracks(input: {
   const files = input.files.filter((file) => {
     const fileId = String(file.id ?? '').trim();
     const name = String(file.name ?? '').trim();
-    return fileId && !name.startsWith('._');
+    return fileId && !isIgnoredGoogleDriveAudioFileName(name);
   });
   if (!files.length) return { imported: 0, updated: 0 };
   let imported = 0;
