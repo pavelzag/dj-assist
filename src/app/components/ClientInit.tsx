@@ -193,6 +193,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
     const playlistDropBindings = new WeakMap<HTMLElement, number>();
+    const playlistHeaderClickSuppressionUntil = new Map<number, number>();
     let activeQuickFilter = '';
     let preScanTrackIds = new Set<number>();
     let hasScanBaseline = false;
@@ -3430,13 +3431,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void fetch('/api/logs/client', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
         body: JSON.stringify({
           message,
           level,
           category,
           context,
         }),
-      }).catch(() => {});
+      }).catch((error) => {
+        console.warn('[frontend-log] failed to persist log entry', {
+          message,
+          level,
+          category,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
 
     function appendScanLog(
@@ -6020,7 +6029,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     // ── Sets panel ────────────────────────────────────────────────────────────
     async function loadSets() {
-      const res = await fetch('/api/sets');
+      const res = await fetch('/api/sets', { cache: 'no-store' });
       const data = await res.json();
       sets = data.sets ?? [];
     }
@@ -6062,6 +6071,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         head.addEventListener('click', async (e) => {
           if ((e.target as HTMLElement).closest('.delete-set-btn')) return;
           const setId = parseInt((head as HTMLElement).dataset.setId!, 10);
+          const suppressUntil = playlistHeaderClickSuppressionUntil.get(setId) ?? 0;
+          if (Date.now() < suppressUntil) {
+            appendScanLog(`Playlist header click ignored after drop: set=${setId}`, 'info', {
+              category: 'playlist-open',
+              setId,
+              source: 'header-click',
+              action: 'suppressed-after-drop',
+              suppressUntil,
+            });
+            return;
+          }
           const tracksDiv = document.getElementById(`set-tracks-${setId}`)!;
           if (tracksDiv.style.display !== 'none') {
             appendScanLog(`Playlist collapsed: set=${setId}`, 'info', {
@@ -6090,6 +6110,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             trackId,
             source: 'drag-drop',
           });
+          playlistHeaderClickSuppressionUntil.set(setId, Date.now() + 1200);
           console.info('[playlist-drop] add requested', { setId, trackId, source: 'drag-drop', activeSetId, rootId: root.dataset.setId ?? '' });
           const response = await fetch(`/api/sets/${setId}/tracks`, {
             method: 'POST',
@@ -6144,6 +6165,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           if (!trackId) return;
           await addTrackToSet(trackId);
         });
+        root.addEventListener('click', (event) => {
+          const suppressUntil = playlistHeaderClickSuppressionUntil.get(setId) ?? 0;
+          if (Date.now() >= suppressUntil) return;
+          event.preventDefault();
+          event.stopPropagation();
+          appendScanLog(`Playlist click suppressed after drop: set=${setId}`, 'info', {
+            category: 'playlist-open',
+            setId,
+            source: 'card-click',
+            action: 'suppressed-after-drop',
+            suppressUntil,
+          });
+          console.info('[playlist-open] click suppressed after drop', { setId, suppressUntil, activeSetId });
+        }, true);
       }
 
       async function openSetPlaylist(
@@ -6161,7 +6196,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           keepExpanded: Boolean(options.keepExpanded),
         });
         console.info('[playlist-open] opening', { setId, source, keepExpanded: Boolean(options.keepExpanded), activeSetId });
-        const response = await fetch(`/api/sets/${setId}`);
+        const response = await fetch(`/api/sets/${setId}`, { cache: 'no-store' });
         console.info('[playlist-open] fetch complete', { setId, source, status: response.status, ok: response.ok });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -6179,6 +6214,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         activeSetId = setId;
         tracksDiv.style.display = '';
         const tracks = Array.isArray(set?.tracks) ? set.tracks : [];
+        appendScanLog(`Playlist loaded: set=${setId} tracks=${tracks.length} source=${source}`, 'info', {
+          category: 'playlist-open',
+          setId,
+          source,
+          trackCount: tracks.length,
+        });
         if (!tracks.length) {
           tracksDiv.innerHTML = '<div class="empty" style="padding:8px 0;">Empty playlist.</div><div class="set-drop-zone" data-set-id="' + setId + '">Drop tracks here to add</div>';
           bindSetDropZone(tracksDiv, setId);
@@ -6280,6 +6321,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   setId,
                   trackId,
                 });
+                playlistHeaderClickSuppressionUntil.set(setId, Date.now() + 1200);
                 showToast('Track added to playlist.', 'success');
                 await openSetPlaylist(setId, { source: 'playlist-intelligence', keepExpanded: true });
               });

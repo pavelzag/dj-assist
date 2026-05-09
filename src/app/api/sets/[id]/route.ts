@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSetById, deleteSet, syncSetsFromServer } from '@/lib/db';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(
   _request: NextRequest,

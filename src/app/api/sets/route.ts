@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllSets, createSet, syncSetsFromServer } from '@/lib/db';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   await syncSetsFromServer().catch(() => ({ collections: 0, imported: 0, updated: 0, matched_tracks: 0 }));
