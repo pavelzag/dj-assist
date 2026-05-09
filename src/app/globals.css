@@ -561,6 +561,108 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   align-items: center;
   flex-wrap: wrap;
 }
+.google-drive-import-banner {
+  margin: 10px 0 0;
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line2);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)),
+    radial-gradient(circle at top right, rgba(255,108,0,0.12), transparent 35%);
+}
+.google-drive-import-banner[hidden] {
+  display: none;
+}
+.google-drive-import-banner[data-state="discovering"] {
+  border-color: rgba(255, 184, 107, 0.28);
+}
+.google-drive-import-banner[data-state="enriching"],
+.google-drive-import-banner[data-state="importing"],
+.google-drive-import-banner[data-state="syncing"] {
+  border-color: rgba(255, 108, 0, 0.32);
+}
+.google-drive-import-banner[data-state="complete"] {
+  border-color: rgba(86, 204, 140, 0.28);
+}
+.google-drive-import-banner[data-state="error"] {
+  border-color: rgba(255, 107, 107, 0.28);
+}
+.google-drive-import-banner-summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  cursor: pointer;
+}
+.google-drive-import-banner-summary::-webkit-details-marker {
+  display: none;
+}
+.google-drive-import-banner-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.google-drive-import-banner-copy strong,
+.google-drive-import-banner-metrics strong {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.google-drive-import-banner-copy span,
+.google-drive-import-banner-metrics span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.google-drive-import-banner-copy span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.google-drive-import-banner-metrics {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  text-align: right;
+}
+.google-drive-import-banner-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.google-drive-import-banner-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.03);
+  color: var(--muted);
+  font-size: 11px;
+}
+.google-drive-import-banner-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.google-drive-import-banner-detail-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.02);
+}
+.google-drive-import-banner-detail-item span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.google-drive-import-banner-detail-item strong {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .browse-scope-empty,
 .browse-scope-label {
   color: var(--muted);
@@ -2017,6 +2119,9 @@ body[data-list-density="compact"] .row span {
   .scan-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .scan-progress.inline { min-width: 100%; flex-basis: 100%; }
   .scan-progress-file { max-width: 100%; }
+  .google-drive-import-banner-summary { flex-direction: column; }
+  .google-drive-import-banner-metrics { justify-items: start; text-align: left; }
+  .google-drive-import-banner-detail-grid { grid-template-columns: 1fr; }
   .add-music-source-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
   .add-music-source-option { grid-template-columns: 1fr; text-align: center; justify-items: center; }
   .add-music-source-option-copy { justify-items: center; }

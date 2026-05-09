@@ -365,7 +365,7 @@ export async function POST(request: NextRequest) {
         accessToken,
         folderId: folderId || undefined,
         allFolderIds,
-        limit: Math.min(200, maxFiles - localFiles.length),
+        limit: maxFiles - localFiles.length,
         pageToken: nextPageToken ?? undefined,
       });
       pagesFetched += 1;

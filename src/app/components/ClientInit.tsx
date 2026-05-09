@@ -28,6 +28,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const bpmMaxEl = document.getElementById('bpm-max') as HTMLInputElement;
     const keyFilterEl = document.getElementById('key-filter') as HTMLInputElement;
     const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement | null;
+    const showPendingGoogleDriveImportsEl = document.getElementById('show-pending-google-drive-imports') as HTMLInputElement | null;
     const hideUnknownArtistsEl = document.getElementById('hide-unknown-artists') as HTMLInputElement;
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement | null;
     const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
@@ -261,6 +262,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportStageCurrent = 0;
     let googleDriveImportStageTotal = 0;
     let googleDriveImportStageMeta = 'No import running';
+    let googleDriveImportScopeLabel = 'All audio files in Google Drive';
+    let googleDriveImportStatusMessage = 'Ready to import.';
+    let googleDriveImportStatusState: 'idle' | 'saving' | 'success' | 'error' = 'idle';
+    let googleDriveImportFailedCount = 0;
     let serverAccountSession: Record<string, unknown> | null = null;
     let serverEntitlements = new Set<string>();
     let serverDeviceRegistrationAttempted = false;
@@ -517,6 +522,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         bpmMaxEl.value ||
         keyFilterEl.value ||
         showOnlyNoBpmEl?.checked ||
+        showPendingGoogleDriveImportsEl?.checked ||
         hideUnknownArtistsEl.checked ||
         activeQuickFilter ||
         activeArtistScope ||
@@ -530,6 +536,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       bpmMaxEl.value = '';
       keyFilterEl.value = '';
       if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
+      if (showPendingGoogleDriveImportsEl) showPendingGoogleDriveImportsEl.checked = false;
       hideUnknownArtistsEl.checked = false;
       activeQuickFilter = '';
       activeArtistScope = '';
@@ -699,6 +706,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const total = Number(context.totalBuffered ?? 0);
         const added = Number(context.localImported ?? 0);
         const updated = Number(context.localUpdated ?? 0);
+        googleDriveImportFailedCount = 0;
         setGoogleDriveImportStageState({
           stage: 'importing',
           label: 'Saving Drive entries locally',
@@ -715,6 +723,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const total = Number(context.total ?? 0);
         const succeeded = Number(context.succeeded ?? 0);
         const failed = Number(context.failed ?? 0);
+        googleDriveImportFailedCount = failed;
         setGoogleDriveImportStageState({
           stage: 'enriching',
           label: 'Embedded metadata complete',
@@ -728,6 +737,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
 
       if (event === 'started') {
+        googleDriveImportFailedCount = 0;
         setGoogleDriveImportStageState({
           stage: 'discovering',
           label: 'Starting Google Drive import',
@@ -1039,21 +1049,37 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return scanSourceMode === 'google_drive' ? 'Import from Google Drive' : 'Start Scan';
     }
 
+    function isScanActionBusy() {
+      return activeScanStatus === 'queued' || activeScanStatus === 'running' || googleDriveImportBusy;
+    }
+
     function isGoogleDriveTrackPath(path: string) {
       return String(path ?? '').trim().startsWith('gdrive:');
     }
 
     function syncAddMusicUi() {
       const chooseLabel = 'Add Music';
+      const scanBusy = isScanActionBusy();
+      const busyTitle = scanSourceMode === 'google_drive'
+        ? 'An import is already running.'
+        : 'A scan is already running.';
       if (quickChooseFolderBtn) quickChooseFolderBtn.textContent = chooseLabel;
-      if (quickStartScanBtn) quickStartScanBtn.textContent = addMusicStartLabel();
+      if (quickStartScanBtn) {
+        quickStartScanBtn.textContent = addMusicStartLabel();
+        quickStartScanBtn.disabled = scanBusy;
+        quickStartScanBtn.title = scanBusy ? busyTitle : '';
+      }
       for (const id of ['empty-choose-folder-btn', 'list-empty-choose-folder-btn']) {
         const button = document.getElementById(id) as HTMLButtonElement | null;
         if (button) button.textContent = chooseLabel;
       }
       for (const id of ['empty-start-scan-btn', 'list-empty-start-scan-btn', 'startup-empty-start-scan-btn']) {
         const button = document.getElementById(id) as HTMLButtonElement | null;
-        if (button) button.textContent = addMusicStartLabel();
+        if (button) {
+          button.textContent = addMusicStartLabel();
+          button.disabled = scanBusy;
+          button.title = scanBusy ? busyTitle : '';
+        }
       }
       const googleDriveBtn = document.getElementById('add-music-source-google-drive-btn') as HTMLButtonElement | null;
       const googleDriveCopy = googleDriveBtn?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
@@ -1069,10 +1095,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function setGoogleDriveImportStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      googleDriveImportStatusMessage = message;
+      googleDriveImportStatusState = state;
       const statusEl = document.getElementById('google-drive-import-status') as HTMLElement | null;
-      if (!statusEl) return;
-      statusEl.textContent = message;
-      statusEl.dataset.state = state;
+      if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.dataset.state = state;
+      }
+      const bannerStatusEl = document.getElementById('google-drive-import-banner-status') as HTMLElement | null;
+      if (bannerStatusEl) {
+        bannerStatusEl.textContent = message;
+        bannerStatusEl.dataset.state = state;
+      }
     }
 
     function setGoogleDriveImportStageState(input: {
@@ -1099,10 +1133,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       googleDriveImportStageCurrent = 0;
       googleDriveImportStageTotal = 0;
       googleDriveImportStageMeta = 'No import running';
+      googleDriveImportScopeLabel = 'All audio files in Google Drive';
+      googleDriveImportFailedCount = 0;
+      googleDriveImportStatusMessage = 'Ready to import.';
+      googleDriveImportStatusState = 'idle';
       syncGoogleDriveImportProgressUi();
     }
 
     function syncGoogleDriveImportProgressUi() {
+      const { recognized, pending, failed } = googleDriveRecognitionSummary();
+      const recognitionLabel = failed > 0
+        ? `${recognized} recognized · ${pending} pending · ${failed} failed`
+        : `${recognized} recognized · ${pending} pending`;
       const cardEl = document.getElementById('google-drive-import-progress-card') as HTMLElement | null;
       const labelEl = document.getElementById('google-drive-import-stage-label') as HTMLElement | null;
       const detailEl = document.getElementById('google-drive-import-stage-detail') as HTMLElement | null;
@@ -1111,11 +1153,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const countEl = document.getElementById('google-drive-import-stage-count') as HTMLElement | null;
       const scopeEl = document.getElementById('google-drive-import-stage-scope') as HTMLElement | null;
       const modeEl = document.getElementById('google-drive-import-stage-mode') as HTMLElement | null;
+      const bannerEl = document.getElementById('google-drive-import-banner') as HTMLDetailsElement | null;
+      const bannerLabelEl = document.getElementById('google-drive-import-banner-label') as HTMLElement | null;
+      const bannerDetailEl = document.getElementById('google-drive-import-banner-detail') as HTMLElement | null;
+      const bannerCountEl = document.getElementById('google-drive-import-banner-count') as HTMLElement | null;
+      const bannerRecognitionEl = document.getElementById('google-drive-import-banner-recognition') as HTMLElement | null;
+      const bannerBarEl = document.getElementById('google-drive-import-banner-bar') as HTMLElement | null;
+      const bannerStageEl = document.getElementById('google-drive-import-banner-stage') as HTMLElement | null;
+      const bannerStageMetaEl = document.getElementById('google-drive-import-banner-stage-meta') as HTMLElement | null;
+      const bannerScopeEl = document.getElementById('google-drive-import-banner-scope') as HTMLElement | null;
+      const bannerProgressEl = document.getElementById('google-drive-import-banner-progress') as HTMLElement | null;
+      const bannerRecognitionDetailEl = document.getElementById('google-drive-import-banner-recognition-detail') as HTMLElement | null;
       if (cardEl) cardEl.dataset.state = googleDriveImportStage;
       if (labelEl) labelEl.textContent = googleDriveImportStageLabel;
       if (detailEl) detailEl.textContent = googleDriveImportStageDetail;
       if (metaEl) metaEl.textContent = googleDriveImportStageMeta;
-      if (scopeEl) scopeEl.textContent = selectedGoogleDriveFolderLabel();
+      if (scopeEl) scopeEl.textContent = googleDriveImportScopeLabel;
       if (modeEl) {
         modeEl.textContent = googleDriveImportStageTotal > 0
           ? 'Measured progress'
@@ -1138,6 +1191,35 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           : googleDriveImportBusy
             ? 'Working…'
             : '--';
+      }
+      if (bannerEl) {
+        bannerEl.hidden = googleDriveImportStage === 'idle' && !googleDriveImportBusy;
+        bannerEl.dataset.state = googleDriveImportStage;
+      }
+      if (bannerLabelEl) bannerLabelEl.textContent = googleDriveImportStageLabel;
+      if (bannerDetailEl) bannerDetailEl.textContent = googleDriveImportStageDetail;
+      if (bannerCountEl) {
+        bannerCountEl.textContent = googleDriveImportStageTotal > 0
+          ? `${googleDriveImportStageCurrent} / ${googleDriveImportStageTotal}`
+          : googleDriveImportBusy
+            ? 'Working…'
+            : '--';
+      }
+      if (bannerRecognitionEl) bannerRecognitionEl.textContent = recognitionLabel;
+      if (bannerStageEl) bannerStageEl.textContent = googleDriveImportStageLabel;
+      if (bannerStageMetaEl) bannerStageMetaEl.textContent = googleDriveImportStageMeta;
+      if (bannerScopeEl) bannerScopeEl.textContent = googleDriveImportScopeLabel;
+      if (bannerProgressEl) {
+        bannerProgressEl.textContent = googleDriveImportStageTotal > 0
+          ? `${googleDriveImportStageCurrent} / ${googleDriveImportStageTotal}`
+          : googleDriveImportBusy
+            ? 'Working…'
+            : '--';
+      }
+      if (bannerRecognitionDetailEl) bannerRecognitionDetailEl.textContent = recognitionLabel;
+      if (bannerBarEl) {
+        bannerBarEl.style.width = `${percent}%`;
+        bannerBarEl.dataset.indeterminate = googleDriveImportStageTotal > 0 ? 'false' : (googleDriveImportBusy ? 'true' : 'false');
       }
     }
 
@@ -1526,6 +1608,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         total: 0,
         meta: 'Preparing the import pipeline',
       });
+      googleDriveImportScopeLabel = selectedGoogleDriveFolderLabel();
+      googleDriveImportFailedCount = 0;
       startGoogleDriveImportProgressPolling();
       const button = document.getElementById('google-drive-import-btn') as HTMLButtonElement | null;
       if (button) {
@@ -2619,6 +2703,31 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return Number.isFinite(bitrate) && bitrate > 192;
     }
 
+    function isPendingGoogleDriveRecognition(track: Record<string, unknown>): boolean {
+      const path = String(track.path ?? '').trim();
+      const analysisStatus = String(track.analysis_status ?? '').trim();
+      return path.startsWith('gdrive:') && analysisStatus === 'google_drive_metadata';
+    }
+
+    function isGoogleDriveTrack(track: Record<string, unknown>): boolean {
+      return String(track.path ?? '').trim().startsWith('gdrive:');
+    }
+
+    function googleDriveRecognitionSummary() {
+      const pendingGlobal = tracks.filter((track) => isGoogleDriveTrack(track) && isPendingGoogleDriveRecognition(track)).length;
+      if (googleDriveImportStageTotal > 0) {
+        const pending = Math.min(googleDriveImportStageTotal, pendingGlobal);
+        const failed = Math.min(googleDriveImportStageTotal, Math.max(0, googleDriveImportFailedCount));
+        const recognized = Math.max(0, googleDriveImportStageTotal - pending - failed);
+        return { recognized, pending, failed };
+      }
+      return {
+        recognized: tracks.filter((track) => isGoogleDriveTrack(track) && !isPendingGoogleDriveRecognition(track)).length,
+        pending: pendingGlobal,
+        failed: Math.max(0, googleDriveImportFailedCount),
+      };
+    }
+
     function matchesQuickFilter(track: Record<string, unknown>): boolean {
       switch (activeQuickFilter) {
         case 'new':
@@ -2696,6 +2805,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
 
       if (showOnlyNoBpmEl?.checked && hasBpm(track)) return false;
+      if (!showPendingGoogleDriveImportsEl?.checked && isPendingGoogleDriveRecognition(track)) return false;
       if (hideUnknownArtistsEl.checked && isUnknownArtistName(track.artist)) return false;
       return true;
     }
@@ -2928,6 +3038,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       scanStatusEl.textContent = message;
       scanStatusEl.dataset.state = state;
       updateDesktopStatusBadge();
+      syncAddMusicUi();
     }
 
     function updateDesktopStatusBadge() {
@@ -5143,6 +5254,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           bpmMaxEl.value = '';
           keyFilterEl.value = '';
           if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
+          if (showPendingGoogleDriveImportsEl) showPendingGoogleDriveImportsEl.checked = false;
           hideUnknownArtistsEl.checked = false;
           activeQuickFilter = '';
           renderQuickFilters();
@@ -6562,8 +6674,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
             <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist. Imported Drive items are added to the Songs list locally and synced to the server.</div>
-            <div class="scan-preflight">Selected scope: ${esc(selectedGoogleDriveFolderLabel())}</div>
-            <div class="scan-preflight" id="google-drive-import-status" data-state="idle">${esc(googleDriveRuntimeLabel())}</div>
+            <div class="scan-preflight">Selected scope: ${esc(googleDriveImportStage === 'idle' ? selectedGoogleDriveFolderLabel() : googleDriveImportScopeLabel)}</div>
+            <div class="scan-preflight" id="google-drive-import-status" data-state="${esc(googleDriveImportStatusState)}">${esc(googleDriveImportStage === 'idle' ? googleDriveRuntimeLabel() : googleDriveImportStatusMessage)}</div>
             <div class="google-drive-import-progress-card" id="google-drive-import-progress-card" data-state="${esc(googleDriveImportStage)}">
               <div class="google-drive-import-progress-head">
                 <div>
@@ -6583,7 +6695,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <div class="google-drive-import-progress-meta">
                 <span id="google-drive-import-stage-meta">${esc(googleDriveImportStageMeta)}</span>
                 <span id="google-drive-import-stage-mode">${googleDriveImportStageTotal > 0 ? 'Measured progress' : (googleDriveImportBusy ? 'Stage progress' : 'Waiting')}</span>
-                <span id="google-drive-import-stage-scope">${esc(selectedGoogleDriveFolderLabel())}</span>
+                <span id="google-drive-import-stage-scope">${esc(googleDriveImportScopeLabel)}</span>
               </div>
             </div>
             <div class="scan-preflight subtle">Detailed import events are shown in Activity.</div>
@@ -7097,6 +7209,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         bpmMaxEl.value = '';
         keyFilterEl.value = '';
         if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
+        if (showPendingGoogleDriveImportsEl) showPendingGoogleDriveImportsEl.checked = false;
         hideUnknownArtistsEl.checked = false;
         renderBrowseScope();
         renderQuickFilters();
@@ -7657,6 +7770,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       updateDuplicateTrackIdsFromTracks(tracks);
       refreshMetadataSuggestionLists();
       updateRecentNewTrackIdsFromTracks(tracks);
+      syncGoogleDriveImportProgressUi();
       for (const id of [...selectedTrackIds]) {
         if (!tracks.some((track) => Number(track.id) === id)) selectedTrackIds.delete(id);
       }
@@ -8047,8 +8161,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void loadTracks(searchEl.value.trim());
     });
     showOnlyNoBpmEl?.addEventListener('change', () => loadTracks(searchEl.value.trim()));
+    showPendingGoogleDriveImportsEl?.addEventListener('change', () => {
+      renderList(tracks);
+      ensureActiveTrackSelection();
+    });
     hideUnknownArtistsEl.addEventListener('change', () => {
       renderList(tracks);
+      ensureActiveTrackSelection();
       if (selectedDetailTrackId != null) {
         void refreshSelectedTrackRecommendations({ resetPage: true });
       }
