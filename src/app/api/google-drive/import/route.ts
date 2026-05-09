@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import {
   effectiveServerSettings,
@@ -27,7 +30,76 @@ import { fetchServerEntitlements } from '@/lib/server-account';
 export const runtime = 'nodejs';
 const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
 const IMPORT_REANALYZE_ART_TIMEOUT_MS = 45_000;
+const CHECKPOINT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const execFileAsync = promisify(execFile);
+
+// Checkpoint ----------------------------------------------------------------
+
+type DriveFileEntry = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string | null;
+  modifiedTime?: string | null;
+  md5Checksum?: string | null;
+};
+
+type ImportCheckpoint = {
+  version: 1;
+  createdAt: string;
+  scopeKey: string;
+  fileList: DriveFileEntry[];
+  completedLocalMetadata: string[];
+};
+
+function gdriveImportCheckpointPath(): string {
+  const configDir = process.env.DJ_ASSIST_CONFIG_DIR?.trim() || path.join(homedir(), '.dj_assist');
+  return path.join(configDir, 'gdrive-import-checkpoint.json');
+}
+
+function importScopeKey(folderId: string, folderIds: string[], maxFiles: number): string {
+  const folders = folderIds.length > 0 ? [...folderIds].sort().join(',') : (folderId || 'all');
+  return `${folders}::${maxFiles}`;
+}
+
+async function loadImportCheckpoint(scopeKey: string): Promise<ImportCheckpoint | null> {
+  try {
+    const raw = await fs.readFile(gdriveImportCheckpointPath(), 'utf-8');
+    const data = JSON.parse(raw) as ImportCheckpoint;
+    if (data.version !== 1 || data.scopeKey !== scopeKey) return null;
+    if (Date.now() - new Date(data.createdAt).getTime() > CHECKPOINT_MAX_AGE_MS) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function saveImportCheckpoint(checkpoint: ImportCheckpoint): Promise<void> {
+  const filePath = gdriveImportCheckpointPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(checkpoint), 'utf-8');
+}
+
+async function markCheckpointFileComplete(scopeKey: string, fileId: string): Promise<void> {
+  try {
+    const checkpoint = await loadImportCheckpoint(scopeKey);
+    if (!checkpoint) return;
+    if (!checkpoint.completedLocalMetadata.includes(fileId)) {
+      checkpoint.completedLocalMetadata.push(fileId);
+      await saveImportCheckpoint(checkpoint);
+    }
+  } catch {
+    // Best-effort — checkpoint writes must not abort the import
+  }
+}
+
+async function clearImportCheckpoint(): Promise<void> {
+  try {
+    await fs.unlink(gdriveImportCheckpointPath());
+  } catch {
+    // File may not exist — that's fine
+  }
+}
 
 function logGoogleDriveImport(
   level: 'info' | 'warn' | 'error',
@@ -303,6 +375,10 @@ export async function POST(request: NextRequest) {
       Math.max(Math.trunc(Number(body.fallbackDownloadLimit ?? 100) || 100), 1),
       500,
     );
+    const forceRestart = Boolean(body.forceRestart);
+    const scopeKey = importScopeKey(folderId, folderIds, maxFiles);
+    const savedCheckpoint = forceRestart ? null : await loadImportCheckpoint(scopeKey);
+    const resuming = savedCheckpoint !== null;
     const { accessToken, userData } = await getGoogleDriveAccessToken();
     const clientId = await getClientId();
     const server = await effectiveServerSettings();
@@ -322,92 +398,121 @@ export async function POST(request: NextRequest) {
       fallbackDownloadScan,
       fallbackDownloadLimit: fallbackDownloadScan ? fallbackDownloadLimit : null,
       serverUrl,
+      resuming,
     });
     await logGoogleDriveProgress(
       'info',
-      `Google Drive import backend started for ${folderName || folderId || 'all audio files'} (max ${maxFiles} files).`,
+      resuming
+        ? `Resuming Google Drive import for ${folderName || folderId || 'all audio files'} — ${savedCheckpoint!.completedLocalMetadata.length} of ${savedCheckpoint!.fileList.length} files already processed.`
+        : `Google Drive import backend started for ${folderName || folderId || 'all audio files'} (max ${maxFiles} files).`,
       {
-        event: 'started',
+        event: resuming ? 'checkpoint_resume' : 'started',
         folderId: folderId || null,
         folderName: folderName || null,
         maxFiles,
         fallbackDownloadScan,
         fallbackDownloadLimit: fallbackDownloadScan ? fallbackDownloadLimit : null,
+        ...(resuming ? {
+          completedCount: savedCheckpoint!.completedLocalMetadata.length,
+          totalInList: savedCheckpoint!.fileList.length,
+        } : {}),
       },
     );
 
-    // Collect the full folder subtree for all selected root folders so that
-    // audio files in subfolders are included (Drive API only queries direct parents).
-    let allFolderIds: string[] | undefined;
-    if (folderIds.length > 0) {
-      const merged = new Set<string>();
-      for (const rootId of folderIds) {
-        const tree = await collectFolderTree({ accessToken, rootFolderId: rootId });
-        tree.forEach((id) => merged.add(id));
-      }
-      allFolderIds = [...merged];
-      logGoogleDriveImport('info', 'folder_tree_collected', {
-        rootFolderIds: folderIds,
-        totalFolders: allFolderIds.length,
-      });
-      await logGoogleDriveProgress(
-        'info',
-        `Folder tree collected: ${allFolderIds.length} folder${allFolderIds.length === 1 ? '' : 's'} across ${folderIds.length} root${folderIds.length === 1 ? '' : 's'}.`,
-        { event: 'folder_tree_collected', rootFolderIds: folderIds, totalFolders: allFolderIds.length },
-      );
-    }
+    let filteredLocalFiles: DriveFileEntry[];
+    let activeCheckpoint: ImportCheckpoint;
 
-    const localFiles: Awaited<ReturnType<typeof listGoogleDriveAudioFiles>>['files'] = [];
-    let nextPageToken: string | null = null;
-    let pagesFetched = 0;
-    do {
-      const page = await listGoogleDriveAudioFiles({
-        accessToken,
-        folderId: folderId || undefined,
-        allFolderIds,
-        limit: maxFiles - localFiles.length,
-        pageToken: nextPageToken ?? undefined,
+    if (resuming) {
+      filteredLocalFiles = savedCheckpoint!.fileList;
+      activeCheckpoint = savedCheckpoint!;
+      logGoogleDriveImport('info', 'checkpoint_resume', {
+        completedCount: activeCheckpoint.completedLocalMetadata.length,
+        totalInList: filteredLocalFiles.length,
       });
-      pagesFetched += 1;
-      localFiles.push(...page.files);
-      nextPageToken = page.nextPageToken;
-      logGoogleDriveImport('info', 'drive_page_loaded', {
-        page: pagesFetched,
-        fetchedThisPage: page.files.length,
-        totalBuffered: localFiles.length,
-        hasNextPage: Boolean(nextPageToken),
-      });
-      await logGoogleDriveProgress(
-        'info',
-        `Google Drive page ${pagesFetched} loaded: ${page.files.length} files, ${localFiles.length} buffered${nextPageToken ? ', more remaining.' : '.'}`,
-        {
-          event: 'drive_page_loaded',
+    } else {
+      // Collect the full folder subtree for all selected root folders so that
+      // audio files in subfolders are included (Drive API only queries direct parents).
+      let allFolderIds: string[] | undefined;
+      if (folderIds.length > 0) {
+        const merged = new Set<string>();
+        for (const rootId of folderIds) {
+          const tree = await collectFolderTree({ accessToken, rootFolderId: rootId });
+          tree.forEach((id) => merged.add(id));
+        }
+        allFolderIds = [...merged];
+        logGoogleDriveImport('info', 'folder_tree_collected', {
+          rootFolderIds: folderIds,
+          totalFolders: allFolderIds.length,
+        });
+        await logGoogleDriveProgress(
+          'info',
+          `Folder tree collected: ${allFolderIds.length} folder${allFolderIds.length === 1 ? '' : 's'} across ${folderIds.length} root${folderIds.length === 1 ? '' : 's'}.`,
+          { event: 'folder_tree_collected', rootFolderIds: folderIds, totalFolders: allFolderIds.length },
+        );
+      }
+
+      const localFiles: Awaited<ReturnType<typeof listGoogleDriveAudioFiles>>['files'] = [];
+      let nextPageToken: string | null = null;
+      let pagesFetched = 0;
+      do {
+        const page = await listGoogleDriveAudioFiles({
+          accessToken,
+          folderId: folderId || undefined,
+          allFolderIds,
+          limit: maxFiles - localFiles.length,
+          pageToken: nextPageToken ?? undefined,
+        });
+        pagesFetched += 1;
+        localFiles.push(...page.files);
+        nextPageToken = page.nextPageToken;
+        logGoogleDriveImport('info', 'drive_page_loaded', {
           page: pagesFetched,
           fetchedThisPage: page.files.length,
           totalBuffered: localFiles.length,
           hasNextPage: Boolean(nextPageToken),
-        },
-      );
-    } while (nextPageToken && localFiles.length < maxFiles);
+        });
+        await logGoogleDriveProgress(
+          'info',
+          `Google Drive page ${pagesFetched} loaded: ${page.files.length} files, ${localFiles.length} buffered${nextPageToken ? ', more remaining.' : '.'}`,
+          {
+            event: 'drive_page_loaded',
+            page: pagesFetched,
+            fetchedThisPage: page.files.length,
+            totalBuffered: localFiles.length,
+            hasNextPage: Boolean(nextPageToken),
+          },
+        );
+      } while (nextPageToken && localFiles.length < maxFiles);
 
-    const filteredLocalFiles = localFiles.filter((file) => !isIgnoredGoogleDriveAudioFileName(file.name));
-    const ignoredLocalFiles = localFiles.length - filteredLocalFiles.length;
-    if (ignoredLocalFiles > 0) {
-      logGoogleDriveImport('info', 'ignored_non_audio_files_filtered', {
-        ignored: ignoredLocalFiles,
-        totalBufferedBeforeFilter: localFiles.length,
-        totalBufferedAfterFilter: filteredLocalFiles.length,
-      });
-      await logGoogleDriveProgress(
-        'info',
-        `Filtered ${ignoredLocalFiles} ignored non-audio file${ignoredLocalFiles === 1 ? '' : 's'} from the Google Drive import buffer.`,
-        {
-          event: 'ignored_non_audio_files_filtered',
+      const rawFiltered = localFiles.filter((file) => !isIgnoredGoogleDriveAudioFileName(file.name));
+      const ignoredLocalFiles = localFiles.length - rawFiltered.length;
+      if (ignoredLocalFiles > 0) {
+        logGoogleDriveImport('info', 'ignored_non_audio_files_filtered', {
           ignored: ignoredLocalFiles,
           totalBufferedBeforeFilter: localFiles.length,
-          totalBufferedAfterFilter: filteredLocalFiles.length,
-        },
-      );
+          totalBufferedAfterFilter: rawFiltered.length,
+        });
+        await logGoogleDriveProgress(
+          'info',
+          `Filtered ${ignoredLocalFiles} ignored non-audio file${ignoredLocalFiles === 1 ? '' : 's'} from the Google Drive import buffer.`,
+          {
+            event: 'ignored_non_audio_files_filtered',
+            ignored: ignoredLocalFiles,
+            totalBufferedBeforeFilter: localFiles.length,
+            totalBufferedAfterFilter: rawFiltered.length,
+          },
+        );
+      }
+
+      filteredLocalFiles = rawFiltered;
+      activeCheckpoint = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        scopeKey,
+        fileList: filteredLocalFiles,
+        completedLocalMetadata: [],
+      };
+      await saveImportCheckpoint(activeCheckpoint);
     }
 
     const purgedIgnoredTracks = await purgeIgnoredGoogleDriveTracks();
@@ -448,11 +553,23 @@ export async function POST(request: NextRequest) {
 
     let localMetadataEnriched = 0;
     let localMetadataFailed = 0;
+    let localMetadataSkipped = 0;
     let localAlbumArtReused = 0;
+    const completedSet = new Set(activeCheckpoint.completedLocalMetadata);
     for (let index = 0; index < filteredLocalFiles.length; index += 1) {
       const file = filteredLocalFiles[index];
       const fileId = String(file.id ?? '').trim();
       if (!fileId) continue;
+      if (completedSet.has(fileId)) {
+        localMetadataSkipped += 1;
+        logGoogleDriveImport('info', 'local_metadata_skipped', {
+          index: index + 1,
+          total: filteredLocalFiles.length,
+          fileId,
+          name: file.name,
+        });
+        continue;
+      }
       try {
         await logGoogleDriveProgress(
           'info',
@@ -492,6 +609,8 @@ export async function POST(request: NextRequest) {
           localAlbumArtReused += 1;
         }
         localMetadataEnriched += 1;
+        completedSet.add(fileId);
+        await markCheckpointFileComplete(scopeKey, fileId);
         logGoogleDriveImport('info', 'local_metadata_completed', {
           index: index + 1,
           total: filteredLocalFiles.length,
@@ -516,7 +635,7 @@ export async function POST(request: NextRequest) {
         const message = error instanceof Error ? error.message : String(error);
         logGoogleDriveImport('warn', 'local_metadata_failed', {
           index: index + 1,
-          total: localFiles.length,
+          total: filteredLocalFiles.length,
           fileId,
           name: file.name,
           error: message,
@@ -537,11 +656,12 @@ export async function POST(request: NextRequest) {
     }
     await logGoogleDriveProgress(
       localMetadataFailed ? 'warning' : 'success',
-      `Local Google Drive metadata enrichment completed: ${localMetadataEnriched} succeeded, ${localMetadataFailed} failed, ${localAlbumArtReused} album art reuse${localAlbumArtReused === 1 ? '' : 's'}.`,
+      `Local Google Drive metadata enrichment completed: ${localMetadataEnriched} succeeded, ${localMetadataFailed} failed${localMetadataSkipped ? `, ${localMetadataSkipped} skipped (already done)` : ''}, ${localAlbumArtReused} album art reuse${localAlbumArtReused === 1 ? '' : 's'}.`,
       {
         event: 'local_metadata_summary',
         succeeded: localMetadataEnriched,
         failed: localMetadataFailed,
+        skipped: localMetadataSkipped,
         total: filteredLocalFiles.length,
         albumArtReused: localAlbumArtReused,
       },
@@ -621,6 +741,8 @@ export async function POST(request: NextRequest) {
       },
     );
 
+    await clearImportCheckpoint();
+
     return NextResponse.json(
       {
         accepted: true,
@@ -632,11 +754,13 @@ export async function POST(request: NextRequest) {
         local_tracks_imported: localImport.imported,
         local_tracks_updated: localImport.updated,
         local_metadata_enriched: localMetadataEnriched,
+        local_metadata_skipped: localMetadataSkipped,
         local_metadata_failed: localMetadataFailed,
         local_album_art_reused: localAlbumArtReused,
         initial_artwork_enrichment_attempted: artworkRefresh.attempted,
         initial_artwork_enrichment_succeeded: artworkRefresh.succeeded,
         initial_artwork_enrichment_failed: artworkRefresh.failed,
+        resumed_from_checkpoint: resuming,
       },
       { status: 200 },
     );

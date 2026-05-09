@@ -251,7 +251,7 @@ export async function readLocalAudioMetadata(filePath: string, originalName?: st
     args,
     {
       cwd: process.cwd(),
-      env: process.env,
+      env: { ...process.env, DJ_ASSIST_FAIL_FAST_ON_SPOTIFY_429: '1' },
       timeout: 45_000,
       maxBuffer: 1024 * 1024,
     },
