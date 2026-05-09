@@ -7,4 +7,7 @@ cd "${ROOT_DIR}"
 
 rm -rf .next
 npm ci
-DJ_ASSIST_SERVER_ENABLED=true DJ_ASSIST_SERVER_URL=https://dj-assist-server.vercel.app npm run backend:dev
+DJ_ASSIST_SERVER_ENABLED=true \
+DJ_ASSIST_SERVER_LOCAL_DEBUG=false \
+DJ_ASSIST_SERVER_URL=https://dj-assist-server.vercel.app \
+npm run backend:dev

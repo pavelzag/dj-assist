@@ -33,19 +33,23 @@ dest="$HOME/Downloads/dj-assist/run-$run_number"
 mkdir -p "$dest"
 
 gh run watch "$run_id" --compact --exit-status
-gh run view "$run_id" --log
+GH_PAGER=cat gh run view "$run_id" --log
 
 downloaded=false
 for _ in {1..24}; do
-  if gh run download "$run_id" -D "$dest"; then
-    downloaded=true
-    break
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  if GH_PAGER=cat gh run download "$run_id" -D "$dest"; then
+    if find "$dest" -mindepth 1 -print -quit | grep -q .; then
+      downloaded=true
+      break
+    fi
   fi
   sleep 5
 done
 
 if [[ "$downloaded" != true ]]; then
-  echo "Artifacts were not available for download for run $run_id" >&2
+  echo "Artifacts were not available for download for run $run_id, or the run produced no downloadable files." >&2
   exit 1
 fi
 
