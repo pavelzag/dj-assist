@@ -266,6 +266,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportStatusMessage = 'Ready to import.';
     let googleDriveImportStatusState: 'idle' | 'saving' | 'success' | 'error' = 'idle';
     let googleDriveImportFailedCount = 0;
+    let googleDriveImportMetadataActivityTimestamp = '';
     let serverAccountSession: Record<string, unknown> | null = null;
     let serverEntitlements = new Set<string>();
     let serverDeviceRegistrationAttempted = false;
@@ -673,16 +674,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (event === 'local_metadata_started' || event === 'local_metadata_completed' || event === 'local_metadata_failed') {
         const current = Number(context.index ?? 0);
         const total = Number(context.total ?? 0);
-        const name = String(context.name ?? selectedGoogleDriveFolderLabel()).trim() || selectedGoogleDriveFolderLabel();
         setGoogleDriveImportStageState({
           stage: 'enriching',
           label: 'Reading embedded metadata',
-          detail: name,
+          detail: total > 0 ? `${current} of ${total} files` : 'Processing downloaded Drive files',
           current,
           total,
-          meta: total > 0 ? `${Math.max(0, total - current)} files remaining` : 'Processing downloaded Drive files',
+          meta: total > 0 ? `${Math.max(0, total - current)} remaining · details in Activity tab` : 'Processing downloaded Drive files',
         });
-        setScanProgress(current, total, `Reading metadata · ${name}`);
+        setScanProgress(current, total, 'Reading embedded metadata');
         return;
       }
 
@@ -812,6 +812,36 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const tone = level === 'error' ? 'error' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'info';
           showProgressToast('google-drive-import-progress', String(latest.message ?? 'Google Drive import in progress.'), tone, tone === 'success');
         }
+
+        // Route per-file metadata events to the Activity tab backend log.
+        const newMetadataEntries = entries
+          .filter((entry) => {
+            if (String(entry.category ?? '') !== 'google-drive-import') return false;
+            const ctx = entry.context && typeof entry.context === 'object'
+              ? entry.context as Record<string, unknown>
+              : {};
+            const ev = String(ctx.event ?? '').trim();
+            return ev === 'local_metadata_completed' || ev === 'local_metadata_failed';
+          })
+          .filter((entry) => {
+            const ts = String(entry.timestamp ?? '').trim();
+            return ts && ts > googleDriveImportMetadataActivityTimestamp;
+          })
+          .reverse(); // oldest first so Activity tab shows them in order
+        for (const entry of newMetadataEntries) {
+          const ts = String(entry.timestamp ?? '').trim();
+          const ctx = entry.context as Record<string, unknown>;
+          const ev = String(ctx.event ?? '').trim();
+          const name = String(ctx.name ?? '').trim();
+          const index = Number(ctx.index ?? 0);
+          const total = Number(ctx.total ?? 0);
+          const lvl: 'info' | 'warning' = ev === 'local_metadata_failed' ? 'warning' : 'info';
+          const msg = ev === 'local_metadata_failed'
+            ? `Metadata failed ${index}/${total}: ${name}`
+            : `Metadata read ${index}/${total}: ${name}`;
+          appendScanLog(msg, lvl, ctx, { timestamp: ts });
+          googleDriveImportMetadataActivityTimestamp = ts;
+        }
       } catch {
         // Ignore progress polling failures.
       }
@@ -824,6 +854,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       googleDriveImportUiSignature = '';
       googleDriveImportToastSignature = '';
+      googleDriveImportMetadataActivityTimestamp = '';
       removeToastByKey('google-drive-import-progress');
     }
 
