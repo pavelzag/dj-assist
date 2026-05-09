@@ -59,45 +59,6 @@ export default function AppShell({
         </div>
         <input id="scan-directory" type="hidden" />
         <div className="scan-preflight" id="scan-preflight">Choose a music source to add tracks.</div>
-        <details className="google-drive-import-banner" id="google-drive-import-banner" hidden>
-          <summary className="google-drive-import-banner-summary">
-            <div className="google-drive-import-banner-copy">
-              <strong id="google-drive-import-banner-label">Google Drive import</strong>
-              <span id="google-drive-import-banner-detail">Waiting to start.</span>
-            </div>
-            <div className="google-drive-import-banner-metrics">
-              <strong id="google-drive-import-banner-count">--</strong>
-              <span id="google-drive-import-banner-recognition">0 recognized · 0 pending</span>
-            </div>
-          </summary>
-          <div className="google-drive-import-progress-track">
-            <div
-              className="google-drive-import-progress-bar"
-              id="google-drive-import-banner-bar"
-              data-indeterminate="false"
-              style={{ width: '0%' }}
-            />
-          </div>
-          <div className="google-drive-import-banner-pill-row">
-            <span className="google-drive-import-banner-pill" id="google-drive-import-banner-stage">Waiting</span>
-            <span className="google-drive-import-banner-pill" id="google-drive-import-banner-stage-meta">No import running</span>
-            <span className="google-drive-import-banner-pill" id="google-drive-import-banner-scope">All audio files in Google Drive</span>
-          </div>
-          <div className="google-drive-import-banner-detail-grid">
-            <div className="google-drive-import-banner-detail-item">
-              <span>Status</span>
-              <strong id="google-drive-import-banner-status">Ready to import.</strong>
-            </div>
-            <div className="google-drive-import-banner-detail-item">
-              <span>Progress</span>
-              <strong id="google-drive-import-banner-progress">--</strong>
-            </div>
-            <div className="google-drive-import-banner-detail-item">
-              <span>Recognition</span>
-              <strong id="google-drive-import-banner-recognition-detail">0 recognized · 0 pending</strong>
-            </div>
-          </div>
-        </details>
         <div className="browse-scope" id="browse-scope">
           <span className="browse-scope-empty">Viewing full collection</span>
         </div>
