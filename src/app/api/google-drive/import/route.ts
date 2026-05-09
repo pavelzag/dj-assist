@@ -45,7 +45,7 @@ type DriveFileEntry = {
 };
 
 type ImportCheckpoint = {
-  version: 2;
+  version: 3;
   createdAt: string;
   scopeKey: string;
   fileList: DriveFileEntry[];
@@ -66,7 +66,7 @@ async function loadImportCheckpoint(scopeKey: string): Promise<ImportCheckpoint 
   try {
     const raw = await fs.readFile(gdriveImportCheckpointPath(), 'utf-8');
     const data = JSON.parse(raw) as ImportCheckpoint;
-    if (data.version !== 2 || data.scopeKey !== scopeKey) return null;
+    if (data.version !== 3 || data.scopeKey !== scopeKey) return null;
     if (Date.now() - new Date(data.createdAt).getTime() > CHECKPOINT_MAX_AGE_MS) return null;
     return data;
   } catch {
@@ -506,7 +506,7 @@ export async function POST(request: NextRequest) {
 
       filteredLocalFiles = rawFiltered;
       activeCheckpoint = {
-        version: 2,
+        version: 3,
         createdAt: new Date().toISOString(),
         scopeKey,
         fileList: filteredLocalFiles,

@@ -240,6 +240,28 @@ export type LocalAudioMetadata = {
   metadata_recovery_debug: Record<string, unknown> | null;
 };
 
+async function analyzeLocalAudioFile(filePath: string): Promise<{
+  bpm: number;
+  key: string | null;
+}> {
+  const python = await resolveWorkingPython();
+  const { stdout } = await execFileAsync(
+    python,
+    ['-m', 'dj_assist.cli', 'analyze-file', filePath, '--bpm-lookup', 'local', '--auto-double'],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env },
+      timeout: 45_000,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  const parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
+  return {
+    bpm: Number(parsed.bpm ?? 0) || 0,
+    key: String(parsed.key ?? '').trim() || null,
+  };
+}
+
 export async function readLocalAudioMetadata(filePath: string, originalName?: string): Promise<LocalAudioMetadata> {
   const python = await resolveWorkingPython();
   const args = ['-m', 'dj_assist.cli', 'inspect-file', filePath];
@@ -258,14 +280,19 @@ export async function readLocalAudioMetadata(filePath: string, originalName?: st
     },
   );
   const parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
+  const analyzed = (Number(parsed.bpm ?? 0) || String(parsed.key ?? '').trim())
+    ? null
+    : await analyzeLocalAudioFile(filePath).catch(() => null);
+  const recoveredBpm = analyzed?.bpm && analyzed.bpm > 0 ? analyzed.bpm : 0;
+  const recoveredKey = analyzed?.key ? analyzed.key : null;
   return {
     title: String(parsed.title ?? '').trim() || null,
     artist: String(parsed.artist ?? '').trim() || null,
     album: String(parsed.album ?? '').trim() || null,
     duration: Number(parsed.duration ?? 0) || 0,
     bitrate: Number(parsed.bitrate ?? 0) || 0,
-    bpm: Number(parsed.bpm ?? 0) || 0,
-    key: String(parsed.key ?? '').trim() || null,
+    bpm: Number(parsed.bpm ?? 0) || recoveredBpm || 0,
+    key: String(parsed.key ?? '').trim() || recoveredKey,
     track_number: Number(parsed.track_number ?? 0) || 0,
     release_year: Number(parsed.release_year ?? 0) || 0,
     embedded_album_art_url: String(parsed.embedded_album_art_url ?? '').trim(),

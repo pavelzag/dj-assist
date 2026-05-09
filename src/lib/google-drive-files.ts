@@ -27,6 +27,21 @@ const GOOGLE_DRIVE_AUDIO_EXTENSIONS = [
   '.ape',
   '.mpga',
 ];
+const GOOGLE_DRIVE_PLAYLIST_EXTENSIONS = [
+  '.m3u',
+  '.m3u8',
+  '.pls',
+  '.cue',
+];
+const GOOGLE_DRIVE_PLAYLIST_MIME_FRAGMENTS = [
+  'audio/x-mpegurl',
+  'audio/mpegurl',
+  'application/x-mpegurl',
+  'application/vnd.apple.mpegurl',
+  'application/mpegurl',
+  'audio/x-scpls',
+  'application/pls+xml',
+];
 const GOOGLE_DRIVE_FOLDER_SCAN_CONCURRENCY = 8;
 
 function escapeDriveQueryValue(value: string): string {
@@ -52,8 +67,19 @@ function hasKnownAudioExtension(name: string): boolean {
   return GOOGLE_DRIVE_AUDIO_EXTENSIONS.some((extension) => normalized.endsWith(extension));
 }
 
+function hasKnownPlaylistExtension(name: string): boolean {
+  const normalized = String(name ?? '').trim().toLowerCase();
+  return GOOGLE_DRIVE_PLAYLIST_EXTENSIONS.some((extension) => normalized.endsWith(extension));
+}
+
 function isLikelyGoogleDriveAudioFile(file: Pick<GoogleDriveAudioFile, 'name' | 'mimeType'>): boolean {
+  if (hasKnownPlaylistExtension(file.name)) {
+    return false;
+  }
   const mimeType = String(file.mimeType ?? '').trim().toLowerCase();
+  if (GOOGLE_DRIVE_PLAYLIST_MIME_FRAGMENTS.some((fragment) => mimeType.includes(fragment))) {
+    return false;
+  }
   if (!mimeType || mimeType === 'application/octet-stream' || mimeType === 'binary/octet-stream') {
     return hasKnownAudioExtension(file.name);
   }
