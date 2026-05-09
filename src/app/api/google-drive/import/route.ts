@@ -45,7 +45,7 @@ type DriveFileEntry = {
 };
 
 type ImportCheckpoint = {
-  version: 1;
+  version: 2;
   createdAt: string;
   scopeKey: string;
   fileList: DriveFileEntry[];
@@ -66,7 +66,7 @@ async function loadImportCheckpoint(scopeKey: string): Promise<ImportCheckpoint 
   try {
     const raw = await fs.readFile(gdriveImportCheckpointPath(), 'utf-8');
     const data = JSON.parse(raw) as ImportCheckpoint;
-    if (data.version !== 1 || data.scopeKey !== scopeKey) return null;
+    if (data.version !== 2 || data.scopeKey !== scopeKey) return null;
     if (Date.now() - new Date(data.createdAt).getTime() > CHECKPOINT_MAX_AGE_MS) return null;
     return data;
   } catch {
@@ -506,7 +506,7 @@ export async function POST(request: NextRequest) {
 
       filteredLocalFiles = rawFiltered;
       activeCheckpoint = {
-        version: 1,
+        version: 2,
         createdAt: new Date().toISOString(),
         scopeKey,
         fileList: filteredLocalFiles,
@@ -598,6 +598,7 @@ export async function POST(request: NextRequest) {
           key: metadata.key,
           embedded_album_art_url: metadata.embedded_album_art_url || null,
           spotify_id: metadata.spotify_id,
+          spotify_tempo: metadata.spotify_tempo > 0 ? metadata.spotify_tempo : null,
           spotify_album_name: metadata.spotify_album_name,
           metadata_source: metadata.metadata_source,
           metadata_recovery_debug: metadata.metadata_recovery_debug,
@@ -625,6 +626,7 @@ export async function POST(request: NextRequest) {
           hasEmbeddedArt: Boolean(metadata.embedded_album_art_url),
           metadataSource: metadata.metadata_source,
           spotifyId: metadata.spotify_id,
+          spotifyTempo: metadata.spotify_tempo,
           spotifyAlbumName: metadata.spotify_album_name,
           reusedAlbumArt: reusedArt.reused,
           reusedAlbumArtFromTrackId: reusedArt.sourceTrackId ?? null,

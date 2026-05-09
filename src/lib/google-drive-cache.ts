@@ -234,6 +234,7 @@ export type LocalAudioMetadata = {
   embedded_album_art_url: string;
   embedded_album_art_mime: string;
   spotify_id: string | null;
+  spotify_tempo: number;
   spotify_album_name: string | null;
   metadata_source: string | null;
   metadata_recovery_debug: Record<string, unknown> | null;
@@ -270,6 +271,7 @@ export async function readLocalAudioMetadata(filePath: string, originalName?: st
     embedded_album_art_url: String(parsed.embedded_album_art_url ?? '').trim(),
     embedded_album_art_mime: String(parsed.embedded_album_art_mime ?? '').trim(),
     spotify_id: String(parsed.spotify_id ?? '').trim() || null,
+    spotify_tempo: Number(parsed.spotify_tempo ?? 0) || 0,
     spotify_album_name: String(parsed.spotify_album_name ?? '').trim() || null,
     metadata_source: String(parsed.metadata_source ?? '').trim() || null,
     metadata_recovery_debug:

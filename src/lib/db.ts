@@ -1061,6 +1061,7 @@ export async function updateGoogleDriveTrackLocalMetadata(
     key?: string | null;
     embedded_album_art_url?: string | null;
     spotify_id?: string | null;
+    spotify_tempo?: number | null;
     spotify_album_name?: string | null;
     metadata_source?: string | null;
     metadata_recovery_debug?: Record<string, unknown> | null;
@@ -1082,6 +1083,7 @@ export async function updateGoogleDriveTrackLocalMetadata(
   const nextBpm = patch.bpm != null && patch.bpm > 0 ? patch.bpm : current.bpm;
   const nextKey = patch.key !== undefined ? patch.key : current.key;
   const nextSpotifyId = patch.spotify_id !== undefined ? patch.spotify_id : current.spotify_id;
+  const nextSpotifyTempo = patch.spotify_tempo != null && patch.spotify_tempo > 0 ? patch.spotify_tempo : current.spotify_tempo;
   const nextSpotifyAlbumName = patch.spotify_album_name !== undefined ? patch.spotify_album_name : current.spotify_album_name;
   const metadataSource = String(patch.metadata_source ?? '').trim();
   const metadataRecoveryDebug = patch.metadata_recovery_debug ? JSON.stringify(patch.metadata_recovery_debug) : '';
@@ -1092,13 +1094,14 @@ export async function updateGoogleDriveTrackLocalMetadata(
     `key=${nextKey ?? ''}`,
     ...(metadataSource ? [`metadata_source=${metadataSource}`] : []),
     ...(nextSpotifyId ? [`spotify_id=${String(nextSpotifyId)}`] : []),
+    ...(nextSpotifyTempo ? [`spotify_tempo=${Number(nextSpotifyTempo)}`] : []),
     ...(metadataRecoveryDebug ? [`recovery=${metadataRecoveryDebug}`] : []),
   ];
 
   execute(
     `UPDATE tracks
      SET title = ?, artist = ?, album = ?, duration = ?, bitrate = ?, bpm = ?, key = ?,
-         spotify_id = ?, spotify_album_name = ?,
+         spotify_id = ?, spotify_tempo = ?, spotify_album_name = ?,
          bpm_source = ?, analysis_status = ?, analysis_error = ?, analysis_stage = ?, analysis_debug = ?,
          album_art_url = ?, album_art_source = ?, album_art_confidence = ?, album_art_review_status = ?,
          album_art_review_notes = ?, embedded_album_art = ?, album_group_key = ?, artist_canonical = ?, album_canonical = ?
@@ -1111,6 +1114,7 @@ export async function updateGoogleDriveTrackLocalMetadata(
     nextBpm,
     nextKey,
     nextSpotifyId,
+    nextSpotifyTempo,
     nextSpotifyAlbumName,
     nextBpm ? 'tag' : current.bpm_source,
     'google_drive_local_metadata',

@@ -320,6 +320,7 @@ def _inspect_file_with_recovery(file_path: Path, original_name: str | None, reco
     metadata = extract_metadata(str(file_path), original_name=original_name)
     metadata["metadata_source"] = "embedded_or_filename"
     metadata["spotify_id"] = ""
+    metadata["spotify_tempo"] = 0.0
     metadata["spotify_album_name"] = ""
     metadata["metadata_recovery_debug"] = {}
 
@@ -351,6 +352,7 @@ def _inspect_file_with_recovery(file_path: Path, original_name: str | None, reco
     acoustid_title = str(recovered.get("acoustid_title") or "").strip()
     acoustid_album = str(recovered.get("acoustid_album") or "").strip()
     spotify_id = str(recovered.get("spotify_id") or "").strip()
+    spotify_tempo = float(recovered.get("spotify_tempo") or 0.0)
     spotify_album_name = str(recovered.get("spotify_album_name") or "").strip()
 
     if not artist and acoustid_artist:
@@ -363,6 +365,7 @@ def _inspect_file_with_recovery(file_path: Path, original_name: str | None, reco
         metadata["album"] = spotify_album_name
 
     metadata["spotify_id"] = spotify_id
+    metadata["spotify_tempo"] = spotify_tempo
     metadata["spotify_album_name"] = spotify_album_name
     metadata["metadata_recovery_debug"] = {
         "acoustid_artist": acoustid_artist,
@@ -370,6 +373,7 @@ def _inspect_file_with_recovery(file_path: Path, original_name: str | None, reco
         "acoustid_album": acoustid_album,
         "acoustid_match_score": float(recovered.get("acoustid_match_score") or 0.0),
         "spotify_id": spotify_id,
+        "spotify_tempo": spotify_tempo,
         "spotify_album_name": spotify_album_name,
     }
 
