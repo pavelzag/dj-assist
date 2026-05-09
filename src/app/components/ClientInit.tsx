@@ -194,6 +194,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let activeSetId: number | null = null;
     const playlistDropBindings = new WeakMap<HTMLElement, number>();
     const playlistHeaderClickSuppressionUntil = new Map<number, number>();
+    const playlistPendingAdds = new Set<string>();
     let activeQuickFilter = '';
     let preScanTrackIds = new Set<number>();
     let hasScanBaseline = false;
@@ -6098,52 +6099,70 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
       });
 
+      function updateSetHeaderMeta(setId: number, trackCount: number, totalDuration: number) {
+        const setItem = setsPanel.querySelector<HTMLElement>(`.set-item[data-set-id="${setId}"]`);
+        const metaEl = setItem?.querySelector<HTMLElement>('.set-item-meta');
+        if (!metaEl) return;
+        metaEl.textContent = `${trackCount} tracks · ${formatDuration(totalDuration)}`;
+      }
+
       function bindSetDropZone(root: HTMLElement, setId: number) {
         const existingBinding = playlistDropBindings.get(root);
         if (existingBinding === setId) return;
         playlistDropBindings.set(root, setId);
 
         const addTrackToSet = async (trackId: number) => {
+          const pendingKey = `${setId}:${trackId}`;
+          if (playlistPendingAdds.has(pendingKey)) {
+            console.info('[playlist-drop] add skipped duplicate request', { setId, trackId, activeSetId });
+            return false;
+          }
+          playlistPendingAdds.add(pendingKey);
           appendScanLog(`Playlist add requested: set=${setId} track=${trackId} source=drag-drop`, 'info', {
             category: 'playlist-add',
             setId,
             trackId,
             source: 'drag-drop',
           });
-          playlistHeaderClickSuppressionUntil.set(setId, Date.now() + 1200);
-          console.info('[playlist-drop] add requested', { setId, trackId, source: 'drag-drop', activeSetId, rootId: root.dataset.setId ?? '' });
-          const response = await fetch(`/api/sets/${setId}/tracks`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ track_id: trackId }),
-          });
-          console.info('[playlist-drop] add response', { setId, trackId, status: response.status, ok: response.ok });
-          if (!response.ok) {
-            const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-            appendScanLog(`Playlist add failed: set=${setId} track=${trackId} status=${response.status} error=${String(payload.error ?? 'unknown')}`, 'error', {
+          try {
+            playlistHeaderClickSuppressionUntil.set(setId, Date.now() + 1200);
+            console.info('[playlist-drop] add requested', { setId, trackId, source: 'drag-drop', activeSetId, rootId: root.dataset.setId ?? '' });
+            const response = await fetch(`/api/sets/${setId}/tracks`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ track_id: trackId }),
+            });
+            console.info('[playlist-drop] add response', { setId, trackId, status: response.status, ok: response.ok });
+            if (!response.ok) {
+              const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+              appendScanLog(`Playlist add failed: set=${setId} track=${trackId} status=${response.status} error=${String(payload.error ?? 'unknown')}`, 'error', {
+                category: 'playlist-add',
+                setId,
+                trackId,
+                status: response.status,
+                payload,
+                source: 'drag-drop',
+              });
+              showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
+              return false;
+            }
+            appendScanLog(`Playlist add succeeded: set=${setId} track=${trackId} source=drag-drop`, 'success', {
               category: 'playlist-add',
               setId,
               trackId,
-              status: response.status,
-              payload,
               source: 'drag-drop',
             });
-            showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
-            return false;
+            showToast('Track added to playlist.', 'success');
+            await openSetPlaylist(setId, { source: 'drag-drop', keepExpanded: true });
+            return true;
+          } finally {
+            playlistPendingAdds.delete(pendingKey);
           }
-          appendScanLog(`Playlist add succeeded: set=${setId} track=${trackId} source=drag-drop`, 'success', {
-            category: 'playlist-add',
-            setId,
-            trackId,
-            source: 'drag-drop',
-          });
-          showToast('Track added to playlist.', 'success');
-          await openSetPlaylist(setId, { source: 'drag-drop', keepExpanded: true });
-          return true;
         };
 
         root.addEventListener('dragover', (event) => {
           event.preventDefault();
+          event.stopPropagation();
           root.classList.add('drag-over');
           console.info('[playlist-drop] dragover', { setId, target: root.className, activeSetId });
         });
@@ -6152,6 +6171,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
         root.addEventListener('drop', async (event) => {
           event.preventDefault();
+          event.stopPropagation();
           root.classList.remove('drag-over');
           const trackId = Number((event as DragEvent).dataTransfer?.getData('text/track-id') ?? 0);
           appendScanLog(`Playlist drop received: set=${setId} track=${trackId || 'missing'} target=${String(root.dataset.setId ?? '')}`, trackId ? 'info' : 'warning', {
@@ -6214,6 +6234,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         activeSetId = setId;
         tracksDiv.style.display = '';
         const tracks = Array.isArray(set?.tracks) ? set.tracks : [];
+        const totalDuration = tracks.reduce((sum, track) => {
+          const duration = Number(track.duration ?? 0);
+          return Number.isFinite(duration) ? sum + duration : sum;
+        }, 0);
+        updateSetHeaderMeta(setId, tracks.length, totalDuration);
         appendScanLog(`Playlist loaded: set=${setId} tracks=${tracks.length} source=${source}`, 'info', {
           category: 'playlist-open',
           setId,
@@ -6222,7 +6247,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
         if (!tracks.length) {
           tracksDiv.innerHTML = '<div class="empty" style="padding:8px 0;">Empty playlist.</div><div class="set-drop-zone" data-set-id="' + setId + '">Drop tracks here to add</div>';
-          bindSetDropZone(tracksDiv, setId);
+          bindSetDropZone(setItem, setId);
           return true;
         }
         tracksDiv.innerHTML = tracks.map((t: Record<string, unknown>) => `
@@ -6284,9 +6309,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             `;
             container.querySelectorAll('.suggestion[data-track-id]').forEach((card) => {
+              (card as HTMLElement).draggable = true;
               card.addEventListener('click', () => {
                 document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
                 void selectTrack((card as HTMLElement).dataset.trackId!, false);
+              });
+              card.addEventListener('dragstart', (event) => {
+                const trackId = (card as HTMLElement).dataset.trackId ?? '';
+                const transfer = (event as DragEvent).dataTransfer;
+                transfer?.setData('text/track-id', trackId);
+                if (transfer) transfer.effectAllowed = 'copy';
+                (card as HTMLElement).classList.add('dragging');
+              });
+              card.addEventListener('dragend', () => {
+                (card as HTMLElement).classList.remove('dragging');
               });
             });
             container.querySelectorAll('.intelligence-add-btn[data-track-id]').forEach((button) => {
@@ -6359,6 +6395,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       setsPanel.querySelectorAll<HTMLElement>('.set-item[data-set-id]').forEach((item) => {
         const setId = parseInt(item.dataset.setId!, 10);
+        bindSetDropZone(item, setId);
         const tracksList = document.getElementById(`set-tracks-${setId}`);
         if (tracksList) tracksList.dataset.setId = String(setId);
       });

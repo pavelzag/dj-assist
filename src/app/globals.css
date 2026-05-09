@@ -1182,6 +1182,11 @@ main {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  cursor: grab;
+}
+.playlist-intelligence-row.dragging {
+  opacity: 0.55;
+  cursor: grabbing;
 }
 .playlist-intelligence-row .intelligence-add-btn {
   flex: 0 0 auto;

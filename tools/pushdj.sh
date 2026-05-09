@@ -10,19 +10,44 @@ if ! git diff --cached --quiet; then
 fi
 
 git push
+head_sha=$(git rev-parse HEAD)
 gh workflow run release.yml --ref master
 
-sleep 5
+run_id=''
+for _ in {1..30}; do
+  run_id=$(gh run list --workflow release.yml --branch master --event workflow_dispatch --limit 20 --json databaseId,headSha --jq ".[] | select(.headSha == \"$head_sha\") | .databaseId" | head -n 1)
+  if [[ -n "$run_id" ]]; then
+    break
+  fi
+  sleep 2
+done
 
-run_id=$(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+if [[ -z "$run_id" ]]; then
+  echo "Could not find the workflow run for commit $head_sha" >&2
+  exit 1
+fi
+
 run_number=$(gh run view "$run_id" --json number --jq '.number')
 
 dest="$HOME/Downloads/dj-assist/run-$run_number"
 mkdir -p "$dest"
 
-gh run watch "$run_id" --exit-status
+gh run watch "$run_id" --compact --exit-status
 gh run view "$run_id" --log
-gh run download "$run_id" -D "$dest"
+
+downloaded=false
+for _ in {1..24}; do
+  if gh run download "$run_id" -D "$dest"; then
+    downloaded=true
+    break
+  fi
+  sleep 5
+done
+
+if [[ "$downloaded" != true ]]; then
+  echo "Artifacts were not available for download for run $run_id" >&2
+  exit 1
+fi
 
 find "$dest" -type f -name '*.zip' | while IFS= read -r zip_file; do
   unzip_dir="${zip_file%.zip}"
