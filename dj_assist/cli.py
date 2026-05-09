@@ -22,7 +22,7 @@ from .db import Database
 from .scanner import scan_directory
 from .scanner import extract_metadata
 from .web import run_app
-from .media import AcoustIdClient, SpotifyClient
+from .media import AcoustIdClient, SpotifyClient, build_media_links
 from .tag_writer import write_mp3_metadata
 
 console = Console()
@@ -316,11 +316,77 @@ def analyze_file(file_path: Path, bpm_lookup: str, auto_double: bool) -> None:
     )
 
 
+def _inspect_file_with_recovery(file_path: Path, original_name: str | None, recover_identity: bool) -> dict[str, Any]:
+    metadata = extract_metadata(str(file_path), original_name=original_name)
+    metadata["metadata_source"] = "embedded_or_filename"
+    metadata["spotify_id"] = ""
+    metadata["spotify_album_name"] = ""
+    metadata["metadata_recovery_debug"] = {}
+
+    if not recover_identity:
+        return metadata
+
+    artist = str(metadata.get("artist") or "").strip() or None
+    title = str(metadata.get("title") or "").strip() or None
+    album = str(metadata.get("album") or "").strip() or None
+    duration = float(metadata.get("duration") or 0.0) or None
+    track_number = int(metadata.get("track_number") or 0) or None
+    release_year = int(metadata.get("release_year") or 0) or None
+
+    recovered = build_media_links(
+        artist,
+        title,
+        album=album,
+        duration=duration,
+        track_number=track_number,
+        release_year=release_year,
+        fetch_album_art=False,
+        file_path=str(file_path),
+        enable_spotify=True,
+        enable_acoustid=True,
+        enable_theaudiodb=False,
+    )
+
+    acoustid_artist = str(recovered.get("acoustid_artist") or "").strip()
+    acoustid_title = str(recovered.get("acoustid_title") or "").strip()
+    acoustid_album = str(recovered.get("acoustid_album") or "").strip()
+    spotify_id = str(recovered.get("spotify_id") or "").strip()
+    spotify_album_name = str(recovered.get("spotify_album_name") or "").strip()
+
+    if not artist and acoustid_artist:
+        metadata["artist"] = acoustid_artist
+    if (not title or title == file_path.stem) and acoustid_title:
+        metadata["title"] = acoustid_title
+    if not album and acoustid_album:
+        metadata["album"] = acoustid_album
+    elif not album and spotify_album_name:
+        metadata["album"] = spotify_album_name
+
+    metadata["spotify_id"] = spotify_id
+    metadata["spotify_album_name"] = spotify_album_name
+    metadata["metadata_recovery_debug"] = {
+        "acoustid_artist": acoustid_artist,
+        "acoustid_title": acoustid_title,
+        "acoustid_album": acoustid_album,
+        "acoustid_match_score": float(recovered.get("acoustid_match_score") or 0.0),
+        "spotify_id": spotify_id,
+        "spotify_album_name": spotify_album_name,
+    }
+
+    if acoustid_artist or acoustid_title or acoustid_album:
+        metadata["metadata_source"] = "acoustid_recovered"
+    elif spotify_album_name or spotify_id:
+        metadata["metadata_source"] = "spotify_enriched"
+
+    return metadata
+
+
 @main.command(name="inspect-file")
 @click.argument("file_path", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--original-name", default=None, help="Original filename to use for metadata fallback instead of the cached path.")
-def inspect_file(file_path: Path, original_name: str | None) -> None:
-    click.echo(json.dumps(extract_metadata(str(file_path), original_name=original_name)))
+@click.option("--recover-identity", is_flag=True, help="Try to recover artist/title/album using AcoustID and Spotify hints.")
+def inspect_file(file_path: Path, original_name: str | None, recover_identity: bool) -> None:
+    click.echo(json.dumps(_inspect_file_with_recovery(file_path, original_name, recover_identity)))
 
 
 @main.command()

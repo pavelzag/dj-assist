@@ -8,6 +8,8 @@ export type GoogleDriveAudioFile = {
   md5Checksum: string | null;
 };
 
+const GOOGLE_DRIVE_AUDIO_EXTENSIONS = ['.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.aiff', '.aif'];
+
 function escapeDriveQueryValue(value: string): string {
   return String(value ?? '')
     .replace(/\\/g, '\\\\')
@@ -17,6 +19,16 @@ function escapeDriveQueryValue(value: string): string {
 export function isIgnoredGoogleDriveAudioFileName(name: string): boolean {
   const normalized = String(name ?? '').trim();
   return normalized.startsWith('._');
+}
+
+function hasKnownAudioExtension(name: string): boolean {
+  const normalized = String(name ?? '').trim().toLowerCase();
+  return GOOGLE_DRIVE_AUDIO_EXTENSIONS.some((extension) => normalized.endsWith(extension));
+}
+
+function isLikelyGoogleDriveAudioFile(file: Pick<GoogleDriveAudioFile, 'name' | 'mimeType'>): boolean {
+  const mimeType = String(file.mimeType ?? '').trim().toLowerCase();
+  return mimeType.includes('audio/') || hasKnownAudioExtension(file.name);
 }
 
 // Collect all descendant folder IDs for a given root folder (BFS, capped at
@@ -87,7 +99,11 @@ async function fetchDirectSubfolderIds(parentId: string, accessToken: string): P
 // Build Drive API query clauses for a set of folder IDs.  If no IDs are given,
 // falls back to searching all audio files across the entire Drive.
 function buildFolderQuery(folderIds: string[], search?: string): string {
-  const clauses: string[] = ["trashed = false", "mimeType contains 'audio/'"];
+  const audioQuery = [
+    "mimeType contains 'audio/'",
+    ...GOOGLE_DRIVE_AUDIO_EXTENSIONS.map((extension) => `name contains '${escapeDriveQueryValue(extension)}'`),
+  ].join(' or ');
+  const clauses: string[] = ['trashed = false', `(${audioQuery})`];
   const searchTerm = String(search ?? '').trim();
   if (searchTerm) {
     clauses.push(`name contains '${escapeDriveQueryValue(searchTerm)}'`);
@@ -140,7 +156,7 @@ async function fetchAudioFilePage(input: {
             : [],
           md5Checksum: String(file.md5Checksum ?? '').trim() || null,
         }))
-        .filter((file) => file.id && !isIgnoredGoogleDriveAudioFileName(file.name))
+        .filter((file) => file.id && !isIgnoredGoogleDriveAudioFileName(file.name) && isLikelyGoogleDriveAudioFile(file))
     : [];
 
   return {

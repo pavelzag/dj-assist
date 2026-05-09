@@ -233,6 +233,10 @@ export type LocalAudioMetadata = {
   release_year: number;
   embedded_album_art_url: string;
   embedded_album_art_mime: string;
+  spotify_id: string | null;
+  spotify_album_name: string | null;
+  metadata_source: string | null;
+  metadata_recovery_debug: Record<string, unknown> | null;
 };
 
 export async function readLocalAudioMetadata(filePath: string, originalName?: string): Promise<LocalAudioMetadata> {
@@ -241,6 +245,7 @@ export async function readLocalAudioMetadata(filePath: string, originalName?: st
   if (originalName) {
     args.push('--original-name', originalName);
   }
+  args.push('--recover-identity');
   const { stdout } = await execFileAsync(
     python,
     args,
@@ -264,5 +269,12 @@ export async function readLocalAudioMetadata(filePath: string, originalName?: st
     release_year: Number(parsed.release_year ?? 0) || 0,
     embedded_album_art_url: String(parsed.embedded_album_art_url ?? '').trim(),
     embedded_album_art_mime: String(parsed.embedded_album_art_mime ?? '').trim(),
+    spotify_id: String(parsed.spotify_id ?? '').trim() || null,
+    spotify_album_name: String(parsed.spotify_album_name ?? '').trim() || null,
+    metadata_source: String(parsed.metadata_source ?? '').trim() || null,
+    metadata_recovery_debug:
+      parsed.metadata_recovery_debug && typeof parsed.metadata_recovery_debug === 'object'
+        ? parsed.metadata_recovery_debug as Record<string, unknown>
+        : null,
   };
 }
