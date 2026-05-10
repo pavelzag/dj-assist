@@ -3113,6 +3113,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       syncAddMusicUi();
     }
 
+    function scanCompletionMessage(summary: Record<string, unknown> | null): string {
+      const scanned = Number(summary?.scanned ?? 0);
+      const analyzed = Number(summary?.analyzed ?? 0);
+      const skipped = Number(summary?.skipped ?? 0);
+      const errors = Number(summary?.errors ?? 0);
+      const parts = [
+        `${scanned} scanned`,
+        `${analyzed} analyzed`,
+        skipped ? `${skipped} skipped` : '',
+        errors ? `${errors} errors` : '',
+      ].filter(Boolean);
+      return `Scan finished: ${parts.join(', ')}.`;
+    }
+
     function updateDesktopStatusBadge() {
       if (!desktopStatusBadge) return;
       if (activeScanStatus === 'queued' || activeScanStatus === 'running') {
@@ -7526,16 +7540,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             frozenTrackIdsDuringScan = null;
             await loadScanHistory();
             if (status === 'completed') {
-              const scanned = Number(summary?.scanned ?? 0);
-              const analyzed = Number(summary?.analyzed ?? 0);
+              const completionMessage = scanCompletionMessage(summary);
+              setScanStatus('Scan complete', 'success');
+              scanPreflightEl.textContent = completionMessage;
+              appendScanLog(completionMessage, 'success', {
+                category: 'scan',
+                summary,
+              }, { eventType: 'scan_completed' });
               await loadTracks(searchEl.value.trim());
               await loadLibraryOverview();
               updateRecentNewTrackIdsFromTracks(tracks);
               const newCount = recentNewTrackIds.size;
               showToast(
                 newCount
-                  ? `Scan finished: ${scanned} scanned, ${analyzed} analyzed, ${newCount} new.`
-                  : `Scan finished: ${scanned} scanned, ${analyzed} analyzed.`,
+                  ? `${completionMessage.slice(0, -1)}, ${newCount} new.`
+                  : completionMessage,
                 'success',
                 newCount ? {
                   label: 'View New Tracks',
@@ -7548,8 +7567,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               showProgressToast(
                 'local-scan-progress',
                 newCount
-                  ? `Scan finished: ${scanned} scanned, ${analyzed} analyzed, ${newCount} new.`
-                  : `Scan finished: ${scanned} scanned, ${analyzed} analyzed.`,
+                  ? `${completionMessage.slice(0, -1)}, ${newCount} new.`
+                  : completionMessage,
                 'success',
                 true,
               );
