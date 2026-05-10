@@ -205,6 +205,25 @@ def _server_track_to_local(server_track: dict, filepath: str, file_hash: str, fi
     }
 
 
+def _lookup_preferred_album_art(
+    db: Database,
+    artist: Optional[str],
+    album: Optional[str],
+    spotify_album_name: Optional[str] = None,
+) -> tuple[str, str]:
+    for album_value, source in (
+        (album, "album_cache"),
+        (spotify_album_name, "server_lookup"),
+    ):
+        group_key = _album_group_key(artist, album_value)
+        if not group_key:
+            continue
+        cached = db.get_album_art_by_group_key(group_key)
+        if cached and cached.album_art_url:
+            return str(cached.album_art_url), source
+    return "", ""
+
+
 def _server_track_needs_local_analysis(server_track: dict) -> bool:
     bpm = float(server_track.get("bpm") or server_track.get("spotify_tempo") or 0.0)
     if bpm > 0:
@@ -875,6 +894,8 @@ def _resolve_album_art(
     fetch_album_art: bool,
     album_art_cache: dict[str, dict],
     artist_art_cache: dict[str, dict],
+    preferred_album_art_url: str = "",
+    preferred_album_art_source: str = "",
 ) -> dict:
     spotify_album_name = str(previews.get("spotify_album_name") or "")
     album_group_key = _album_group_key(metadata.get("artist"), metadata.get("album") or spotify_album_name)
@@ -919,6 +940,22 @@ def _resolve_album_art(
                 "album_art_confidence": cached_confidence,
                 "album_art_review_status": "approved" if cached_confidence >= 18.0 else "needs_review",
                 "album_art_review_notes": f"reused artwork from album cluster {album_group_key}",
+            }
+        )
+        if previews.get("album_art_candidates"):
+            result["album_art_candidates"] = previews.get("album_art_candidates")
+    elif fetch_album_art and preferred_album_art_url:
+        source = (preferred_album_art_source or "server_lookup").strip() or "server_lookup"
+        review_notes = "artwork reused from dj-assist server album cache"
+        if source == "album_cache":
+            review_notes = "artwork reused from existing album cache"
+        result.update(
+            {
+                "album_art_url": preferred_album_art_url,
+                "album_art_source": source,
+                "album_art_confidence": 96.0 if source.startswith("server") else 90.0,
+                "album_art_review_status": "approved",
+                "album_art_review_notes": review_notes,
             }
         )
         if previews.get("album_art_candidates"):
@@ -1188,6 +1225,8 @@ def scan_directory(
                     )
                 server_track = None
                 lookup_log = ""
+                preferred_album_art_url = ""
+                preferred_album_art_source = ""
                 if lookup_allowed and server_sync_enabled:
                     server_track, lookup_log = _lookup_server_track(file_hash)
                 elif lookup_allowed and not server_sync_enabled:
@@ -1203,6 +1242,9 @@ def scan_directory(
                     )
                 if server_track:
                     track_data = _server_track_to_local(server_track, filepath, file_hash, file_size, file_mtime)
+                    if track_data.get("album_art_url"):
+                        preferred_album_art_url = str(track_data.get("album_art_url") or "")
+                        preferred_album_art_source = str(track_data.get("album_art_source") or "server_lookup")
                     bpm = float(track_data.get("bpm") or track_data.get("spotify_tempo") or 0.0)
                     key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
                     bpm_missing_reason = ""
@@ -1301,6 +1343,17 @@ def scan_directory(
                 debug_parts.append("album_art=enabled" if fetch_album_art else "album_art=disabled")
                 debug_parts.append(f"title_cleaned={metadata['title'] or 'none'}")
 
+                preferred_album_art_url = ""
+                preferred_album_art_source = ""
+                if fetch_album_art and not preferred_album_art_url:
+                    preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
+                        db,
+                        metadata.get("artist"),
+                        metadata.get("album"),
+                    )
+                    if preferred_album_art_url:
+                        debug_parts.append(f"album_art_preferred={preferred_album_art_source}")
+
                 # Submit remote metadata lookup immediately so it runs
                 # concurrently with BPM/key detection in the main thread.
                 spotify_future: Future | None = None
@@ -1315,7 +1368,7 @@ def scan_directory(
                         metadata["duration"],
                         metadata["track_number"],
                         metadata["release_year"],
-                        fetch_album_art,
+                        fetch_album_art and not bool(preferred_album_art_url),
                         filepath,
                         spotify_scan_enabled if not fast_scan else False,
                         needs_acoustid,
@@ -1468,7 +1521,25 @@ def scan_directory(
                     debug_parts.append(f"bpm_missing_reason={bpm_missing_reason}")
                     debug_parts.append(f"bpm_missing_detail={bpm_missing_detail}")
 
-                album_art = _resolve_album_art(metadata, previews, fetch_album_art, album_art_cache, artist_art_cache)
+                if fetch_album_art and not preferred_album_art_url and previews.get("spotify_album_name"):
+                    preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
+                        db,
+                        metadata.get("artist"),
+                        previews.get("spotify_album_name"),
+                        previews.get("spotify_album_name"),
+                    )
+                    if preferred_album_art_url:
+                        debug_parts.append(f"album_art_preferred={preferred_album_art_source}")
+
+                album_art = _resolve_album_art(
+                    metadata,
+                    previews,
+                    fetch_album_art,
+                    album_art_cache,
+                    artist_art_cache,
+                    preferred_album_art_url=preferred_album_art_url,
+                    preferred_album_art_source=preferred_album_art_source,
+                )
                 album_art_url = str(album_art["album_art_url"] or "")
                 debug_parts.append(f"album_art_source={album_art['album_art_source'] or 'none'}")
                 debug_parts.append(f"album_art_confidence={float(album_art['album_art_confidence'] or 0.0):.1f}")

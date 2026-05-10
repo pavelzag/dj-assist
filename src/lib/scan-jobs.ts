@@ -164,6 +164,22 @@ function applyProgressEvent(job: InMemoryJob, event: ScanProgressEvent & Record<
   if (typeof event.file === 'string') job.state.currentFile = event.file;
 }
 
+function emitJobState(job: InMemoryJob) {
+  emit(job, {
+    event: 'job_state',
+    job_id: job.state.id,
+    status: job.state.status,
+    directory: job.state.directory,
+    current: job.state.processedFiles,
+    total: job.state.totalFiles,
+    current_file: job.state.currentFile,
+    summary: job.state.summary,
+    validation: job.state.validation,
+    options: job.state.options,
+    fatal_error: job.state.fatalError ?? null,
+  });
+}
+
 async function updatePersistentState(job: InMemoryJob) {
   await updateScanRun(job.state.id, {
     status: job.state.status,
@@ -233,6 +249,8 @@ async function handleStructuredEvent(job: InMemoryJob, event: ScanProgressEvent 
         summary: job.state.summary,
         fatal_error: job.state.fatalError ?? null,
       });
+      job.state.currentFile = '';
+      emitJobState(job);
       break;
     }
     case 'scan_failed':
@@ -243,6 +261,7 @@ async function handleStructuredEvent(job: InMemoryJob, event: ScanProgressEvent 
         fatal_error: job.state.fatalError,
         summary: job.state.summary,
       });
+      emitJobState(job);
       break;
     default:
       break;

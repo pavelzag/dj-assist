@@ -325,6 +325,28 @@ class Database:
         finally:
             session.close()
 
+    def get_album_art_by_group_key(self, album_group_key: str) -> Optional[Track]:
+        group_key = str(album_group_key or "").strip()
+        if not group_key:
+            return None
+        session = self.get_session()
+        try:
+            return (
+                session.query(Track)
+                .filter(
+                    Track.album_group_key == group_key,
+                    Track.album_art_url.isnot(None),
+                    Track.album_art_url != "",
+                )
+                .order_by(
+                    Track.album_art_confidence.desc().nullslast(),
+                    Track.id.asc(),
+                )
+                .first()
+            )
+        finally:
+            session.close()
+
     def update_track_analysis(
         self,
         track_id: int,

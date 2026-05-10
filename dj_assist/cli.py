@@ -582,7 +582,7 @@ def reanalyze_bpm(track_id: int, json_output: bool, path_override: str) -> None:
 
 def _refresh_track_art(track_id: int, force: bool = False) -> dict:
     from .media import build_media_links, SpotifyClient
-    from .scanner import _resolve_album_art
+    from .scanner import _lookup_preferred_album_art, _resolve_album_art
 
     started_at = time.perf_counter()
     timeline: list[dict[str, object]] = []
@@ -652,6 +652,14 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
     spotify_enabled = not bool(missing)
     if missing:
         mark("spotify_credentials_missing", missing=",".join(missing))
+    preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
+        db,
+        track.artist,
+        track.album,
+        track.spotify_album_name,
+    )
+    if preferred_album_art_url:
+        mark("album_art_cache_hit", source=preferred_album_art_source or "album_cache")
 
     result: dict[str, object] = {
         "ok": True,
@@ -680,7 +688,7 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
         track.title,
         track.album,
         track.duration,
-        fetch_album_art=True,
+        fetch_album_art=not bool(preferred_album_art_url),
         file_path=track.path,
         enable_spotify=spotify_enabled,
         enable_acoustid=needs_acoustid,
@@ -715,6 +723,8 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
         True,
         {},
         {},
+        preferred_album_art_url=preferred_album_art_url,
+        preferred_album_art_source=preferred_album_art_source,
     )
     mark(
         "resolve_album_art_done",
@@ -943,12 +953,13 @@ def _provider_debug_summary(previews: dict[str, object]) -> str:
 def _resolve_track_art_for_storage(
     track,
     *,
+    db: Database,
     force_resolve: bool,
     album_art_cache: dict[str, dict],
     artist_art_cache: dict[str, dict],
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
     from .media import build_media_links
-    from .scanner import _resolve_album_art
+    from .scanner import _lookup_preferred_album_art, _resolve_album_art
 
     current_url = str(track.album_art_url or "").strip()
     if current_url and not force_resolve:
@@ -982,12 +993,20 @@ def _resolve_track_art_for_storage(
     missing = SpotifyClient().missing_credentials()
     spotify_enabled = not bool(missing)
     needs_acoustid = not bool((track.artist and str(track.artist).strip()) and (track.title and str(track.title).strip()))
+    preferred_album_art_url = ""
+    preferred_album_art_source = ""
+    preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
+        db,
+        track.artist,
+        track.album,
+        track.spotify_album_name,
+    )
     previews = build_media_links(
         track.artist,
         track.title,
         track.album,
         track.duration,
-        fetch_album_art=True,
+        fetch_album_art=not bool(preferred_album_art_url),
         file_path=track.path,
         enable_spotify=spotify_enabled,
         enable_acoustid=needs_acoustid,
@@ -1003,6 +1022,8 @@ def _resolve_track_art_for_storage(
         True,
         album_art_cache,
         artist_art_cache,
+        preferred_album_art_url=preferred_album_art_url,
+        preferred_album_art_source=preferred_album_art_source,
     )
     return (
         album_art,
@@ -1199,6 +1220,7 @@ def store_art_gcs(
     skipped = 0
     errors = 0
     reused = 0
+    db = _db()
     album_art_cache: dict[str, dict] = {}
     artist_art_cache: dict[str, dict] = {}
     source_cache: dict[str, dict[str, str]] = {}
@@ -1207,6 +1229,7 @@ def store_art_gcs(
         try:
             album_art, preview_payload, resolution_meta = _resolve_track_art_for_storage(
                 track,
+                db=db,
                 force_resolve=force_resolve,
                 album_art_cache=album_art_cache,
                 artist_art_cache=artist_art_cache,
