@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTracks, getTrackById, serializeTrack } from '@/lib/db';
 import { getRecommendedNextTracks, type RecommendationIntent } from '@/lib/analyzer';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -18,8 +19,12 @@ export async function GET(
   if (!track) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
+  const googleEnabled = googleFeaturesEnabled();
+  if (!googleEnabled && String(track.path ?? '').trim().startsWith('gdrive:')) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
 
-  const allTracks = await getAllTracks();
+  const allTracks = (await getAllTracks()).filter((candidate) => googleEnabled || !String(candidate.path ?? '').trim().startsWith('gdrive:'));
   const rawIntent = request.nextUrl.searchParams.get('intent');
   const intent: RecommendationIntent = rawIntent === 'up' || rawIntent === 'down' || rawIntent === 'same' ? rawIntent : 'safe';
   const recommendations = getRecommendedNextTracks(

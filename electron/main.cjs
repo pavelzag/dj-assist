@@ -23,22 +23,42 @@ function readBundledBuildEnv() {
   }
 }
 
+function appFlavorFromEnv(buildEnv = readBundledBuildEnv()) {
+  const flavor = String(
+    process.env.DJ_ASSIST_APP_FLAVOR
+      || process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR
+      || buildEnv.DJ_ASSIST_APP_FLAVOR
+      || buildEnv.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR
+      || '',
+  ).trim();
+  return flavor === 'prod' ? 'prod' : 'debug';
+}
+
+function googleFeaturesEnabled() {
+  return appFlavorFromEnv() !== 'prod';
+}
+
 function applyBundledBuildEnv() {
   const buildEnv = readBundledBuildEnv();
   const googleClientId = String(buildEnv.GOOGLE_CLIENT_ID ?? '').trim();
   const googleClientSecret = String(buildEnv.GOOGLE_CLIENT_SECRET ?? '').trim();
-  const appFlavor = String(buildEnv.DJ_ASSIST_APP_FLAVOR ?? buildEnv.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR ?? '').trim();
-  if (googleClientId && !process.env.GOOGLE_CLIENT_ID) {
-    process.env.GOOGLE_CLIENT_ID = googleClientId;
-  }
-  if (googleClientSecret && !process.env.GOOGLE_CLIENT_SECRET) {
-    process.env.GOOGLE_CLIENT_SECRET = googleClientSecret;
-  }
+  const appFlavor = appFlavorFromEnv(buildEnv);
   if (appFlavor && !process.env.DJ_ASSIST_APP_FLAVOR) {
     process.env.DJ_ASSIST_APP_FLAVOR = appFlavor;
   }
   if (appFlavor && !process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR) {
     process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR = appFlavor;
+  }
+  if (appFlavor === 'prod') {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+    return;
+  }
+  if (googleClientId && !process.env.GOOGLE_CLIENT_ID) {
+    process.env.GOOGLE_CLIENT_ID = googleClientId;
+  }
+  if (googleClientSecret && !process.env.GOOGLE_CLIENT_SECRET) {
+    process.env.GOOGLE_CLIENT_SECRET = googleClientSecret;
   }
 }
 
@@ -297,9 +317,12 @@ function applyManagedRuntimeEnv() {
     process.env.SPOTIFY_CLIENT_ID = spotifySettings.clientId;
     process.env.SPOTIFY_CLIENT_SECRET = spotifySettings.clientSecret;
   }
-  const googleOauthSettings = readManagedGoogleOauthSettings();
+  const googleOauthSettings = googleFeaturesEnabled() ? readManagedGoogleOauthSettings() : null;
   if (googleOauthSettings && !process.env.GOOGLE_CLIENT_ID) {
     process.env.GOOGLE_CLIENT_ID = googleOauthSettings.clientId;
+  } else if (!googleFeaturesEnabled()) {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
   }
   const bundledPython = resolveBundledPythonPath();
   delete process.env.DJ_ASSIST_BUNDLED_PYTHON_ERROR;
@@ -316,6 +339,7 @@ function applyManagedRuntimeEnv() {
 }
 
 function logGoogleOauthEnvDiagnostics() {
+  if (!googleFeaturesEnabled()) return;
   const buildEnv = readBundledBuildEnv();
   const buildClientId = String(buildEnv.GOOGLE_CLIENT_ID ?? '').trim();
   const buildClientSecret = String(buildEnv.GOOGLE_CLIENT_SECRET ?? '').trim();
@@ -571,6 +595,10 @@ function stopManagedServer() {
 
 function startGoogleApiProxy() {
   return new Promise((resolve) => {
+    if (!googleFeaturesEnabled()) {
+      resolve(null);
+      return;
+    }
     const proxyServer = http.createServer((req, res) => {
       const url = req.url || '';
 
@@ -877,7 +905,8 @@ if (hasSingleInstanceLock) {
       if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
     }
     createMainWindow();
-    startGoogleApiProxy()
+    const googleProxyReady = googleFeaturesEnabled() ? startGoogleApiProxy() : Promise.resolve(null);
+    googleProxyReady
       .then(() => ensureManagedServer())
       .then(() => {
         void loadMainRenderer();

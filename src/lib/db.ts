@@ -11,6 +11,7 @@ import {
   syncCollectionSnapshot,
 } from '@/lib/server-collections';
 import { isIgnoredGoogleDriveAudioFileName } from '@/lib/google-drive-files';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 import { parseTrackSearchQuery } from '@/lib/track-search';
 
 declare global {
@@ -2120,7 +2121,8 @@ export interface LibraryOverview {
 }
 
 export async function getLibraryOverview(): Promise<LibraryOverview> {
-  const allTracks = (await getAllTracks()).map((track) => serializeTrack(track, { includeEmbeddedArtwork: false }));
+  const visibleRows = (await getAllTracks()).filter((track) => googleFeaturesEnabled() || !isGoogleDriveTrackPathValue(track.path));
+  const allTracks = visibleRows.map((track) => serializeTrack(track, { includeEmbeddedArtwork: false }));
 
   const health = {
     total: allTracks.length,
