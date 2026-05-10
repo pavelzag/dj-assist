@@ -35,9 +35,11 @@ export default function AppShell({
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
             <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
             <input id="key-filter" placeholder="Key" />
-            <label>
-              <input id="show-pending-google-drive-imports" type="checkbox" /> Show unrecognized imports
-            </label>
+            {isProdFlavor ? null : (
+              <label>
+                <input id="show-pending-google-drive-imports" type="checkbox" /> Show unrecognized imports
+              </label>
+            )}
             {isProdFlavor
               ? <input id="hide-unknown-artists" type="checkbox" hidden />
               : (
@@ -58,6 +60,7 @@ export default function AppShell({
           </div>
         </div>
         <input id="scan-directory" type="hidden" />
+        <div className="selected-source-indicator" id="selected-source-indicator" hidden />
         <div className="scan-preflight" id="scan-preflight">Choose a music source to add tracks.</div>
         <div className="browse-scope" id="browse-scope">
           <span className="browse-scope-empty">Viewing full collection</span>
@@ -233,23 +236,25 @@ export default function AppShell({
         </div>
       </div>
 
-      <div className="modal" id="vpn-warning-modal" aria-hidden="true">
-        <div className="modal-card">
-          <div className="modal-head">
-            <h3>Sign-In Taking a While?</h3>
-            <button className="close" id="close-vpn-warning" type="button">&times;</button>
-          </div>
-          <div className="metadata-editor">
-            <div className="scan-preflight">
-              Google sign-in uses a local callback that some VPNs block. If you&apos;re connected to a VPN, try <strong>disabling it</strong> and signing in again.
+      {isProdFlavor ? null : (
+        <div className="modal" id="vpn-warning-modal" aria-hidden="true">
+          <div className="modal-card">
+            <div className="modal-head">
+              <h3>Sign-In Taking a While?</h3>
+              <button className="close" id="close-vpn-warning" type="button">&times;</button>
             </div>
-            <div className="buttons">
-              <button className="btn" id="vpn-warning-try-again-btn" type="button">Try Again</button>
-              <button className="btn secondary" id="vpn-warning-dismiss-btn" type="button">Dismiss</button>
+            <div className="metadata-editor">
+              <div className="scan-preflight">
+                Google sign-in uses a local callback that some VPNs block. If you&apos;re connected to a VPN, try <strong>disabling it</strong> and signing in again.
+              </div>
+              <div className="buttons">
+                <button className="btn" id="vpn-warning-try-again-btn" type="button">Try Again</button>
+                <button className="btn secondary" id="vpn-warning-dismiss-btn" type="button">Dismiss</button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="modal" id="tap-bpm-modal" aria-hidden="true">
         <div className="modal-card">
@@ -307,42 +312,44 @@ export default function AppShell({
         </div>
       )}
 
-      <div className="modal" id="google-drive-folder-modal" aria-hidden="true">
-        <div className="modal-card google-drive-folder-card">
-          <div className="modal-head">
-            <h3>Choose Google Drive Folder</h3>
-            <button className="close" id="close-google-drive-folder-modal" type="button">&times;</button>
-          </div>
-          <div className="google-drive-browser">
-            <div className="google-drive-browser-head">
-              <div className="scan-preflight" id="google-drive-folder-status">Browse your Google Drive folders. DJ Assist only uses read access.</div>
-              <div className="google-drive-folder-breadcrumb" id="google-drive-folder-path">Current folder: My Drive</div>
-              <input
-                className="google-drive-folder-search"
-                id="google-drive-folder-search"
-                type="search"
-                placeholder="Search folders or files"
-                aria-label="Search Google Drive folders or files"
-              />
+      {isProdFlavor ? null : (
+        <div className="modal" id="google-drive-folder-modal" aria-hidden="true">
+          <div className="modal-card google-drive-folder-card">
+            <div className="modal-head">
+              <h3>Choose Google Drive Folder</h3>
+              <button className="close" id="close-google-drive-folder-modal" type="button">&times;</button>
             </div>
-            <div className="google-drive-browser-shell">
-              <aside className="google-drive-sidebar" id="google-drive-folder-sidebar">
-                <div className="empty">Loading locations…</div>
-              </aside>
-              <section className="google-drive-browser-main">
-                <div className="google-drive-browser-toolbar">
-                  <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
-                  <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
-                  <button className="btn" id="google-drive-use-selected-btn" type="button" hidden>Use Selected</button>
-                </div>
-                <div className="google-drive-folder-list" id="google-drive-folder-list">
-                  <div className="empty">Loading Google Drive folders…</div>
-                </div>
-              </section>
+            <div className="google-drive-browser">
+              <div className="google-drive-browser-head">
+                <div className="scan-preflight" id="google-drive-folder-status">Browse your Google Drive folders. DJ Assist only uses read access.</div>
+                <div className="google-drive-folder-breadcrumb" id="google-drive-folder-path">Current folder: My Drive</div>
+                <input
+                  className="google-drive-folder-search"
+                  id="google-drive-folder-search"
+                  type="search"
+                  placeholder="Search folders or files"
+                  aria-label="Search Google Drive folders or files"
+                />
+              </div>
+              <div className="google-drive-browser-shell">
+                <aside className="google-drive-sidebar" id="google-drive-folder-sidebar">
+                  <div className="empty">Loading locations…</div>
+                </aside>
+                <section className="google-drive-browser-main">
+                  <div className="google-drive-browser-toolbar">
+                    <button className="btn secondary" id="google-drive-folder-back-btn" type="button">Back</button>
+                    <button className="btn" id="google-drive-folder-use-current-btn" type="button">Use This Folder</button>
+                    <button className="btn" id="google-drive-use-selected-btn" type="button" hidden>Use Selected</button>
+                  </div>
+                  <div className="google-drive-folder-list" id="google-drive-folder-list">
+                    <div className="empty">Loading Google Drive folders…</div>
+                  </div>
+                </section>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="modal" id="add-music-source-modal" aria-hidden="true">
         <div className="modal-card add-music-source-card">

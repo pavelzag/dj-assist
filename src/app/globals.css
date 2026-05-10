@@ -420,6 +420,45 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   text-decoration: underline;
   cursor: pointer;
 }
+.selected-source-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 108, 0, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 108, 0, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+}
+.selected-source-indicator[hidden] {
+  display: none;
+}
+.selected-source-indicator strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.selected-source-indicator span {
+  min-width: 0;
+  max-width: min(560px, 70vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selected-source-indicator em {
+  color: #ffd7b6;
+  font-style: normal;
+  font-weight: 700;
+}
+.selected-source-label {
+  color: var(--orange);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .scan-log {
   max-height: 160px;
   overflow: auto;

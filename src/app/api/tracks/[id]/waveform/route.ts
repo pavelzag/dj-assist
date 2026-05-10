@@ -5,6 +5,7 @@ import { getTrackById } from '@/lib/db';
 import { resolveWorkingPython } from '@/lib/scan';
 import { readCachedWaveform, writeCachedWaveform, type WaveformPeaksPayload } from '@/lib/waveforms';
 import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -26,6 +27,9 @@ export async function GET(
   }
   let localPath: string;
   if (String(track.path).startsWith('gdrive:')) {
+    if (!googleFeaturesEnabled()) {
+      return NextResponse.json({ error: 'not found' }, { status: 404 });
+    }
     const fileId = String(track.path).slice('gdrive:'.length);
     try {
       const localFile = await ensureLocalGoogleDriveTrackFile(fileId);

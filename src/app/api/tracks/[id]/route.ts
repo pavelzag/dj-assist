@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { aggregateTracks, getAllTrackRows, getTrackById, getTrackGroupMembers, serializeTrack, serializeTrackGroup, updateTrackBpm, updateTrackMetadata } from '@/lib/db';
 import { getRecommendedNextTracks, type RecommendationIntent } from '@/lib/analyzer';
 import { resolveWorkingPython } from '@/lib/scan';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -23,11 +24,18 @@ export async function GET(
   if (!track) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
+  const googleEnabled = googleFeaturesEnabled();
+  if (!googleEnabled && String(track.path ?? '').trim().startsWith('gdrive:')) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
 
-  const allTracks = await getAllTrackRows();
+  const allTracks = (await getAllTrackRows()).filter((candidate) => googleEnabled || !String(candidate.path ?? '').trim().startsWith('gdrive:'));
   const groupedTracks = aggregateTracks(allTracks);
-  const trackGroup = await getTrackGroupMembers(track.id);
+  const trackGroup = (await getTrackGroupMembers(track.id)).filter((candidate) => googleEnabled || !String(candidate.path ?? '').trim().startsWith('gdrive:'));
   const groupedTrack = trackGroup[0];
+  if (!groupedTrack) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
   const rawIntent = request.nextUrl.searchParams.get('intent');
   const intent: RecommendationIntent = rawIntent === 'up' || rawIntent === 'down' || rawIntent === 'same' ? rawIntent : 'safe';
   const recommendations = getRecommendedNextTracks(
@@ -58,7 +66,11 @@ export async function PATCH(
   const body = await request.json();
   const currentTrack = await getTrackById(trackId);
   if (!currentTrack) return NextResponse.json({ error: 'not found' }, { status: 404 });
-  const trackGroup = await getTrackGroupMembers(trackId);
+  const googleEnabled = googleFeaturesEnabled();
+  if (!googleEnabled && String(currentTrack.path ?? '').trim().startsWith('gdrive:')) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
+  const trackGroup = (await getTrackGroupMembers(trackId)).filter((track) => googleEnabled || !String(track.path ?? '').trim().startsWith('gdrive:'));
   const groupIds = trackGroup.map((track) => track.id);
 
   if (body.bpm !== undefined) {
@@ -113,7 +125,7 @@ export async function PATCH(
   }
 
   if (body.artist !== undefined || body.title !== undefined || body.album !== undefined || body.key !== undefined || body.ignored !== undefined || body.custom_tags !== undefined || body.manual_cues !== undefined || body.album_art_url !== undefined || body.album_art_source !== undefined || body.album_art_confidence !== undefined || body.album_art_review_status !== undefined || body.album_art_review_notes !== undefined || body.track_notes !== undefined || body.source_preference !== undefined) {
-    const sourcePreference = body.source_preference === 'local' || body.source_preference === 'google_drive'
+    const sourcePreference = body.source_preference === 'local' || (googleEnabled && body.source_preference === 'google_drive')
       ? body.source_preference
       : body.source_preference === null || body.source_preference === ''
         ? null
@@ -140,6 +152,6 @@ export async function PATCH(
     await Promise.all(groupIds.map((id) => updateTrackMetadata(id, patch)));
   }
 
-  const refreshedGroup = await getTrackGroupMembers(trackId);
+  const refreshedGroup = (await getTrackGroupMembers(trackId)).filter((track) => googleEnabled || !String(track.path ?? '').trim().startsWith('gdrive:'));
   return NextResponse.json({ track: serializeTrackGroup(refreshedGroup) });
 }

@@ -4,6 +4,7 @@ import {
   getClientId,
 } from '@/lib/runtime-settings';
 import { fetchServerEntitlements } from '@/lib/server-account';
+import { isProdAppFlavor } from '@/lib/app-flavor';
 
 type CollectionTrackReference = {
   position: number;
@@ -77,7 +78,7 @@ export type CollectionSyncResult = {
   collection?: SyncedCollectionInfo;
 } | {
   ok: false;
-  skipped: 'server disabled' | 'server url missing' | 'playlist sync not entitled';
+  skipped: 'server disabled' | 'server url missing' | 'playlist sync not signed in' | 'playlist sync not entitled';
 };
 
 export class CollectionSyncConflictError extends Error {
@@ -106,6 +107,9 @@ function buildServerHeaders(googleIdToken: string, googleAccessToken: string) {
 }
 
 async function postCollectionPayload(payload: Record<string, unknown>): Promise<CollectionSyncResult> {
+  if (!(await canUsePlaylistSyncFeature())) {
+    return { ok: false, skipped: 'playlist sync not signed in' };
+  }
   const server = await effectiveServerSettings();
   if (!server.enabled) return { ok: false, skipped: 'server disabled' as const };
 
@@ -185,17 +189,18 @@ async function getServerAuthHeaders() {
 }
 
 async function canUsePlaylistSyncFeature() {
-  const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' || process.env.DJ_ASSIST_APP_FLAVOR === 'prod'
-    ? 'prod'
-    : 'debug';
-  if (appFlavor !== 'prod') return true;
+  const user = await effectiveUserData();
+  const googleIdToken = String(user.google_id_token ?? '').trim();
+  const googleAccessToken = String(user.google_access_token ?? '').trim();
+  if (user.type !== 'google' || (!googleIdToken && !googleAccessToken)) return false;
+  if (!isProdAppFlavor()) return true;
   const response = await fetchServerEntitlements();
   return Array.isArray(response?.entitlements) && response.entitlements.includes('playlist_sync');
 }
 
 export async function syncCollectionSnapshot(snapshot: CollectionSnapshot): Promise<CollectionSyncResult> {
   if (!(await canUsePlaylistSyncFeature())) {
-    return { ok: false, skipped: 'playlist sync not entitled' };
+    return { ok: false, skipped: 'playlist sync not signed in' };
   }
   return postCollectionPayload({ collections: [snapshot] });
 }

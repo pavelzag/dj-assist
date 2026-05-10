@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { bulkTrackAction, getTracksByIds } from '@/lib/db';
 import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
 import { resolveWorkingPython } from '@/lib/scan';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 const execFileAsync = promisify(execFile);
@@ -114,6 +115,10 @@ export async function POST(request: NextRequest) {
         let pathOverride = '';
         let googleDriveDownload: Record<string, unknown> | null = null;
         if (String(track.path ?? '').startsWith('gdrive:')) {
+          if (!googleFeaturesEnabled()) {
+            results.push({ id, ok: false, message: 'Track not found.' });
+            continue;
+          }
           const fileId = String(track.path ?? '').slice('gdrive:'.length).trim();
           if (!fileId) throw new Error('Google Drive track is missing its file ID.');
           const downloaded = await ensureLocalGoogleDriveTrackFile(fileId);

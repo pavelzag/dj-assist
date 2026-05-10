@@ -12,11 +12,14 @@ function optionalValue(name) {
 }
 
 const buildEnv = {
-  GOOGLE_CLIENT_ID: optionalValue('GOOGLE_CLIENT_ID'),
-  GOOGLE_CLIENT_SECRET: optionalValue('GOOGLE_CLIENT_SECRET'),
   DJ_ASSIST_APP_FLAVOR: optionalValue('DJ_ASSIST_APP_FLAVOR') || optionalValue('NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR') || 'debug',
   NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR: optionalValue('NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR') || optionalValue('DJ_ASSIST_APP_FLAVOR') || 'debug',
 };
+
+if (buildEnv.DJ_ASSIST_APP_FLAVOR !== 'prod' && buildEnv.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR !== 'prod') {
+  buildEnv.GOOGLE_CLIENT_ID = optionalValue('GOOGLE_CLIENT_ID');
+  buildEnv.GOOGLE_CLIENT_SECRET = optionalValue('GOOGLE_CLIENT_SECRET');
+}
 
 fs.writeFileSync(outputPath, `${JSON.stringify(buildEnv, null, 2)}\n`, 'utf8');
 console.log(`Wrote ${path.relative(process.cwd(), outputPath)}`);

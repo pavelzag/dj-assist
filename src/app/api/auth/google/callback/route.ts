@@ -11,10 +11,14 @@ import {
   verifyGoogleIdToken,
 } from '@/lib/google-auth';
 import { appendAuthLog, createAuthDiagnosticId, maskValue } from '@/lib/auth-log';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
+  if (!googleFeaturesEnabled()) {
+    return NextResponse.json({ error: 'Unavailable in this app version.' }, { status: 404 });
+  }
   const diagnosticId = createAuthDiagnosticId();
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);

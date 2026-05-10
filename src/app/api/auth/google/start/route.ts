@@ -18,6 +18,7 @@ import {
 import { appendAuthLog, createAuthDiagnosticId, maskValue } from '@/lib/auth-log';
 import { verifyGoogleIdToken, stringOrUndefined } from '@/lib/google-auth';
 import { loadRuntimeSettings, maskClientId } from '@/lib/runtime-settings';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -30,6 +31,9 @@ type LoopbackSession = {
 let activeSession: LoopbackSession | null = null;
 
 export async function GET(request: NextRequest) {
+  if (!googleFeaturesEnabled()) {
+    return NextResponse.json({ error: 'Unavailable in this app version.' }, { status: 404 });
+  }
   const diagnosticId = createAuthDiagnosticId();
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
