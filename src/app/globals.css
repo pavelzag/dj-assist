@@ -452,6 +452,16 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   font-style: normal;
   font-weight: 700;
 }
+.selected-source-dismiss {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .selected-source-label {
   color: var(--orange);
   font-size: 10px;

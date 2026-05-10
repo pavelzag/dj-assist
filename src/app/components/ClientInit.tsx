@@ -213,6 +213,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleAuthUpsellEvaluated = false;
     let scanSourceMode: ScanSourceMode = 'local';
     let dismissedSelectedSourceLabel = '';
+    let dismissedSelectedSourceIndicatorLabel = '';
     let selectedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
     let favoritedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
     let gdriveDragSelecting = false;
@@ -1087,15 +1088,35 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function syncSelectedSourceIndicator() {
       if (!selectedSourceIndicatorEl) return;
       const actionLabel = addMusicStartLabel();
-      if (scanSourceMode === 'google_drive') {
+      const renderSelectedSourceIndicator = (
+        sourceKind: 'local' | 'google_drive',
+        sourceName: string,
+        sourceLabel: string,
+        message: string,
+      ) => {
+        if (dismissedSelectedSourceIndicatorLabel === message) {
+          selectedSourceIndicatorEl.hidden = true;
+          selectedSourceIndicatorEl.removeAttribute('data-source');
+          selectedSourceIndicatorEl.textContent = '';
+          return;
+        }
         selectedSourceIndicatorEl.hidden = false;
-        selectedSourceIndicatorEl.dataset.source = 'google_drive';
+        selectedSourceIndicatorEl.dataset.source = sourceKind;
         selectedSourceIndicatorEl.innerHTML = `
           <span class="selected-source-label">Selected source</span>
-          <strong>Google Drive</strong>
-          <span>${esc(selectedGoogleDriveFolderLabel())}</span>
-          <em>Press ${esc(actionLabel)} to add tracks.</em>
+          <strong>${esc(sourceName)}</strong>
+          <span>${esc(sourceLabel)}</span>
+          <em>${esc(message)}</em>
+          <button type="button" class="selected-source-dismiss" id="selected-source-dismiss-btn" aria-label="Dismiss selected source banner">Dismiss</button>
         `;
+      };
+      if (scanSourceMode === 'google_drive') {
+        renderSelectedSourceIndicator(
+          'google_drive',
+          'Google Drive',
+          selectedGoogleDriveFolderLabel(),
+          `Press ${actionLabel} to add tracks.`,
+        );
         return;
       }
       const label = localSourceLabel();
@@ -1103,16 +1124,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         selectedSourceIndicatorEl.hidden = true;
         selectedSourceIndicatorEl.removeAttribute('data-source');
         selectedSourceIndicatorEl.textContent = '';
+        dismissedSelectedSourceIndicatorLabel = '';
         return;
       }
-      selectedSourceIndicatorEl.hidden = false;
-      selectedSourceIndicatorEl.dataset.source = 'local';
-      selectedSourceIndicatorEl.innerHTML = `
-        <span class="selected-source-label">Selected source</span>
-        <strong>This Mac</strong>
-        <span>${esc(label)}</span>
-        <em>Press ${esc(actionLabel)} to scan this folder.</em>
-      `;
+      renderSelectedSourceIndicator(
+        'local',
+        'This Mac',
+        label,
+        `Press ${actionLabel} to scan this folder.`,
+      );
     }
 
     function addMusicStartLabel() {
@@ -8600,6 +8620,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const message = scanPreflightEl.textContent?.replace(/\s*Dismiss\s*$/, '').trim() ?? '';
       dismissedSelectedSourceLabel = message;
       scanPreflightEl.textContent = '';
+    });
+    selectedSourceIndicatorEl?.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('#selected-source-dismiss-btn');
+      if (!button) return;
+      const message = selectedSourceIndicatorEl.querySelector('em')?.textContent?.trim() ?? '';
+      dismissedSelectedSourceIndicatorLabel = message;
+      selectedSourceIndicatorEl.hidden = true;
+      selectedSourceIndicatorEl.removeAttribute('data-source');
+      selectedSourceIndicatorEl.textContent = '';
     });
     quickAnalyzeAllArtworkBtn?.addEventListener('click', () => {
       analyzeAllArtworkFromLoadedTracks();
