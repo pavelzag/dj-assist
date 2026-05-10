@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getTrackById, serializeTrack } from '@/lib/db';
 import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
 import { resolveWorkingPython } from '@/lib/scan';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -25,6 +26,9 @@ export async function POST(
     let pathOverride = '';
     let googleDriveDownload: Record<string, unknown> | null = null;
     if (String(currentTrack.path ?? '').startsWith('gdrive:')) {
+      if (!googleFeaturesEnabled()) {
+        return NextResponse.json({ error: 'not found' }, { status: 404 });
+      }
       const fileId = String(currentTrack.path ?? '').slice('gdrive:'.length).trim();
       if (!fileId) {
         return NextResponse.json({ error: 'Google Drive track is missing its file ID.' }, { status: 400 });

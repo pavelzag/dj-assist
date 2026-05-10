@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { aggregateTracks, getAllTrackRows, getDatabasePath, searchTrackRows, serializeTrackGroup } from '@/lib/db';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -44,10 +45,20 @@ export async function GET(request: NextRequest) {
     const tracks = hasFilter
       ? await searchTrackRows({ query, bpmMin, bpmMax, key })
       : await getAllTrackRows();
+    const googleEnabled = googleFeaturesEnabled();
+    const visibleTracks = googleEnabled
+      ? tracks
+      : tracks.filter((track) => !String(track.path ?? '').trim().startsWith('gdrive:'));
 
-    let payload = aggregateTracks(tracks).map((group) => serializeTrackGroup(group, { includeEmbeddedArtwork: false }));
+    let payload = aggregateTracks(visibleTracks).map((group) => serializeTrackGroup(group, { includeEmbeddedArtwork: false }));
     if (highConfidenceOnly) {
       payload = payload.filter((t) => t.spotify_high_confidence);
+    }
+    if (!googleEnabled) {
+      payload = payload.map((track) => ({
+        ...track,
+        source_preference: track.source_preference === 'google_drive' ? null : track.source_preference,
+      }));
     }
 
     const clientId = process.env.SPOTIFY_CLIENT_ID ?? '';

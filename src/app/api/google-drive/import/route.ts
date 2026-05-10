@@ -25,7 +25,7 @@ import {
 import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
 import { ensureLocalGoogleDriveTrackFile, readLocalAudioMetadata } from '@/lib/google-drive-cache';
 import { resolveWorkingPython } from '@/lib/scan';
-import { fetchServerEntitlements } from '@/lib/server-account';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 const GOOGLE_DRIVE_IMPORT_TIMEOUT_MS = 5 * 60_000;
@@ -351,17 +351,10 @@ async function reanalyzeImportedArtwork(input: {
 }
 
 export async function POST(request: NextRequest) {
+  if (!googleFeaturesEnabled()) {
+    return NextResponse.json({ error: 'Unavailable in this app version.' }, { status: 404 });
+  }
   try {
-    const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' || process.env.DJ_ASSIST_APP_FLAVOR === 'prod'
-      ? 'prod'
-      : 'debug';
-    if (appFlavor === 'prod') {
-      const entitlementResponse = await fetchServerEntitlements();
-      const entitlements = Array.isArray(entitlementResponse?.entitlements) ? entitlementResponse.entitlements : [];
-      if (!entitlements.includes('google_drive')) {
-        return NextResponse.json({ error: 'Google Drive import is part of DJ Assist Sync.' }, { status: 403 });
-      }
-    }
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const maxFiles = Math.min(Math.max(Math.trunc(Number(body.maxFiles ?? 2000) || 2000), 1), 5000);
     const folderId = String(body.folderId ?? '').trim();

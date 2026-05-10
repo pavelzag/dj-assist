@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getGoogleDriveAccessToken } from '@/lib/runtime-settings';
 import { listGoogleDriveAudioFiles } from '@/lib/google-drive-files';
 import { logServerEvent } from '@/lib/app-log';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -26,6 +27,9 @@ function logGoogleDriveFiles(
 }
 
 export async function GET(request: NextRequest) {
+  if (!googleFeaturesEnabled()) {
+    return NextResponse.json({ error: 'Unavailable in this app version.' }, { status: 404 });
+  }
   try {
     const { accessToken } = await getGoogleDriveAccessToken();
     const { searchParams } = new URL(request.url);

@@ -6,6 +6,7 @@ import { createReadStream, existsSync, statSync } from 'fs';
 import path from 'path';
 import { getTrackById } from '@/lib/db';
 import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
@@ -64,6 +65,9 @@ export async function GET(
   let filePath: string;
   let mimeTypeOverride: string | null = null;
   if (String(track.path).startsWith('gdrive:')) {
+    if (!googleFeaturesEnabled()) {
+      return Response.json({ error: 'not found' }, { status: 404 });
+    }
     const fileId = String(track.path).slice('gdrive:'.length);
     try {
       const localFile = await ensureLocalGoogleDriveTrackFile(fileId);

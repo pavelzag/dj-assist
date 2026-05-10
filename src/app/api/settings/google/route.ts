@@ -5,10 +5,14 @@ import {
   googleOauthDiagnostics,
   saveGoogleOauthSettings,
 } from '@/lib/runtime-settings';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
 export async function GET() {
+  if (!googleFeaturesEnabled()) {
+    return NextResponse.json({ ok: false, error: 'Unavailable in this app version.' }, { status: 404 });
+  }
   const googleOauth = await effectiveGoogleOauthCredentials();
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
   const diagnostics = await googleOauthDiagnostics();
@@ -20,6 +24,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  if (!googleFeaturesEnabled()) {
+    return NextResponse.json({ ok: false, error: 'Unavailable in this app version.' }, { status: 404 });
+  }
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const incomingClientId = String(body.clientId ?? '').trim();
   const incomingClientSecret = String(body.clientSecret ?? '').trim();

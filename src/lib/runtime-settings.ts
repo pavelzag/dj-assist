@@ -2,6 +2,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 import { googleAuthConfigured } from '@/lib/google-auth';
 import { GOOGLE_DRIVE_METADATA_SCOPE } from '@/lib/google-desktop-auth';
 
@@ -202,6 +203,9 @@ export async function saveServerSettings(input: Partial<ServerSettings>): Promis
 }
 
 export async function saveGoogleAuth(auth: Omit<AuthSettings, 'provider' | 'updatedAt'>): Promise<AuthSettings> {
+  if (!googleFeaturesEnabled()) {
+    throw new Error('Google sign-in is not available in this app version.');
+  }
   const current = await loadRuntimeSettings();
   const existing = current.auth?.provider === 'google' ? current.auth : null;
   const next: AuthSettings = {
@@ -252,6 +256,12 @@ export async function clearPendingGoogleAuthSession(): Promise<void> {
 }
 
 export async function effectiveUserData(): Promise<UserData> {
+  if (!googleFeaturesEnabled()) {
+    return {
+      type: 'anonymous',
+      id: await getClientId(),
+    };
+  }
   const settings = await loadRuntimeSettings();
   let auth = settings.auth;
   if (auth?.provider === 'google' && auth.id) {
@@ -373,6 +383,9 @@ export async function getGoogleDriveAccessToken(): Promise<{
   accessToken: string;
   userData: UserData;
 }> {
+  if (!googleFeaturesEnabled()) {
+    throw new Error('Google Drive is not available in this app version.');
+  }
   const settings = await loadRuntimeSettings();
   let auth = settings.auth;
   if (!auth || auth.provider !== 'google' || !auth.id) {
@@ -427,17 +440,20 @@ export function publicUserSummary(user: UserData) {
 export async function serverRuntimeSummary() {
   const server = await effectiveServerSettings();
   const user = await effectiveUserData();
-  const googleOauth = await effectiveGoogleOauthCredentials();
+  const googleEnabled = googleFeaturesEnabled();
+  const googleOauth = googleEnabled
+    ? await effectiveGoogleOauthCredentials()
+    : { credentials: null, summary: { configured: false, source: 'none' as const, client_id_masked: null, has_secret: false, missing: [] } };
   const settings = await loadRuntimeSettings();
-  const auth = settings.auth?.provider === 'google' ? settings.auth : null;
+  const auth = googleEnabled && settings.auth?.provider === 'google' ? settings.auth : null;
   return {
     ...server,
     activeUrl: server.localDebug ? server.localServerUrl : server.serverUrl,
     user: publicUserSummary(user),
-    googleAuthConfigured: googleOauth.summary.configured || googleAuthConfigured(),
+    googleAuthConfigured: googleEnabled && (googleOauth.summary.configured || googleAuthConfigured()),
     googleOauth: googleOauth.summary,
     googleDrive: {
-      connected: Boolean(auth && hasGoogleDriveScope(auth)),
+      connected: googleEnabled && Boolean(auth && hasGoogleDriveScope(auth)),
       hasRefreshToken: Boolean(auth?.refreshToken),
       scopes: auth ? authScopes(auth) : [],
     },
@@ -459,6 +475,9 @@ export async function saveSpotifySettings(credentials: SpotifyCredentials): Prom
 }
 
 export async function saveGoogleOauthSettings(credentials: GoogleOauthCredentials): Promise<void> {
+  if (!googleFeaturesEnabled()) {
+    throw new Error('Google sign-in is not available in this app version.');
+  }
   await ensureSettingsDirectory();
   const current = await loadRuntimeSettings();
   const clientSecret = String(credentials.clientSecret ?? '').trim();
@@ -493,6 +512,11 @@ export function applySpotifyCredentialsToEnv(credentials: Partial<SpotifyCredent
 }
 
 export function applyGoogleOauthCredentialsToEnv(credentials: Partial<GoogleOauthCredentials> | null | undefined) {
+  if (!googleFeaturesEnabled()) {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+    return;
+  }
   const clientId = String(credentials?.clientId ?? '').trim();
   const clientSecret = String(credentials?.clientSecret ?? '').trim();
   if (clientId) process.env.GOOGLE_CLIENT_ID = clientId;
@@ -543,6 +567,18 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
   credentials: GoogleOauthCredentials | null;
   summary: GoogleOauthSettingsSummary;
 }> {
+  if (!googleFeaturesEnabled()) {
+    return {
+      credentials: null,
+      summary: {
+        configured: false,
+        source: 'none',
+        client_id_masked: null,
+        has_secret: false,
+        missing: [],
+      },
+    };
+  }
   const settings = await loadRuntimeSettings();
   const savedId = String(settings.googleOauth?.clientId ?? '').trim();
   const savedSecret = String(settings.googleOauth?.clientSecret ?? '').trim();
