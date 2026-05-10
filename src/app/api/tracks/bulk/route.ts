@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { bulkTrackAction, getTracksByIds } from '@/lib/db';
 import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
+import { applySpotifyCredentialsToEnv, effectiveSpotifyCredentials } from '@/lib/runtime-settings';
 import { resolveWorkingPython } from '@/lib/scan';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
@@ -45,6 +46,10 @@ export async function POST(request: NextRequest) {
 
   if (action === 'reanalyze_art') {
     const force = Boolean(body.force);
+    const spotify = await effectiveSpotifyCredentials();
+    if (spotify.credentials) {
+      applySpotifyCredentialsToEnv(spotify.credentials);
+    }
     const python = await resolveWorkingPython();
     const results: Array<Record<string, unknown>> = [];
     for (const id of ids) {

@@ -2,6 +2,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrackById, propagateAlbumArt, serializeTrack } from '@/lib/db';
+import { applySpotifyCredentialsToEnv, effectiveSpotifyCredentials } from '@/lib/runtime-settings';
 import { resolveWorkingPython } from '@/lib/scan';
 
 export const runtime = 'nodejs';
@@ -43,6 +44,10 @@ export async function POST(
   const force = Boolean(body.force);
 
   try {
+    const spotify = await effectiveSpotifyCredentials();
+    if (spotify.credentials) {
+      applySpotifyCredentialsToEnv(spotify.credentials);
+    }
     const python = await resolveWorkingPython();
     const startedAt = Date.now();
     const { stdout, stderr } = await execFileAsync(
