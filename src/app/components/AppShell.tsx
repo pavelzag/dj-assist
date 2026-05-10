@@ -60,6 +60,7 @@ export default function AppShell({
           </div>
         </div>
         <input id="scan-directory" type="hidden" />
+        <div className="selected-source-indicator" id="selected-source-indicator" hidden />
         <div className="scan-preflight" id="scan-preflight">Choose a music source to add tracks.</div>
         <div className="browse-scope" id="browse-scope">
           <span className="browse-scope-empty">Viewing full collection</span>

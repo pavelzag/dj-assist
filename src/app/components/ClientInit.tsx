@@ -44,6 +44,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const scanProgressBarEl = document.getElementById('scan-progress-bar') as HTMLElement;
     const scanProgressFileEl = document.getElementById('scan-progress-file') as HTMLElement;
     const scanPreflightEl = document.getElementById('scan-preflight') as HTMLElement;
+    const selectedSourceIndicatorEl = document.getElementById('selected-source-indicator') as HTMLElement | null;
     const scanLogEl = document.getElementById('activity-log-list') as HTMLElement | null;
     const coverModal = document.getElementById('cover-modal') as HTMLElement;
     const coverImage = document.getElementById('cover-image') as HTMLImageElement;
@@ -1076,6 +1077,43 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return selectedGoogleDriveFolders.map((f) => f.name || 'Selected folder').join(', ');
     }
 
+    function localSourceLabel() {
+      const directory = scanDirectoryEl?.value.trim() ?? '';
+      if (!directory) return '';
+      return directory.split(/[\\/]/).filter(Boolean).pop() ?? directory;
+    }
+
+    function syncSelectedSourceIndicator() {
+      if (!selectedSourceIndicatorEl) return;
+      const actionLabel = addMusicStartLabel();
+      if (scanSourceMode === 'google_drive') {
+        selectedSourceIndicatorEl.hidden = false;
+        selectedSourceIndicatorEl.dataset.source = 'google_drive';
+        selectedSourceIndicatorEl.innerHTML = `
+          <span class="selected-source-label">Selected source</span>
+          <strong>Google Drive</strong>
+          <span>${esc(selectedGoogleDriveFolderLabel())}</span>
+          <em>Press ${esc(actionLabel)} to add tracks.</em>
+        `;
+        return;
+      }
+      const label = localSourceLabel();
+      if (!label) {
+        selectedSourceIndicatorEl.hidden = true;
+        selectedSourceIndicatorEl.removeAttribute('data-source');
+        selectedSourceIndicatorEl.textContent = '';
+        return;
+      }
+      selectedSourceIndicatorEl.hidden = false;
+      selectedSourceIndicatorEl.dataset.source = 'local';
+      selectedSourceIndicatorEl.innerHTML = `
+        <span class="selected-source-label">Selected source</span>
+        <strong>This Mac</strong>
+        <span>${esc(label)}</span>
+        <em>Press ${esc(actionLabel)} to scan this folder.</em>
+      `;
+    }
+
     function addMusicStartLabel() {
       return scanSourceMode === 'google_drive' ? 'Import from Google Drive' : 'Start Scan';
     }
@@ -1100,6 +1138,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         quickStartScanBtn.disabled = scanBusy;
         quickStartScanBtn.title = scanBusy ? busyTitle : '';
       }
+      syncSelectedSourceIndicator();
       for (const id of ['empty-choose-folder-btn', 'list-empty-choose-folder-btn']) {
         const button = document.getElementById(id) as HTMLButtonElement | null;
         if (button) button.textContent = chooseLabel;
@@ -2435,15 +2474,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!scanPreflightEl) return;
       if (scanSourceMode === 'google_drive') {
         scanPreflightEl.textContent = `Google Drive source: ${selectedGoogleDriveFolderLabel()}`;
+        syncSelectedSourceIndicator();
         return;
       }
       const directory = scanDirectoryEl?.value.trim() ?? '';
       if (!directory) {
         scanPreflightEl.textContent = 'Choose a music source to add tracks.';
+        syncSelectedSourceIndicator();
         return;
       }
-      const name = directory.split(/[\\/]/).filter(Boolean).pop() ?? directory;
-      scanPreflightEl.textContent = `Music folder: ${name}`;
+      scanPreflightEl.textContent = `Music folder: ${localSourceLabel()}`;
+      syncSelectedSourceIndicator();
     }
 
     function openAddMusicSourceModal() {
@@ -8546,7 +8587,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!candidate) return;
       const directory = candidate.replace(/\/[^/]+$/, '');
       if (!directory) return;
+      scanSourceMode = 'local';
       scanDirectoryEl.value = directory;
+      updateScanDirectoryDisplay();
+      syncAddMusicUi();
       void preflightDirectory(directory);
       showToast('Dropped folder ready to scan.', 'success');
     });
