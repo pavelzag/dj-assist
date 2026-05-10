@@ -5678,27 +5678,56 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const coverStatusClass = coverReviewStatus === 'approved' ? 'success' : coverReviewStatus === 'missing' ? 'subtle' : 'warn';
       const artworkCandidates = (() => {
         type ArtworkCandidate = { url: string; label: string; provider: string; source: string; width: number | undefined; height: number | undefined };
+        const pushCandidate = (
+          output: ArtworkCandidate[],
+          seen: Set<string>,
+          candidate: Partial<ArtworkCandidate> & { url?: string | null },
+        ) => {
+          const url = String(candidate.url ?? '').trim();
+          if (!url || seen.has(url)) return;
+          seen.add(url);
+          output.push({
+            url,
+            label: String(candidate.label ?? 'Album art'),
+            provider: String(candidate.provider ?? 'candidate'),
+            source: String(candidate.source ?? 'candidate'),
+            width: candidate.width,
+            height: candidate.height,
+          });
+        };
+        const albumGroupKey = String(track.album_group_key ?? '').trim();
+        const albumGroupTracks = albumGroupKey
+          ? tracks.filter((candidate) => String(candidate.album_group_key ?? '').trim() === albumGroupKey)
+          : [];
         const raw = String(track.album_art_match_debug ?? '').trim();
-        if (!raw) return [] as ArtworkCandidate[];
+        const output: ArtworkCandidate[] = [];
+        const seen = new Set<string>();
+        for (const albumTrack of albumGroupTracks) {
+          pushCandidate(output, seen, {
+            url: String(albumTrack.album_art_url ?? '').trim(),
+            label: `${String(albumTrack.artist ?? 'Unknown Artist')} - ${String(albumTrack.title ?? 'Untitled')}`,
+            provider: String(albumTrack.album_art_source ?? 'album art'),
+            source: `track:${albumTrack.id}`,
+          });
+        }
+        if (!raw) return output;
         try {
           const parsed = JSON.parse(raw) as Record<string, unknown>;
           const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
-          const seen = new Set<string>();
-          return candidates.map((candidate) => {
-            const url = String((candidate as Record<string, unknown>).url ?? '').trim();
-            if (!url || seen.has(url)) return null;
-            seen.add(url);
-            return {
-              url,
-              label: String((candidate as Record<string, unknown>).label ?? 'Album art'),
-              provider: String((candidate as Record<string, unknown>).provider ?? 'candidate'),
-              source: String((candidate as Record<string, unknown>).source ?? 'candidate'),
-              width: Number((candidate as Record<string, unknown>).width ?? 0) || undefined,
-              height: Number((candidate as Record<string, unknown>).height ?? 0) || undefined,
-            };
-          }).filter((candidate): candidate is ArtworkCandidate => Boolean(candidate));
+          for (const candidate of candidates) {
+            const record = candidate as Record<string, unknown>;
+            pushCandidate(output, seen, {
+              url: String(record.url ?? '').trim(),
+              label: String(record.label ?? 'Album art'),
+              provider: String(record.provider ?? 'candidate'),
+              source: String(record.source ?? 'candidate'),
+              width: Number(record.width ?? 0) || undefined,
+              height: Number(record.height ?? 0) || undefined,
+            });
+          }
+          return output;
         } catch {
-          return [] as ArtworkCandidate[];
+          return output;
         }
       })();
       artworkCandidateModalTrackId = trackId;
@@ -8179,6 +8208,19 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       trackDetailAbortController?.abort();
       const abortController = new AbortController();
       trackDetailAbortController = abortController;
+      const existingAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
+      const shouldPreserveAudio = Boolean(
+        existingAudio && String(existingAudio.dataset.trackId ?? '') === String(requestedTrackId),
+      );
+      const audioSnapshot = shouldPreserveAudio
+        ? {
+            currentTime: Number(existingAudio?.currentTime ?? 0),
+            muted: Boolean(existingAudio?.muted),
+            volume: Number(existingAudio?.volume ?? 1),
+            playbackRate: Number(existingAudio?.playbackRate ?? 1),
+            wasPlaying: Boolean(existingAudio && !existingAudio.paused && !existingAudio.ended),
+          }
+        : null;
       if (!sets.length) {
         void loadSets().catch(() => {});
       }
@@ -8198,8 +8240,44 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       selectedDetailTrackId = requestedTrackId;
       renderDetail(payload);
+      let restoredPlayback = false;
+      if (audioSnapshot) {
+        const restoredAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
+        if (restoredAudio && String(restoredAudio.dataset.trackId ?? '') === String(requestedTrackId)) {
+          restoredAudio.muted = audioSnapshot.muted;
+          restoredAudio.volume = audioSnapshot.volume;
+          restoredAudio.playbackRate = audioSnapshot.playbackRate;
+          const restorePlayback = async () => {
+            try {
+              if (Number.isFinite(audioSnapshot!.currentTime) && audioSnapshot!.currentTime > 0) {
+                restoredAudio.currentTime = audioSnapshot!.currentTime;
+              }
+            } catch {
+              // Ignore transient seek failures while the media element settles.
+            }
+            if (autoPlay || audioSnapshot!.wasPlaying) {
+              try {
+                await restoredAudio.play();
+                restoredPlayback = true;
+              } catch {
+                // Best effort only; if playback is blocked, keep the re-rendered
+                // detail pane without interrupting the user's existing state.
+              }
+            }
+            syncMuteButton(restoredAudio);
+            updateNowPlayingBar(restoredAudio);
+          };
+          if (restoredAudio.readyState >= 1) {
+            void restorePlayback();
+          } else {
+            restoredAudio.addEventListener('loadedmetadata', () => {
+              void restorePlayback();
+            }, { once: true });
+          }
+        }
+      }
       updateNowPlayingBar();
-      if (autoPlay) {
+      if (autoPlay && !restoredPlayback) {
         const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
         localAudio?.play().catch(() => {});
       }
