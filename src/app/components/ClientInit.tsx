@@ -4721,6 +4721,28 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       showToast(`Fill Missing Art finished: ${succeeded} succeeded, ${failed} failed.`, failed ? 'warning' : 'success');
     }
 
+    function setAnalyzeAllArtworkButtonBusy(busy: boolean, count = 0) {
+      const buttons = [
+        document.getElementById('analyze-all-artwork-btn') as HTMLButtonElement | null,
+        document.getElementById('quick-analyze-all-artwork-btn') as HTMLButtonElement | null,
+      ].filter((button): button is HTMLButtonElement => Boolean(button));
+      for (const button of buttons) {
+        if (busy) {
+          button.disabled = true;
+          button.dataset.originalLabel ||= button.textContent?.trim() || 'Analyze All Artwork';
+          button.textContent = count > 0 ? `Analyzing… (${count})` : 'Analyzing…';
+          button.title = 'Artwork analysis is running.';
+        } else {
+          button.disabled = false;
+          if (button.dataset.originalLabel) {
+            button.textContent = button.dataset.originalLabel;
+            delete button.dataset.originalLabel;
+          }
+          button.title = '';
+        }
+      }
+    }
+
     function analyzeAllArtworkFromLoadedTracks() {
       const ids = tracks
         .map((track) => Number(track.id))
@@ -4729,8 +4751,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         showToast('No loaded tracks available for artwork analysis.', 'info');
         return;
       }
+      setAnalyzeAllArtworkButtonBusy(true, ids.length);
+      setArtworkAnalysisProgress({
+        state: 'running',
+        current: 0,
+        total: ids.length,
+        succeeded: 0,
+        failed: 0,
+        detail: `Starting artwork analysis for ${ids.length} loaded track${ids.length === 1 ? '' : 's'}.`,
+      });
+      showProgressToast('artwork-analysis-progress', `Artwork analysis starting for ${ids.length} loaded track${ids.length === 1 ? '' : 's'}.`, 'info', false);
       showToast(`Analyze All Artwork started for ${ids.length} loaded track${ids.length === 1 ? '' : 's'}.`, 'info');
-      void reanalyzeArtBulk(ids, { force: true, label: 'all loaded tracks' });
+      void reanalyzeArtBulk(ids, { force: true, label: 'all loaded tracks' })
+        .finally(() => {
+          setAnalyzeAllArtworkButtonBusy(false);
+        });
     }
 
     async function reanalyzeBpmBulk(ids: number[], options: { label?: string } = {}) {
