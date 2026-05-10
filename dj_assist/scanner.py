@@ -896,6 +896,7 @@ def _resolve_album_art(
         "album_art_review_notes": "album art lookup disabled" if not fetch_album_art else "no artwork matched",
         "album_group_key": album_group_key,
         "embedded_album_art": False,
+        "album_art_candidates": [],
     }
 
     if embedded_url:
@@ -920,6 +921,8 @@ def _resolve_album_art(
                 "album_art_review_notes": f"reused artwork from album cluster {album_group_key}",
             }
         )
+        if previews.get("album_art_candidates"):
+            result["album_art_candidates"] = previews.get("album_art_candidates")
     elif fetch_album_art and spotify_url:
         high_confidence = bool(previews.get("spotify_high_confidence"))
         provider = album_art_provider or "spotify"
@@ -947,6 +950,8 @@ def _resolve_album_art(
                 "album_art_review_notes": review_notes,
             }
         )
+        if previews.get("album_art_candidates"):
+            result["album_art_candidates"] = previews.get("album_art_candidates")
     elif fetch_album_art and artist_image_url:
         provider = artist_image_provider or "artist"
         review_notes = "spotify artist image used as fallback because no album cover was available"
@@ -972,6 +977,8 @@ def _resolve_album_art(
                 "album_art_review_notes": f"reused fallback artist image for {metadata.get('artist') or 'artist'}",
             }
         )
+        if previews.get("album_art_candidates"):
+            result["album_art_candidates"] = previews.get("album_art_candidates")
     elif fetch_album_art and artist_image_url:
         provider = artist_image_provider or "artist"
         review_notes = "artist image used as final fallback because no album cover was available"
@@ -986,6 +993,8 @@ def _resolve_album_art(
                 "album_art_review_notes": review_notes,
             }
         )
+        if previews.get("album_art_candidates"):
+            result["album_art_candidates"] = previews.get("album_art_candidates")
     elif fetch_album_art and previews.get("spotify_id"):
         result.update(
             {
@@ -993,6 +1002,8 @@ def _resolve_album_art(
                 "album_art_review_notes": _art_debug_reason(previews, fetch_album_art),
             }
         )
+        if previews.get("album_art_candidates"):
+            result["album_art_candidates"] = previews.get("album_art_candidates")
 
     if album_group_key and result["album_art_url"]:
         existing = album_art_cache.get(album_group_key)
@@ -1499,6 +1510,7 @@ def scan_directory(
                                 "review_status": album_art["album_art_review_status"],
                                 "review_notes": album_art["album_art_review_notes"],
                                 "group_key": album_art["album_group_key"],
+                                "candidates": album_art.get("album_art_candidates") or [],
                                 "spotify_debug": previews.get("spotify_debug") or "",
                                 "spotify_album_name": previews.get("spotify_album_name") or "",
                                 "spotify_track_number": previews.get("spotify_track_number") or 0,

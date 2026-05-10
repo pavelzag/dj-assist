@@ -132,6 +132,17 @@ export default function AppShell({
         </div>
       </div>
 
+      <div className="modal" id="artwork-candidates-modal" aria-hidden="true">
+        <div className="modal-card artwork-candidates-card">
+          <div className="modal-head">
+            <h3 id="artwork-candidates-title">Choose Album Image</h3>
+            <button className="close" id="close-artwork-candidates-modal" type="button">&times;</button>
+          </div>
+          <div className="scan-preflight" id="artwork-candidates-subtitle">Select the cover that should apply to this album group.</div>
+          <div className="artwork-candidates-list" id="artwork-candidates-list" />
+        </div>
+      </div>
+
       <div className="toast-stack" id="toast-stack" aria-live="polite" />
 
       <div className="modal" id="command-palette-modal" aria-hidden="true">

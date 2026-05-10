@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Any
 from urllib.parse import quote_plus
 
 import requests
@@ -132,6 +133,7 @@ class SpotifyMatch:
     match_score: float = 0.0
     high_confidence: bool = False
     debug: dict = field(default_factory=dict)
+    album_art_candidates: list[dict[str, object]] = field(default_factory=list)
     track_number: int = 0
     release_year: int = 0
 
@@ -378,6 +380,7 @@ class SpotifyClient:
         queries.append(title)
 
         debug: dict[str, object] = {"queries": []}
+        album_art_candidates: list[dict[str, object]] = []
         self._debug(
             "search_track_start",
             artist=artist or "",
@@ -436,6 +439,23 @@ class SpotifyClient:
                     artist_image_url = ""
                     if include_album_art and images and best_score >= self._art_confidence_threshold():
                         album_art_url = images[0].get("url", "")
+                    if include_album_art and images:
+                        for index, image in enumerate(images):
+                            candidate_url = str(image.get("url") or "").strip()
+                            if not candidate_url:
+                                continue
+                            width = int(image.get("width") or 0)
+                            height = int(image.get("height") or 0)
+                            size_label = f"{width}x{height}" if width and height else ""
+                            album_art_candidates.append({
+                                "url": candidate_url,
+                                "provider": "spotify",
+                                "source": "spotify_album",
+                                "label": f"Spotify album art{f' {size_label}' if size_label else ''}",
+                                "width": width or None,
+                                "height": height or None,
+                                "index": index,
+                            })
                     if include_album_art and not album_art_url:
                         artist_ids = [str(artist.get("id") or "").strip() for artist in best_item.get("artists", [])]
                         artist_image_url = self._fetch_artist_image(next((artist_id for artist_id in artist_ids if artist_id), ""))
@@ -463,6 +483,7 @@ class SpotifyClient:
                         match_score=best_score,
                         high_confidence=best_score >= self._art_confidence_threshold(),
                         debug={**debug, "matched": best_item.get("id", ""), "score": best_score, "events": self.debug_events},
+                        album_art_candidates=album_art_candidates,
                         track_number=album_track_number,
                         release_year=album_release_year,
                     )
@@ -1311,7 +1332,7 @@ class AcoustIdClient:
         return best_match, best_debug
 
 
-def _empty_media_links() -> dict[str, str | float | bool | int]:
+def _empty_media_links() -> dict[str, Any]:
     return {
         "youtube_url": "",
         "spotify_url": "",
@@ -1323,6 +1344,7 @@ def _empty_media_links() -> dict[str, str | float | bool | int]:
         "spotify_mode": "",
         "album_art_url": "",
         "artist_image_url": "",
+        "album_art_candidates": [],
         "album_art_provider": "",
         "artist_image_provider": "",
         "spotify_album_name": "",
@@ -1357,7 +1379,7 @@ def build_media_links(
     enable_spotify: bool = True,
     enable_acoustid: bool = True,
     enable_theaudiodb: bool = True,
-) -> dict[str, str | float | bool | int]:
+) -> dict[str, Any]:
     resolved_artist = _collapse_query_whitespace(artist) or artist
     resolved_title = _collapse_query_whitespace(title) or title
     resolved_album = _collapse_query_whitespace(album) or album
@@ -1444,6 +1466,33 @@ def build_media_links(
         "spotify_mode": spotify.mode,
         "album_art_url": fallback_album_art_url,
         "artist_image_url": artist_image_url,
+        "album_art_candidates": [
+            *spotify.album_art_candidates,
+            *([
+                {
+                    "url": theaudiodb.album_art_url,
+                    "provider": theaudiodb.album_art_provider or "theaudiodb",
+                    "source": theaudiodb.album_art_provider or "theaudiodb",
+                    "label": "TheAudioDB album art",
+                }
+            ] if theaudiodb.album_art_url else []),
+            *([
+                {
+                    "url": musicbrainz.album_art_url,
+                    "provider": musicbrainz.album_art_provider or "musicbrainz",
+                    "source": musicbrainz.album_art_provider or "musicbrainz",
+                    "label": "MusicBrainz album art",
+                }
+            ] if musicbrainz.album_art_url else []),
+            *([
+                {
+                    "url": discogs.album_art_url,
+                    "provider": discogs.album_art_provider or "discogs",
+                    "source": discogs.album_art_provider or "discogs",
+                    "label": "Discogs album art",
+                }
+            ] if discogs.album_art_url else []),
+        ],
         "album_art_provider": fallback_album_art_provider,
         "artist_image_provider": artist_image_provider,
         "spotify_album_name": spotify.album_name or theaudiodb.album_name,

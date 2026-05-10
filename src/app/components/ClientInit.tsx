@@ -56,6 +56,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const nowPlayingTitleEl = document.getElementById('now-playing-title') as HTMLElement | null;
     const nowPlayingMetaEl = document.getElementById('now-playing-meta') as HTMLElement | null;
     const muteBtn = document.getElementById('mute-btn') as HTMLButtonElement | null;
+    const artworkCandidatesModal = document.getElementById('artwork-candidates-modal') as HTMLElement | null;
+    const artworkCandidatesTitleEl = document.getElementById('artwork-candidates-title') as HTMLElement | null;
+    const artworkCandidatesSubtitleEl = document.getElementById('artwork-candidates-subtitle') as HTMLElement | null;
+    const artworkCandidatesListEl = document.getElementById('artwork-candidates-list') as HTMLElement | null;
     const commandPaletteModal = document.getElementById('command-palette-modal') as HTMLElement | null;
     const commandPaletteInput = document.getElementById('command-palette-input') as HTMLInputElement | null;
     const commandPaletteList = document.getElementById('command-palette-list') as HTMLElement | null;
@@ -271,6 +275,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportStatusState: 'idle' | 'saving' | 'success' | 'error' = 'idle';
     let googleDriveImportFailedCount = 0;
     let googleDriveImportMetadataActivityTimestamp = '';
+    let scanCancelInFlight = false;
     let serverAccountSession: Record<string, unknown> | null = null;
     let serverEntitlements = new Set<string>();
     let serverDeviceRegistrationAttempted = false;
@@ -285,6 +290,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let trackDetailRequestToken = 0;
     let nextTracksRefreshToken = 0;
     let trackDetailAbortController: AbortController | null = null;
+    let artworkCandidateModalTrackId: number | null = null;
+    let artworkCandidateModalTrackLabel = '';
+    let artworkCandidateModalCurrentUrl = '';
+    let artworkCandidateModalCandidates: Array<{ url: string; label: string; provider: string; source: string; width: number | undefined; height: number | undefined }> = [];
     let saveEditMetadataInFlight = false;
     let quitAppInFlight = false;
     let pendingDeleteTrackIds: number[] = [];
@@ -1143,28 +1152,65 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function addMusicStartLabel() {
-      return scanSourceMode === 'google_drive' ? 'Import from Google Drive' : 'Start Scan';
+      if (scanSourceMode === 'google_drive') return 'Import from Google Drive';
+      return activeScanStatus === 'queued' || activeScanStatus === 'running' ? 'Stop Scan' : 'Start Scan';
     }
 
     function isScanActionBusy() {
-      return activeScanStatus === 'queued' || activeScanStatus === 'running' || googleDriveImportBusy;
+      return googleDriveImportBusy || scanCancelInFlight;
+    }
+
+    function isLocalScanActive() {
+      return scanSourceMode !== 'google_drive' && (activeScanStatus === 'queued' || activeScanStatus === 'running');
     }
 
     function isGoogleDriveTrackPath(path: string) {
       return String(path ?? '').trim().startsWith('gdrive:');
     }
 
+    async function cancelActiveLocalScan() {
+      if (!activeScanJobId || !isLocalScanActive()) return;
+      if (scanCancelInFlight) return;
+      scanCancelInFlight = true;
+      syncAddMusicUi();
+      try {
+        const response = await fetch(`/api/scan/${activeScanJobId}`, { method: 'DELETE' });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          throw new Error(String(payload.error ?? `Failed to stop scan (${response.status})`));
+        }
+        activeScanStatus = 'cancelled';
+        activeScanJobId = null;
+        frozenTrackIdsDuringScan = null;
+        ensureBackgroundRefreshLoop();
+        stopStreamingScanJob();
+        setScanStatus('Scan cancelled', 'error');
+        showToast('Scan stopped.', 'warning');
+        showProgressToast('local-scan-progress', 'Scan stopped.', 'warning', true);
+        await loadScanHistory();
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Could not stop scan.', 'error');
+      } finally {
+        scanCancelInFlight = false;
+        syncAddMusicUi();
+      }
+    }
+
     function syncAddMusicUi() {
       const chooseLabel = 'Add Music';
       const scanBusy = isScanActionBusy();
-      const busyTitle = scanSourceMode === 'google_drive'
+      const busyTitle = scanCancelInFlight
+        ? 'Stopping the current scan...'
+        : scanSourceMode === 'google_drive'
         ? 'An import is already running.'
-        : 'A scan is already running.';
+        : '';
       if (quickChooseFolderBtn) quickChooseFolderBtn.textContent = chooseLabel;
       if (quickStartScanBtn) {
         quickStartScanBtn.textContent = addMusicStartLabel();
         quickStartScanBtn.disabled = scanBusy;
-        quickStartScanBtn.title = scanBusy ? busyTitle : '';
+        quickStartScanBtn.title = scanCancelInFlight
+          ? busyTitle
+          : (isLocalScanActive() ? 'Stop the current scan.' : '');
       }
       syncSelectedSourceIndicator();
       for (const id of ['empty-choose-folder-btn', 'list-empty-choose-folder-btn']) {
@@ -1176,7 +1222,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (button) {
           button.textContent = addMusicStartLabel();
           button.disabled = scanBusy;
-          button.title = scanBusy ? busyTitle : '';
+          button.title = scanCancelInFlight
+            ? busyTitle
+            : (isLocalScanActive() ? 'Stop the current scan.' : '');
         }
       }
       const googleDriveBtn = document.getElementById('add-music-source-google-drive-btn') as HTMLButtonElement | null;
@@ -2594,6 +2642,61 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       modal.classList.remove('open');
       modal.setAttribute('aria-hidden', 'true');
       if (!hasOpenModal()) ensureActiveTrackSelection();
+    }
+
+    function renderArtworkCandidatesModal() {
+      if (!artworkCandidatesListEl) return;
+      const candidates = artworkCandidateModalCandidates;
+      if (!candidates.length) {
+        artworkCandidatesListEl.innerHTML = '<div class="empty">No alternate artwork candidates were found for this album.</div>';
+        return;
+      }
+      artworkCandidatesListEl.innerHTML = `
+        <div class="artwork-candidates-grid">
+          ${candidates.map((candidate, index) => `
+            <button
+              type="button"
+              class="artwork-candidate-choice ${candidate.url === artworkCandidateModalCurrentUrl ? 'active' : ''}"
+              data-artwork-choice-index="${index}"
+              data-artwork-url="${esc(candidate.url)}"
+              data-artwork-label="${esc(candidate.label)}"
+              data-artwork-provider="${esc(candidate.provider)}"
+              data-artwork-source="${esc(candidate.source)}"
+            >
+              <img src="${esc(candidate.url)}" alt="${esc(candidate.label)}" />
+              <div class="artwork-candidate-choice-copy">
+                <strong>${esc(candidate.label)}</strong>
+                <span>${esc(candidate.provider)}${candidate.width && candidate.height ? ` · ${candidate.width}x${candidate.height}` : ''}</span>
+              </div>
+            </button>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function openArtworkCandidatesModal() {
+      if (!artworkCandidatesModal || !artworkCandidateModalTrackId || !artworkCandidateModalCandidates.length) return;
+      if (artworkCandidatesTitleEl) {
+        artworkCandidatesTitleEl.textContent = `Choose Album Image${artworkCandidateModalTrackLabel ? ` · ${artworkCandidateModalTrackLabel}` : ''}`;
+      }
+      if (artworkCandidatesSubtitleEl) {
+        artworkCandidatesSubtitleEl.textContent = 'Select the image that should apply to this album group.';
+      }
+      renderArtworkCandidatesModal();
+      openModal(artworkCandidatesModal);
+    }
+
+    async function applyArtworkCandidate(candidateUrl: string, candidateLabel: string, candidateProvider: string) {
+      if (!artworkCandidateModalTrackId) return;
+      await saveTrackMetadata(artworkCandidateModalTrackId, {
+        album_art_url: candidateUrl,
+        album_art_source: 'manual_selected',
+        album_art_confidence: 100,
+        album_art_review_status: 'approved',
+        album_art_review_notes: `selected from artwork candidates${candidateProvider ? ` (${candidateProvider})` : ''}`,
+      });
+      closeModal(artworkCandidatesModal);
+      showToast(`Selected ${candidateLabel} applied to this album.`, 'success');
     }
 
     function syncCommandPaletteSelection() {
@@ -5573,6 +5676,35 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const coverSource = String(track.album_art_source ?? (track.album_art_url ? 'unknown' : 'none'));
       const coverConfidence = Number(track.album_art_confidence ?? 0);
       const coverStatusClass = coverReviewStatus === 'approved' ? 'success' : coverReviewStatus === 'missing' ? 'subtle' : 'warn';
+      const artworkCandidates = (() => {
+        type ArtworkCandidate = { url: string; label: string; provider: string; source: string; width: number | undefined; height: number | undefined };
+        const raw = String(track.album_art_match_debug ?? '').trim();
+        if (!raw) return [] as ArtworkCandidate[];
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+          const seen = new Set<string>();
+          return candidates.map((candidate) => {
+            const url = String((candidate as Record<string, unknown>).url ?? '').trim();
+            if (!url || seen.has(url)) return null;
+            seen.add(url);
+            return {
+              url,
+              label: String((candidate as Record<string, unknown>).label ?? 'Album art'),
+              provider: String((candidate as Record<string, unknown>).provider ?? 'candidate'),
+              source: String((candidate as Record<string, unknown>).source ?? 'candidate'),
+              width: Number((candidate as Record<string, unknown>).width ?? 0) || undefined,
+              height: Number((candidate as Record<string, unknown>).height ?? 0) || undefined,
+            };
+          }).filter((candidate): candidate is ArtworkCandidate => Boolean(candidate));
+        } catch {
+          return [] as ArtworkCandidate[];
+        }
+      })();
+      artworkCandidateModalTrackId = trackId;
+      artworkCandidateModalTrackLabel = `${String(track.artist ?? 'Unknown Artist')} - ${String(track.title ?? 'Untitled')}`;
+      artworkCandidateModalCurrentUrl = coverUrl;
+      artworkCandidateModalCandidates = artworkCandidates;
       const isSelectedDetailTrack = selectedDetailTrackId === trackId;
       const spotifyMissing = Array.isArray(runtimeHealth?.spotify_missing)
         ? runtimeHealth.spotify_missing.filter((value): value is string => typeof value === 'string')
@@ -5782,7 +5914,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <button class="btn" id="paste-cover-btn" type="button">Paste Image</button>
                 <input id="upload-cover-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
                 <button class="btn" id="mark-cover-review-btn" type="button">Needs Review</button>
+                ${artworkCandidates.length ? '<button class="btn" id="choose-artwork-btn" type="button">Choose Album Image</button>' : ''}
               </div>
+              ${artworkCandidates.length ? `<div class="scan-preflight">${artworkCandidates.length} alternate album image${artworkCandidates.length === 1 ? '' : 's'} available.</div>` : ''}
               ${coverReviewNotes ? `<div class="scan-preflight" id="detail-cover-match-notes">${esc(coverReviewNotes)}</div>` : ''}
             </div>
           </section>
@@ -6219,6 +6353,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           album_art_review_status: 'approved',
           album_art_review_notes: 'manual approval from track detail',
         });
+      });
+      document.getElementById('choose-artwork-btn')?.addEventListener('click', () => {
+        openArtworkCandidatesModal();
       });
       const uploadCoverBtn = document.getElementById('upload-cover-btn') as HTMLButtonElement | null;
       const uploadCoverInput = document.getElementById('upload-cover-input') as HTMLInputElement | null;
@@ -7625,6 +7762,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           const status = String(event.status ?? 'running');
           activeScanStatus = String(event.status ?? 'running');
           ensureBackgroundRefreshLoop();
+          syncAddMusicUi();
           setScanStatus(status, ['failed', 'cancelled'].includes(status) ? 'error' : status === 'completed' ? 'success' : 'running');
           setScanProgress(Number(event.current ?? 0), Number(event.total ?? 0), String(event.current_file ?? event.directory ?? ''));
           if (status === 'queued' || status === 'running') {
@@ -7637,6 +7775,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           setScanSummary(summary, { createdAt: scanHistory.find((job) => job.id === jobId)?.createdAt ?? null });
           if (['completed', 'failed', 'cancelled'].includes(status)) {
             frozenTrackIdsDuringScan = null;
+            syncAddMusicUi();
             await loadScanHistory();
             if (status === 'completed') {
               const completionMessage = scanCompletionMessage(summary);
@@ -7728,6 +7867,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           activeScanStatus = 'failed';
           frozenTrackIdsDuringScan = null;
           ensureBackgroundRefreshLoop();
+          syncAddMusicUi();
           setScanStatus('failed', 'error');
           appendScanLog(String(event.error ?? 'Scan failed'), 'error');
           showToast('Scan failed.', 'error');
@@ -7772,6 +7912,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         frozenTrackIdsDuringScan = null;
       }
       ensureBackgroundRefreshLoop();
+      syncAddMusicUi();
       if (typeof job.directory === 'string' && job.directory) {
         scanDirectoryEl.value = job.directory;
         updateScanDirectoryDisplay();
@@ -7835,6 +7976,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     // ── Scanning ──────────────────────────────────────────────────────────────
     async function triggerScan() {
+      if (isLocalScanActive()) {
+        await cancelActiveLocalScan();
+        return;
+      }
       if (scanSourceMode === 'google_drive') {
         if (!googleSignedInUser()) {
           setScanStatus('Sign in with Google first', 'error');
@@ -7864,6 +8009,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       activeScanStatus = 'queued';
       selectedSourceIndicatorVisible = false;
       syncSelectedSourceIndicator();
+      syncAddMusicUi();
       localScanToastLastAt = 0;
       localScanToastLastPercentBucket = -1;
       localScanToastLastLabel = '';
@@ -7917,15 +8063,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         activeScanJobId = String(job.id);
         activeScanStatus = String(job.status ?? 'queued');
         ensureBackgroundRefreshLoop();
+        syncAddMusicUi();
         appendScanLog(`Scan job created: ${activeScanJobId}`, 'info');
         showToast('Scan started.', 'success');
         await loadScanHistory();
         await loadScanJob(activeScanJobId, true);
       } catch (error) {
-        activeScanStatus = 'failed';
-        frozenTrackIdsDuringScan = null;
-        ensureBackgroundRefreshLoop();
-        setScanStatus('Scan failed', 'error');
+      activeScanStatus = 'failed';
+      frozenTrackIdsDuringScan = null;
+      ensureBackgroundRefreshLoop();
+      syncAddMusicUi();
+      setScanStatus('Scan failed', 'error');
         setScanProgress(0, 0, 'Scan failed');
         appendScanLog(error instanceof Error ? error.message : String(error), 'error');
         showToast('Scan failed.', 'error');
@@ -8329,6 +8477,34 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     closeCover.addEventListener('click', () => { coverModal.classList.remove('open'); coverModal.setAttribute('aria-hidden', 'true'); });
     coverModal.addEventListener('click', (e) => {
       if (e.target === coverModal) { coverModal.classList.remove('open'); coverModal.setAttribute('aria-hidden', 'true'); }
+    });
+    document.getElementById('close-artwork-candidates-modal')?.addEventListener('click', () => {
+      closeModal(artworkCandidatesModal);
+    });
+    artworkCandidatesModal?.addEventListener('click', (event) => {
+      if (event.target === artworkCandidatesModal) {
+        closeModal(artworkCandidatesModal);
+        return;
+      }
+      const choiceButton = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('[data-artwork-choice-index]');
+      if (!choiceButton) return;
+      const candidateUrl = String(choiceButton.dataset.artworkUrl ?? '').trim();
+      if (!candidateUrl) return;
+      const candidateLabel = String(choiceButton.dataset.artworkLabel ?? 'album image').trim() || 'album image';
+      const candidateProvider = String(choiceButton.dataset.artworkProvider ?? '').trim();
+      const previousLabel = choiceButton.textContent ?? candidateLabel;
+      choiceButton.disabled = true;
+      choiceButton.textContent = 'Applying…';
+      void (async () => {
+        try {
+          await applyArtworkCandidate(candidateUrl, candidateLabel, candidateProvider);
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'Could not apply the selected album image.', 'error');
+        } finally {
+          choiceButton.disabled = false;
+          choiceButton.textContent = previousLabel;
+        }
+      })();
     });
 
     // ── Search / sort / filter ────────────────────────────────────────────────
