@@ -239,9 +239,22 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
 .scan-progress-bar {
   width: 0%;
   height: 100%;
-  background: linear-gradient(90deg, rgba(255,108,0,0.75), rgba(255,190,92,0.92));
+  background: linear-gradient(
+    90deg,
+    rgba(255,108,0,0.82) 0%,
+    rgba(255,190,92,0.98) 45%,
+    rgba(255,232,190,0.95) 52%,
+    rgba(255,190,92,0.98) 58%,
+    rgba(255,108,0,0.82) 100%
+  );
+  background-size: 220% 100%;
   box-shadow: 0 0 16px rgba(255,108,0,0.3);
-  transition: width 0.15s ease;
+  transition: width 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: scan-progress-bar-glow 1.6s linear infinite;
+}
+@keyframes scan-progress-bar-glow {
+  from { background-position: 200% 0; }
+  to { background-position: -20% 0; }
 }
 .scan-progress-file {
   min-height: 16px;
@@ -396,6 +409,16 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
 .scan-preflight {
   color: var(--muted);
   font-size: 11px;
+}
+.scan-preflight-dismiss {
+  margin-left: 8px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 .scan-log {
   max-height: 160px;

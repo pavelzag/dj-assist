@@ -81,6 +81,9 @@ const DEFAULT_HOST = normalizeLoopbackHost(process.env.DJ_ASSIST_ELECTRON_HOST |
 const DEFAULT_PORT = process.env.DJ_ASSIST_ELECTRON_PORT || '3000';
 const MIN_SPLASH_MS = 3000;
 const APP_ICON_PATH = path.join(__dirname, 'assets', 'app-icon.png');
+const APP_WEBSITE_URL = 'https://dj-assist-web.vercel.app/';
+const APP_REPOSITORY_URL = 'https://github.com/pavelzag/dj-assist';
+const APP_CONTACT_EMAIL = 'zagalsky@gmail.com';
 let mainWindow = null;
 let managedServerProcess = null;
 let managedServerOwned = false;
@@ -865,6 +868,14 @@ ipcMain.handle('desktop:cancel-quit', async () => {
 if (hasSingleInstanceLock) {
   app.whenReady().then(() => {
     app.setName('DJ Assist');
+    app.setAboutPanelOptions({
+      applicationName: 'DJ Assist',
+      applicationVersion: app.getVersion(),
+      version: app.getVersion(),
+      website: APP_WEBSITE_URL,
+      copyright: 'DJ Assist',
+      credits: `Website: ${APP_WEBSITE_URL}\nGitHub: ${APP_REPOSITORY_URL}\nContact: ${APP_CONTACT_EMAIL}`,
+    });
     registerMediaProtocol();
     appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
     applyManagedRuntimeEnv();

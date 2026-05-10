@@ -211,6 +211,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let activityLogAutoRefreshTimer: ReturnType<typeof setInterval> | null = null;
     let googleAuthUpsellEvaluated = false;
     let scanSourceMode: ScanSourceMode = 'local';
+    let dismissedSelectedSourceLabel = '';
     let selectedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
     let favoritedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
     let gdriveDragSelecting = false;
@@ -2433,17 +2434,25 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function updateScanDirectoryDisplay() {
       if (!scanPreflightEl) return;
+      const renderDismissibleSelectedSource = (message: string) => {
+        if (dismissedSelectedSourceLabel === message) {
+          scanPreflightEl.textContent = '';
+          return;
+        }
+        scanPreflightEl.innerHTML = `${esc(message)} <button type="button" class="scan-preflight-dismiss" id="scan-preflight-dismiss-btn" aria-label="Dismiss selected source label">Dismiss</button>`;
+      };
       if (scanSourceMode === 'google_drive') {
-        scanPreflightEl.textContent = `Google Drive source: ${selectedGoogleDriveFolderLabel()}`;
+        renderDismissibleSelectedSource(`Google Drive source: ${selectedGoogleDriveFolderLabel()}`);
         return;
       }
       const directory = scanDirectoryEl?.value.trim() ?? '';
       if (!directory) {
+        dismissedSelectedSourceLabel = '';
         scanPreflightEl.textContent = 'Choose a music source to add tracks.';
         return;
       }
       const name = directory.split(/[\\/]/).filter(Boolean).pop() ?? directory;
-      scanPreflightEl.textContent = `Music folder: ${name}`;
+      renderDismissibleSelectedSource(`Music folder: ${name}`);
     }
 
     function openAddMusicSourceModal() {
@@ -2640,11 +2649,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return !track.album_art_url || !track.effective_key || !track.spotify_id || isLowBitrate(track) || String(track.decode_failed ?? '') === 'true';
     }
 
-    function detailMode(trackId: number): 'overview' | 'match' | 'related' {
-      return detailModeByTrackId[trackId] ?? 'overview';
+    function detailMode(trackId: number): 'overview' | 'match' {
+      const mode = detailModeByTrackId[trackId];
+      return mode === 'match' ? 'match' : 'overview';
     }
 
-    function setDetailMode(trackId: number, mode: 'overview' | 'match' | 'related') {
+    function setDetailMode(trackId: number, mode: 'overview' | 'match') {
       detailModeByTrackId[trackId] = mode;
     }
 
@@ -3571,24 +3581,44 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       category = 'scan-log',
       context?: Record<string, unknown>,
     ) {
-      void fetch('/api/logs/client', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        keepalive: true,
-        body: JSON.stringify({
-          message,
-          level,
-          category,
-          context,
-        }),
-      }).catch((error) => {
+      const payload = JSON.stringify({
+        message,
+        level,
+        category,
+        context,
+      });
+      void (async () => {
+        let lastError = '';
+        let lastStatus: number | null = null;
+        let lastBody = '';
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            const response = await fetch('/api/logs/client', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              keepalive: true,
+              body: payload,
+            });
+            if (response.ok) return;
+            lastStatus = response.status;
+            lastBody = (await response.text().catch(() => '')).slice(0, 400);
+            lastError = `http ${response.status}`;
+          } catch (error) {
+            lastError = error instanceof Error ? error.message : String(error);
+          }
+          if (attempt < 3) {
+            await new Promise((resolve) => window.setTimeout(resolve, attempt * 250));
+          }
+        }
         console.warn('[frontend-log] failed to persist log entry', {
           message,
           level,
           category,
-          error: error instanceof Error ? error.message : String(error),
+          error: lastError,
+          status: lastStatus,
+          responseBody: lastBody,
         });
-      });
+      })();
     }
 
     function appendScanLog(
@@ -5484,7 +5514,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <div class="detail-mode-tabs">
             <button type="button" class="detail-mode-tab ${currentDetailMode === 'overview' ? 'active' : ''}" data-detail-mode="overview">Overview</button>
             <button type="button" class="detail-mode-tab ${currentDetailMode === 'match' ? 'active' : ''}" data-detail-mode="match">Match / Metadata</button>
-            <button type="button" class="detail-mode-tab ${currentDetailMode === 'related' ? 'active' : ''}" data-detail-mode="related">Related</button>
           </div>
           <div class="buttons">
             <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
@@ -5649,7 +5678,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       };
       detailEl.querySelectorAll<HTMLElement>('.detail-mode-tab[data-detail-mode]').forEach((button) => {
         button.addEventListener('click', () => {
-          setDetailMode(trackId, (button.dataset.detailMode as 'overview' | 'match' | 'related') ?? 'overview');
+          setDetailMode(trackId, (button.dataset.detailMode as 'overview' | 'match') ?? 'overview');
           applyDetailMode();
         });
       });
@@ -8504,6 +8533,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     quickStartScanBtn?.addEventListener('click', () => {
       void triggerScan();
+    });
+    scanPreflightEl?.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('#scan-preflight-dismiss-btn');
+      if (!button) return;
+      const message = scanPreflightEl.textContent?.replace(/\s*Dismiss\s*$/, '').trim() ?? '';
+      dismissedSelectedSourceLabel = message;
+      scanPreflightEl.textContent = '';
     });
     quickAnalyzeAllArtworkBtn?.addEventListener('click', () => {
       analyzeAllArtworkFromLoadedTracks();
