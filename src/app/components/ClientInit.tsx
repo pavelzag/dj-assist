@@ -214,6 +214,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let scanSourceMode: ScanSourceMode = 'local';
     let dismissedSelectedSourceLabel = '';
     let dismissedSelectedSourceIndicatorLabel = '';
+    let selectedSourceIndicatorVisible = false;
     let selectedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
     let favoritedGoogleDriveFolders: Array<{ id: string; name: string }> = [];
     let gdriveDragSelecting = false;
@@ -1087,6 +1088,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function syncSelectedSourceIndicator() {
       if (!selectedSourceIndicatorEl) return;
+      if (!selectedSourceIndicatorVisible) {
+        selectedSourceIndicatorEl.hidden = true;
+        selectedSourceIndicatorEl.removeAttribute('data-source');
+        selectedSourceIndicatorEl.textContent = '';
+        return;
+      }
       const actionLabel = addMusicStartLabel();
       const renderSelectedSourceIndicator = (
         sourceKind: 'local' | 'google_drive',
@@ -1691,6 +1698,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
+      selectedSourceIndicatorVisible = false;
+      syncSelectedSourceIndicator();
       setGoogleDriveImportStageState({
         stage: 'discovering',
         label: 'Starting Google Drive import',
@@ -2232,6 +2241,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     // Single-folder select — used by "Use This Folder" (replaces any prior selection).
     function applySelectedGoogleDriveFolder(folderId: string, folderName: string) {
       scanSourceMode = 'google_drive';
+      selectedSourceIndicatorVisible = true;
       selectedGoogleDriveFolders = folderId.trim()
         ? [{ id: folderId.trim(), name: folderName.trim() }]
         : [];
@@ -2273,6 +2283,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         selectedGoogleDriveFolders.push({ id: folderId.trim(), name: folderName.trim() });
       }
       scanSourceMode = 'google_drive';
+      selectedSourceIndicatorVisible = true;
       updateScanDirectoryDisplay();
       syncAddMusicUi();
       renderGoogleDriveFolderPicker();
@@ -2299,6 +2310,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function confirmGoogleDriveFolderSelection() {
       if (!selectedGoogleDriveFolders.length) return;
       scanSourceMode = 'google_drive';
+      selectedSourceIndicatorVisible = true;
       googleDriveFiles = [];
       googleDriveFilesLoaded = false;
       updateScanDirectoryDisplay();
@@ -2522,6 +2534,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function chooseLocalMusicSource() {
       scanSourceMode = 'local';
+      selectedSourceIndicatorVisible = true;
       closeModal(addMusicSourceModal);
       syncAddMusicUi();
       await pickDirectoryAndPrefill();
@@ -2529,6 +2542,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function chooseGoogleDriveMusicSource() {
       scanSourceMode = 'google_drive';
+      selectedSourceIndicatorVisible = true;
       closeModal(addMusicSourceModal);
       syncAddMusicUi();
       updateScanDirectoryDisplay();
@@ -2551,6 +2565,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const directory = await adapter.pickDirectory();
       if (!directory) return;
       scanSourceMode = 'local';
+      selectedSourceIndicatorVisible = true;
       scanDirectoryEl.value = directory;
       updateScanDirectoryDisplay();
       syncAddMusicUi();
@@ -7812,6 +7827,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
 
       activeScanStatus = 'queued';
+      selectedSourceIndicatorVisible = false;
+      syncSelectedSourceIndicator();
       localScanToastLastAt = 0;
       localScanToastLastPercentBucket = -1;
       localScanToastLastLabel = '';
@@ -8672,6 +8689,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const directory = candidate.replace(/\/[^/]+$/, '');
       if (!directory) return;
       scanSourceMode = 'local';
+      selectedSourceIndicatorVisible = true;
       scanDirectoryEl.value = directory;
       updateScanDirectoryDisplay();
       syncAddMusicUi();
