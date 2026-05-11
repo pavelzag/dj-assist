@@ -245,10 +245,6 @@ export default function AppShell({
 
       <div className="modal" id="quit-app-modal" aria-hidden="true">
         <div className="modal-card quit-app-card">
-          <div className="modal-head">
-            <h3>Quit DJ Assist</h3>
-            <button className="close" id="close-quit-app" type="button">&times;</button>
-          </div>
           <div className="quit-app-body">
             <div className="quit-app-icon" aria-hidden="true">!</div>
             <div className="quit-app-copy">

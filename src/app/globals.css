@@ -1968,18 +1968,14 @@ body[data-list-density="compact"] .row span {
   width: min(92vw, 440px);
   padding: 20px;
   display: grid;
+  justify-items: center;
+  text-align: center;
   gap: 14px;
   border-radius: 18px;
   box-shadow: 0 28px 90px rgba(0,0,0,0.42);
   background:
     linear-gradient(180deg, rgba(17,22,36,0.98), rgba(10,14,24,0.98)),
     radial-gradient(circle at top, rgba(255,107,107,0.08), transparent 38%);
-}
-.quit-app-card .modal-head {
-  margin-bottom: 0;
-}
-.quit-app-card .modal-head h3 {
-  font-size: 18px;
 }
 .quit-app-body {
   display: grid;
@@ -2002,6 +1998,7 @@ body[data-list-density="compact"] .row span {
 }
 .quit-app-copy {
   display: grid;
+  justify-items: center;
   gap: 6px;
   max-width: 34ch;
 }
@@ -2018,12 +2015,15 @@ body[data-list-density="compact"] .row span {
 .quit-app-actions {
   display: flex;
   justify-content: center;
+  align-items: center;
+  text-align: center;
   gap: 10px;
   width: 100%;
   padding-top: 4px;
 }
 .quit-app-actions .btn {
   min-width: 140px;
+  text-align: center;
 }
 .google-auth-upsell-points div {
   align-items: flex-start;
