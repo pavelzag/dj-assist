@@ -10,7 +10,6 @@ export default function AppShell({
   const appVersion = packageJson.version;
   const appFlavor = resolveAppFlavor();
   const isDebugFlavor = appFlavor === 'debug';
-  const isFreeProdFlavor = appFlavor === 'free-prod';
   const hasProFeatures = appFlavor !== 'free-prod';
   return (
     <>
@@ -71,7 +70,7 @@ export default function AppShell({
       </header>
 
       <div className="banner" id="warning-banner" style={{ display: 'none' }} />
-      <div className="statusbar" id="statusbar" />
+      {isDebugFlavor ? <div className="statusbar" id="statusbar" /> : null}
       <div className="now-playing-bar" id="now-playing-bar" data-state="idle" hidden />
 
       <main>
@@ -411,12 +410,6 @@ export default function AppShell({
                 </button>
               ) : null}
             </div>
-            {isFreeProdFlavor ? (
-              <div className="pro-roadmap-card">
-                <strong>Free and open source, permanently.</strong>
-                <span>A future Pro version is planned for Google Drive library import and playlist sharing across devices.</span>
-              </div>
-            ) : null}
           </div>
         </div>
       </div>

@@ -10,7 +10,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const appFlavor = resolveAppFlavor();
     const isDebugFlavor = appFlavor === 'debug';
     const isProdFlavor = appFlavor !== 'debug';
-    const isFreeProdFlavor = appFlavor === 'free-prod';
     const hasProFeatures = appFlavor !== 'free-prod';
     const googleAuthUiEnabled = hasProFeatures;
     const shouldShowSpotifyArtFallbackHint = isDebugFlavor;
@@ -58,7 +57,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const coverNextTracks = document.getElementById('cover-next-tracks') as HTMLElement | null;
     const closeCover = document.getElementById('close-cover') as HTMLButtonElement;
     const warningBanner = document.getElementById('warning-banner') as HTMLElement;
-    const statusbar = document.getElementById('statusbar') as HTMLElement;
+    const statusbar = document.getElementById('statusbar') as HTMLElement | null;
     const nowPlayingBarEl = document.getElementById('now-playing-bar') as HTMLElement | null;
     const nowPlayingTitleEl = document.getElementById('now-playing-title') as HTMLElement | null;
     const nowPlayingMetaEl = document.getElementById('now-playing-meta') as HTMLElement | null;
@@ -1440,10 +1439,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function googleDriveFeatureStatusLabel() {
       if (isDebugFlavor) return 'Available in debug build.';
-      if (appFlavor === 'pro-prod') return 'Included in this Pro build.';
-      if (canUseGoogleDriveFeature()) return 'Included in your DJ Assist Sync access.';
-      if (googleSignedInUser()) return 'Google Drive import is part of DJ Assist Sync.';
-      return 'Sign in and subscribe to DJ Assist Sync to use Google Drive.';
+      if (appFlavor === 'pro-prod') return 'Google Drive import is available.';
+      if (canUseGoogleDriveFeature()) return 'Google Drive import is available.';
+      if (googleSignedInUser()) return 'Google Drive import is not available for this account.';
+      return 'Sign in with Google to use Google Drive.';
     }
 
     function formatCapabilityLabel(capability: string) {
@@ -1463,7 +1462,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const subscription = serverAccountSession?.subscription && typeof serverAccountSession.subscription === 'object'
         ? serverAccountSession.subscription as Record<string, unknown>
         : null;
-      if (!subscription) return appFlavor === 'pro-prod' ? 'Pro' : (isFreeProdFlavor ? 'Free' : 'Debug');
+      if (!subscription) return isDebugFlavor ? 'Debug build' : 'No plan details';
       const planKey = String(subscription.plan_key ?? 'free').trim() || 'free';
       const status = String(subscription.status ?? 'inactive').trim() || 'inactive';
       return `${planKey} · ${status}`;
@@ -1535,7 +1534,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         : null;
       const planLabel = subscription
         ? `${String(subscription.plan_key ?? 'free')} · ${String(subscription.status ?? 'inactive')}`
-        : 'Free plan';
+        : 'No plan details';
       const statusEl = document.getElementById('google-auth-upsell-status') as HTMLElement | null;
       const signInLabel = document.getElementById('google-auth-upsell-sign-in-label') as HTMLElement | null;
       const signInBtn = document.getElementById('google-auth-upsell-sign-in-btn') as HTMLButtonElement | null;
@@ -1543,7 +1542,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const declineBtn = document.getElementById('google-auth-upsell-decline-btn') as HTMLButtonElement | null;
       if (statusEl) {
         statusEl.textContent = user
-          ? `${String(user.email ?? user.name ?? 'Google user')} · ${planLabel}${canUseGoogleDriveFeature() ? (drive?.connected ? ' · Drive access ready' : ' · account connected') : ' · Google Drive locked'}`
+          ? `${String(user.email ?? user.name ?? 'Google user')} · ${planLabel}${canUseGoogleDriveFeature() ? (drive?.connected ? ' · Drive access ready' : ' · account connected') : ' · Google Drive unavailable'}`
           : 'Sign in to connect your DJ Assist account.';
       }
       if (signInLabel) {
@@ -2883,6 +2882,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function trackSourceDetailMarkup(track: Record<string, unknown>): string {
+      if (!isDebugFlavor) return '';
       const sources = Array.isArray(track.sources) ? track.sources as Record<string, unknown>[] : [];
       const sourcePreference = String(track.source_preference ?? '').trim();
       const canPreferDriveSource = hasProFeatures;
@@ -5502,7 +5502,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       currentRenderedList = sorted;
       const previousScrollTop = listEl.scrollTop;
       if (hiddenCountBadge) hiddenCountBadge.textContent = `Shown: ${sorted.length}`;
-      statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${duplicateTrackIds.size ? ` | Duplicates: <strong>${duplicateTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
+      if (statusbar) {
+        statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${duplicateTrackIds.size ? ` | Duplicates: <strong>${duplicateTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
+      }
       if (!items.length) {
         listIsVirtualized = false;
         listEl.innerHTML = `
@@ -5904,14 +5906,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <div class="waveform-panel detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview">
             <canvas class="waveform-canvas" id="waveform-${track.id}"></canvas>
           </div>
-          <div class="chips detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview" style="margin-bottom:14px;">
+          ${isDebugFlavor ? `<div class="chips detail-mode-section ${currentDetailMode === 'overview' ? '' : 'hidden'}" data-mode-section="overview" style="margin-bottom:14px;">
             ${track.analysis_stage ? `<span class="chip subtle">Stage ${esc(track.analysis_stage)}</span>` : ''}
             ${track.spotify_id ? `<span class="chip success">Spotify matched</span>` : `<span class="chip subtle">No Spotify match</span>`}
             <span class="chip ${coverStatusClass}" id="detail-cover-status-chip-overview">Cover ${esc(coverReviewStatus)}</span>
             <span class="chip subtle" id="detail-cover-source-chip-overview">Source ${esc(coverSource || 'none')}</span>
             <span class="chip subtle" id="detail-cover-score-chip-overview">Score ${esc(coverConfidence.toFixed(1))}</span>
             ${track.analysis_error ? `<span class="chip warn">${esc(track.analysis_error)}</span>` : ''}
-          </div>
+          </div>` : ''}
           ${isGoogleDriveTrack ? '<div class="scan-preflight subtle">Google Drive track — first play will download to local cache.</div>' : ''}
           <section class="detail-section detail-mode-section ${currentDetailMode === 'match' ? 'hidden' : ''} ${nextCollapsed ? 'collapsed' : ''}" id="next-tracks-section" data-section="next-tracks" data-mode-section="overview">
             <div class="detail-section-head" id="next-tracks-head">
@@ -6578,20 +6580,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <button class="btn" id="create-set-btn" type="button">Create</button>
         </div>
       `;
-      const proPlaylistRoadmap = isFreeProdFlavor ? `
-        <div class="pro-roadmap-card playlist-roadmap-card">
-          <strong>Local playlists stay free.</strong>
-          <span>Cross-device playlist sharing is planned for a future Pro version.</span>
-        </div>
-      ` : '';
-
       if (!sets.length) {
-        setsPanel.innerHTML = newSetForm + proPlaylistRoadmap + '<div class="empty">No playlists yet.</div>';
+        setsPanel.innerHTML = newSetForm + '<div class="empty">No playlists yet.</div>';
         attachNewSetForm();
         return;
       }
 
-      setsPanel.innerHTML = newSetForm + proPlaylistRoadmap + sets.map((s) => `
+      setsPanel.innerHTML = newSetForm + sets.map((s) => `
         <div class="set-item" data-set-id="${s.id}">
           <div class="set-item-head" data-set-id="${s.id}" style="cursor:pointer;">
             <div>
@@ -7135,7 +7130,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
       ` : '';
-      const recentImportsMarkup = `
+      const recentImportsMarkup = isDebugFlavor ? `
         <section class="library-card">
           <div class="scan-log-head"><strong>Recent Imports</strong></div>
           <div class="scan-preflight">${recentScans.length ? `Latest scan: ${esc(String(recentScans[0].directory ?? 'Unknown folder'))}` : 'No scan history yet.'}</div>
@@ -7164,8 +7159,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               : '<div class="empty">No scan history yet.</div>'}
           </div>
         </section>
-      `;
-      const duplicateGroupsMarkup = `
+      ` : '';
+      const duplicateGroupsMarkup = isDebugFlavor ? `
         <section class="library-card">
           <div class="scan-log-head"><strong>Duplicate Detection</strong></div>
           <div class="scan-preflight">${duplicates.length ? `${duplicates.length} duplicate group${duplicates.length === 1 ? '' : 's'} detected.` : 'No duplicates detected yet.'}</div>
@@ -7195,7 +7190,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             }).join('') || '<div class="empty">No duplicate groups.</div>'}
           </div>
         </section>
-      `;
+      ` : '';
       const visibleMissingArtCount = visibleTracksOrdered().filter((track) => !track.album_art_url).length;
       const totalTrackCount = tracks.length;
       const totalMissingArtCount = tracks.filter((track) => !track.album_art_url).length;
@@ -7236,11 +7231,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 ${googleUser
                   ? `${esc(String(accountUser?.email ?? googleUser.email ?? googleUser.name ?? 'Google user'))} · ${esc(accountPlanSummary())}`
                   : isDebugFlavor
-                    ? 'Debug build keeps premium capabilities available without account gating.'
-                    : 'Sign in with Google to use Pro sync features.'}
+                    ? 'Debug build keeps account-gated features available for development.'
+                    : 'Sign in with Google to connect your account.'}
               </div>
               ${isDebugFlavor ? `<div class="scan-preflight">
-                Debug build: account checks are visible, but premium features stay unlocked for development.
+                Debug build: account checks are visible, but gated features stay unlocked for development.
               </div>` : ''}
               ${accountEntitlementChips ? `<div class="chips">${accountEntitlementChips}</div>` : ''}
               <div class="buttons">
@@ -8097,7 +8092,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           return;
         }
         if (!canUseGoogleDriveFeature()) {
-          setScanStatus('Google Drive is locked', 'error');
+          setScanStatus('Google Drive unavailable', 'error');
           setScanProgress(0, 0, googleDriveFeatureStatusLabel());
           showToast(googleDriveFeatureStatusLabel(), 'warning');
           openGoogleAuthModal();

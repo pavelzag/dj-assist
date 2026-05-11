@@ -1349,6 +1349,7 @@ main {
 .hero-art { position: absolute; inset: 0; background-size: cover; background-position: center; filter: blur(30px) saturate(0.8); transform: scale(1.12); opacity: 0.13; }
 .hero-cover {
   position: relative; z-index: 1;
+  align-self: start;
   width: 172px; aspect-ratio: 1;
   border-radius: 6px; overflow: hidden;
   border: 1px solid rgba(255,255,255,0.07);
@@ -1961,26 +1962,6 @@ body[data-list-density="compact"] .row span {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-}
-.pro-roadmap-card {
-  display: grid;
-  gap: 5px;
-  padding: 12px 14px;
-  border: 1px solid rgba(255,108,0,0.22);
-  border-radius: 10px;
-  background: rgba(255,108,0,0.06);
-  color: var(--muted);
-  font-size: 12px;
-}
-.pro-roadmap-card strong {
-  color: var(--text);
-  font-size: 13px;
-}
-.pro-roadmap-card span {
-  line-height: 1.45;
-}
-.playlist-roadmap-card {
-  margin-bottom: 12px;
 }
 .quit-app-card {
   max-width: 440px;
