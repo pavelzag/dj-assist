@@ -54,7 +54,7 @@ TEMPLATE = """
     .cover-placeholder { display: grid; place-items: center; gap: 10px; text-align: center; padding: 18px; color: #d7ddf7; }
     .cover-placeholder .icon { font-size: 42px; line-height: 1; }
     .cover-placeholder small { color: var(--muted); }
-    .hero-copy { position: relative; z-index: 1; }
+    .hero-copy { position: relative; z-index: 1; align-self: start; }
     .detail h2 { margin: 0 0 8px; font-size: 30px; line-height: 1.05; }
     .meta { color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; margin: 14px 0 16px; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
