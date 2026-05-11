@@ -122,13 +122,27 @@ export default function AppShell({
         </section>
       </main>
 
-      <div className="modal" id="cover-modal" aria-hidden="true">
-        <div className="modal-card">
+      <div className="modal artwork-modal" id="cover-modal" aria-hidden="true">
+        <div className="modal-card artwork-modal-card">
           <div className="modal-head">
-            <h3 id="cover-title">Album cover</h3>
+            <div>
+              <h3 id="cover-title">Album cover</h3>
+              <div className="artwork-modal-subtitle" id="cover-subtitle" />
+            </div>
             <button className="close" id="close-cover" type="button">&times;</button>
           </div>
-          <img id="cover-image" alt="Album cover" />
+          <div className="artwork-modal-grid">
+            <div className="artwork-modal-image-shell">
+              <img id="cover-image" alt="Album cover" />
+            </div>
+            <div className="artwork-modal-info">
+              <div className="artwork-modal-stat-grid" id="cover-tidbits" />
+              <div className="artwork-modal-next">
+                <div className="scan-log-head"><strong>Play Next</strong></div>
+                <div className="artwork-modal-next-list" id="cover-next-tracks" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -394,6 +408,12 @@ export default function AppShell({
                 </button>
               )}
             </div>
+            {isProdFlavor ? (
+              <div className="pro-roadmap-card">
+                <strong>Free and open source, permanently.</strong>
+                <span>A future Pro version is planned for Google Drive library import and playlist sharing across devices.</span>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

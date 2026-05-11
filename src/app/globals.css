@@ -1357,6 +1357,22 @@ main {
 }
 .hero-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .hero-cover.no-art { background: linear-gradient(155deg, rgba(255,108,0,0.07), rgba(6,8,14,0.96)); }
+.hero-cover.artwork-open-btn {
+  appearance: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.hero-cover.artwork-open-btn img {
+  transition: transform 0.18s ease;
+}
+.hero-cover.artwork-open-btn:hover img {
+  transform: scale(1.035);
+}
+.hero-cover.artwork-open-btn:focus-visible {
+  outline: 2px solid rgba(255,108,0,0.58);
+  outline-offset: 3px;
+}
 .cover-placeholder { display: grid; place-items: center; gap: 8px; text-align: center; padding: 14px; color: var(--muted); }
 .cover-placeholder .icon { font-size: 32px; line-height: 1; opacity: 0.35; }
 .cover-placeholder small { color: var(--muted); font-size: 10px; }
@@ -1716,6 +1732,93 @@ body[data-list-density="compact"] .row span {
 .modal { display: none; position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.56); backdrop-filter: blur(14px); place-items: center; }
 .modal.open { display: grid; }
 .modal-card { background: var(--panel2); border: 1px solid var(--line2); border-radius: 10px; padding: 18px; max-width: 520px; width: 90%; }
+.artwork-modal {
+  background: rgba(0,0,0,0.68);
+}
+.artwork-modal.open .artwork-modal-card {
+  animation: artwork-modal-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.artwork-modal-card {
+  max-width: 920px;
+  width: min(94vw, 920px);
+  padding: 20px;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 34px 110px rgba(0,0,0,0.5);
+  background:
+    radial-gradient(circle at top left, rgba(255,108,0,0.12), transparent 36%),
+    linear-gradient(180deg, rgba(16,21,34,0.98), rgba(8,12,22,0.98));
+}
+.artwork-modal-subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.artwork-modal-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 380px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.artwork-modal-image-shell {
+  overflow: hidden;
+  border: 1px solid var(--line2);
+  border-radius: 14px;
+  background: #05070d;
+  box-shadow: 0 22px 56px rgba(0,0,0,0.36);
+}
+.artwork-modal-image-shell img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+.artwork-modal-info {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.artwork-modal-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.artwork-modal-next {
+  display: grid;
+  gap: 8px;
+}
+.artwork-modal-next-list {
+  display: grid;
+  gap: 8px;
+}
+.artwork-modal-next-row {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.artwork-modal-next-row:hover,
+.artwork-modal-next-row:focus-visible {
+  border-color: rgba(255,108,0,0.4);
+  background: rgba(255,108,0,0.09);
+  outline: none;
+}
+.artwork-modal-next-row span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+@keyframes artwork-modal-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .edit-metadata-modal-card { max-width: 680px; }
 .command-palette-card,
 .shortcuts-card,
@@ -1840,6 +1943,26 @@ body[data-list-density="compact"] .row span {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+.pro-roadmap-card {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255,108,0,0.22);
+  border-radius: 10px;
+  background: rgba(255,108,0,0.06);
+  color: var(--muted);
+  font-size: 12px;
+}
+.pro-roadmap-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.pro-roadmap-card span {
+  line-height: 1.45;
+}
+.playlist-roadmap-card {
+  margin-bottom: 12px;
 }
 .quit-app-card {
   max-width: 440px;
@@ -2291,6 +2414,8 @@ body[data-list-density="compact"] .row span {
   .list, .detail { height: auto; min-height: unset; }
   .hero { grid-template-columns: 1fr; }
   .hero-cover { width: 100%; max-width: 260px; }
+  .artwork-modal-grid { grid-template-columns: 1fr; }
+  .artwork-modal-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .header-main { align-items: stretch; }
   .now-playing-bar { top: 118px; flex-wrap: wrap; }
   .scan-bar input, header input, header select { width: 100%; }

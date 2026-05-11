@@ -49,6 +49,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const coverModal = document.getElementById('cover-modal') as HTMLElement;
     const coverImage = document.getElementById('cover-image') as HTMLImageElement;
     const coverTitle = document.getElementById('cover-title') as HTMLElement;
+    const coverSubtitle = document.getElementById('cover-subtitle') as HTMLElement | null;
+    const coverTidbits = document.getElementById('cover-tidbits') as HTMLElement | null;
+    const coverNextTracks = document.getElementById('cover-next-tracks') as HTMLElement | null;
     const closeCover = document.getElementById('close-cover') as HTMLButtonElement;
     const warningBanner = document.getElementById('warning-banner') as HTMLElement;
     const statusbar = document.getElementById('statusbar') as HTMLElement;
@@ -5645,6 +5648,65 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       detailSectionCollapsed[sectionStateKey(trackId, section)] = collapsed;
     }
 
+    function scanGeneratedReleaseYear(track: Record<string, unknown>): string {
+      const direct = Number(track.release_year ?? track.spotify_release_year ?? 0);
+      if (Number.isFinite(direct) && direct > 0) return String(Math.round(direct));
+      const debugCandidates = [track.album_art_match_debug, track.analysis_debug];
+      for (const candidate of debugCandidates) {
+        const raw = String(candidate ?? '').trim();
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const year = Number(parsed.spotify_release_year ?? parsed.release_year ?? 0);
+          if (Number.isFinite(year) && year > 0) return String(Math.round(year));
+        } catch {
+          const match = raw.match(/(?:spotify_)?release_year["'=:\s]+(\d{4})/i) ?? raw.match(/\b(19\d{2}|20\d{2})\b/);
+          if (match?.[1]) return match[1];
+        }
+      }
+      return '--';
+    }
+
+    function artworkNextTrackMarkup(trackId: number): string {
+      const suggestions = filteredNextTracksFor(trackId).slice(0, 3);
+      return suggestions.map((item) => `
+        <button type="button" class="artwork-modal-next-row" data-track-id="${esc(String(item.id ?? ''))}">
+          <strong>${esc(item.artist ?? 'Unknown Artist')} - ${esc(item.title ?? 'Untitled')}</strong>
+          <span>${esc(displayBpm(item.effective_bpm, item.id as number))} BPM · ${esc(item.effective_key ?? '--')} · ${esc(item.reason ?? 'Compatible next track')}</span>
+        </button>
+      `).join('') || '<div class="empty">No close matches available yet.</div>';
+    }
+
+    function openArtworkModalForTrack(track: Record<string, unknown>) {
+      const artUrl = String(track.album_art_url ?? '').trim();
+      if (!artUrl) return;
+      const trackId = Number(track.id ?? 0);
+      coverImage.src = artUrl;
+      coverTitle.textContent = String(track.spotify_album_name ?? track.album ?? 'Album cover');
+      if (coverSubtitle) {
+        coverSubtitle.textContent = `${String(track.artist ?? 'Unknown Artist')} - ${String(track.title ?? 'Untitled')}`;
+      }
+      if (coverTidbits) {
+        coverTidbits.innerHTML = `
+          <div class="scan-summary-item"><span>BPM</span><strong>${esc(displayBpm(track.effective_bpm ?? track.bpm, trackId))}</strong></div>
+          <div class="scan-summary-item"><span>Scale</span><strong>${esc(track.effective_key ?? track.key ?? '--')}</strong></div>
+          <div class="scan-summary-item"><span>Release</span><strong>${esc(scanGeneratedReleaseYear(track))}</strong></div>
+          <div class="scan-summary-item"><span>Length</span><strong>${esc(formatDuration(track.duration))}</strong></div>
+        `;
+      }
+      if (coverNextTracks) {
+        coverNextTracks.innerHTML = artworkNextTrackMarkup(trackId);
+        coverNextTracks.querySelectorAll<HTMLElement>('[data-track-id]').forEach((button) => {
+          button.addEventListener('click', () => {
+            closeModal(coverModal);
+            void selectTrack(String(button.dataset.trackId ?? ''), false);
+          });
+        });
+      }
+      coverModal.classList.add('open');
+      coverModal.setAttribute('aria-hidden', 'false');
+    }
+
     // ── Track detail ──────────────────────────────────────────────────────────
     function renderDetail(payload: Record<string, unknown>) {
       const track = payload.track as Record<string, unknown>;
@@ -5769,9 +5831,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       detailEl.innerHTML = `
         <div class="hero">
           <div class="hero-art" id="detail-hero-art" style="${coverUrl ? `background-image:url('${esc(coverUrl)}')` : ''}"></div>
-          <div class="hero-cover ${coverUrl ? '' : 'no-art'}" id="detail-hero-cover">
-            ${coverUrl ? `<img src="${esc(coverUrl)}" alt="Album cover" />` : `<div class="cover-placeholder"><div class="icon">♪</div><div>No cover</div><small>${esc(coverLabel)}</small></div>`}
-          </div>
+          ${coverUrl ? `
+            <button type="button" class="hero-cover artwork-open-btn" id="detail-hero-cover" title="Open artwork details">
+              <img src="${esc(coverUrl)}" alt="Album cover" />
+            </button>
+          ` : `
+            <div class="hero-cover no-art" id="detail-hero-cover">
+              <div class="cover-placeholder"><div class="icon">♪</div><div>No cover</div><small>${esc(coverLabel)}</small></div>
+            </div>
+          `}
           <div class="hero-copy">
             <h2 id="detail-track-heading"><button type="button" class="nav-link hero-link" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}</h2>
             <div class="meta">
@@ -6459,13 +6527,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
       });
 
-      if (coverBtn && track.album_art_url) {
-        coverBtn.addEventListener('click', () => {
-          coverImage.src = String(track.album_art_url);
-          coverTitle.textContent = String(track.spotify_album_name ?? track.album ?? 'Album cover');
-          coverModal.classList.add('open');
-          coverModal.setAttribute('aria-hidden', 'false');
-        });
+      if (track.album_art_url) {
+        const openArtwork = () => openArtworkModalForTrack(track);
+        coverBtn?.addEventListener('click', openArtwork);
+        document.getElementById('detail-hero-cover')?.addEventListener('click', openArtwork);
       }
       document.getElementById('open-tunebat-btn')?.addEventListener('click', async () => {
         const opened = await adapter.openExternal(tunebatUrl);
@@ -6507,14 +6572,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <button class="btn" id="create-set-btn" type="button">Create</button>
         </div>
       `;
+      const proPlaylistRoadmap = isProdFlavor ? `
+        <div class="pro-roadmap-card playlist-roadmap-card">
+          <strong>Local playlists stay free.</strong>
+          <span>Cross-device playlist sharing is planned for a future Pro version.</span>
+        </div>
+      ` : '';
 
       if (!sets.length) {
-        setsPanel.innerHTML = newSetForm + '<div class="empty">No playlists yet.</div>';
+        setsPanel.innerHTML = newSetForm + proPlaylistRoadmap + '<div class="empty">No playlists yet.</div>';
         attachNewSetForm();
         return;
       }
 
-      setsPanel.innerHTML = newSetForm + sets.map((s) => `
+      setsPanel.innerHTML = newSetForm + proPlaylistRoadmap + sets.map((s) => `
         <div class="set-item" data-set-id="${s.id}">
           <div class="set-item-head" data-set-id="${s.id}" style="cursor:pointer;">
             <div>
