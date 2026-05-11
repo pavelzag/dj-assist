@@ -65,11 +65,20 @@ header h1 { margin: 0; text-transform: uppercase; display: flex; align-items: ba
 .quick-actions .btn {
   background: rgba(255,255,255,0.03);
 }
+.header-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 1 1 720px;
+  min-width: 0;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
 .header-global-actions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 .google-auth-main-btn,
 .google-sign-in-primary {
@@ -662,7 +671,7 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
 .scan-history-item span { color: var(--muted); font-size: 11px; }
 
 /* ── Filters ─────────────────────────────────────────────────────────────── */
-.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-left: 12px; align-items: center; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .filters input { width: 120px; background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: 8px; padding: 9px 12px; outline: none; }
 .filters select { background: var(--panel2); color: var(--text); border: 1px solid var(--line2); border-radius: 8px; padding: 9px 12px; outline: none; }
 .filters label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; border: 1px solid var(--line2); border-radius: 6px; padding: 8px 12px; background: rgba(255,255,255,0.02); }
@@ -1737,6 +1746,21 @@ body[data-list-density="compact"] .row span {
 .icon-btn { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 11px; line-height: 1.4; }
 .icon-btn:hover { color: var(--text); border-color: var(--line2); }
 .icon-btn.danger:hover { color: #ff6060; border-color: rgba(255,80,80,0.45); }
+.mute-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  line-height: 1;
+}
+.mute-icon-btn[aria-pressed="true"] {
+  color: #ffd7b6;
+  border-color: rgba(255,108,0,0.38);
+  background: rgba(255,108,0,0.09);
+}
 .btn.danger {
   border-color: rgba(255, 96, 96, 0.35);
   color: #ffd8d8;

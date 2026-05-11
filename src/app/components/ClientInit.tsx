@@ -200,6 +200,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let artworkAnalysisSucceeded = 0;
     let artworkAnalysisFailed = 0;
     let artworkAnalysisDetail = 'Waiting to start.';
+    const autoArtworkScanJobIds = new Set<string>();
     let googleDriveFoldersBusy = false;
     let googleDriveFolderFilesBusy = false;
     let serverSettingsBusy = false;
@@ -3385,9 +3386,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!muteBtn) return;
       const currentAudio = audio ?? document.getElementById('local-audio') as HTMLAudioElement | null;
       const muted = Boolean(currentAudio?.muted ?? audioMuted);
-      muteBtn.textContent = muted ? 'Unmute' : 'Mute';
       muteBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
       muteBtn.title = muted ? 'Unmute' : 'Mute';
+      muteBtn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+      const icon = muteBtn.querySelector('#mute-btn-icon') as HTMLElement | null;
+      if (icon) icon.textContent = muted ? '🔇' : '🔊';
     }
 
     function toggleCurrentAudioMute() {
@@ -4868,6 +4871,43 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         .finally(() => {
           setAnalyzeAllArtworkButtonBusy(false);
         });
+    }
+
+    function triggerMissingArtworkAfterScan(jobId: string) {
+      if (autoArtworkScanJobIds.has(jobId)) return;
+      autoArtworkScanJobIds.add(jobId);
+      if (artworkAnalysisState === 'running') {
+        appendScanLog('Skipping automatic missing artwork scan because artwork analysis is already running.', 'warning', {
+          category: 'reanalyze-art-bulk',
+          jobId,
+        });
+        return;
+      }
+      const ids = tracks
+        .filter((track) => !String(track.album_art_url ?? '').trim())
+        .map((track) => Number(track.id))
+        .filter((id) => Number.isFinite(id));
+      if (!ids.length) {
+        appendScanLog('Automatic missing artwork scan skipped: no loaded tracks are missing art.', 'info', {
+          category: 'reanalyze-art-bulk',
+          jobId,
+        });
+        return;
+      }
+      appendScanLog(`Automatic missing artwork scan queued for ${ids.length} track${ids.length === 1 ? '' : 's'} after file scan completion.`, 'info', {
+        category: 'reanalyze-art-bulk',
+        jobId,
+        trackIds: ids,
+      });
+      showToast(`Checking artwork for ${ids.length} track${ids.length === 1 ? '' : 's'} missing art.`, 'info');
+      void reanalyzeArtBulk(ids, { label: 'tracks missing art after scan' }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        appendScanLog(`Automatic missing artwork scan failed: ${message}`, 'error', {
+          category: 'reanalyze-art-bulk',
+          jobId,
+        });
+        showToast('Automatic artwork scan failed.', 'error');
+      });
     }
 
     async function reanalyzeBpmBulk(ids: number[], options: { label?: string } = {}) {
@@ -7905,6 +7945,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   },
                 } : undefined,
               );
+              triggerMissingArtworkAfterScan(jobId);
               showProgressToast(
                 'local-scan-progress',
                 newCount

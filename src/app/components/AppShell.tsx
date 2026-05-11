@@ -19,46 +19,50 @@ export default function AppShell({
             <h1><span className="title-dj">DJ</span><span className="title-assist">ASSIST</span></h1>
             <span className="app-version-badge" title="Application version">{`v${appVersion}`}</span>
           </div>
-          <div className="quick-actions">
-            <button type="button" className="btn" id="quick-choose-folder-btn">Add Music</button>
-            <span className="scan-status" id="scan-status">Idle</span>
-            <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
-            <button type="button" className="btn secondary" id="quick-analyze-all-artwork-btn">Analyze All Artwork</button>
-            <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
-            <div className="scan-progress compact" id="scan-progress">
-              <div className="scan-progress-track">
-                <div className="scan-progress-bar" id="scan-progress-bar" />
+          <div className="header-controls">
+            <div className="quick-actions">
+              <button type="button" className="btn" id="quick-choose-folder-btn">Add Music</button>
+              <span className="scan-status" id="scan-status">Idle</span>
+              <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
+              <button type="button" className="btn secondary" id="quick-analyze-all-artwork-btn">Analyze All Artwork</button>
+              <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
+              <div className="scan-progress compact" id="scan-progress">
+                <div className="scan-progress-track">
+                  <div className="scan-progress-bar" id="scan-progress-bar" />
+                </div>
               </div>
             </div>
-          </div>
-          <div className="search-shortcut-hint">Use <strong>/</strong> to search.</div>
-          <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album, notes, or filters like bpm:128-132..." aria-label="Search collection" />
-          <div className="filters">
-            <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
-            <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
-            <input id="key-filter" placeholder="Key" />
-            {isDebugFlavor ? (
-              <label>
-                <input id="show-pending-google-drive-imports" type="checkbox" /> Show unrecognized imports
-              </label>
-            ) : null}
-            {!isDebugFlavor
-              ? <input id="hide-unknown-artists" type="checkbox" hidden />
-              : (
+            <div className="search-shortcut-hint">Use <strong>/</strong> to search.</div>
+            <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album, notes, or filters like bpm:128-132..." aria-label="Search collection" />
+            <div className="filters">
+              <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
+              <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
+              <input id="key-filter" placeholder="Key" />
+              {isDebugFlavor ? (
                 <label>
-                  <input id="hide-unknown-artists" type="checkbox" /> Hide unknown artists
+                  <input id="show-pending-google-drive-imports" type="checkbox" /> Show unrecognized imports
                 </label>
-              )}
-            <div className="quick-filter-bar" id="quick-filter-bar" />
-          </div>
-          <div className="header-global-actions">
-            {hasProFeatures ? (
-              <button type="button" className="google-auth-main-btn" id="google-auth-main-btn" title="Connect Google">
-                <span className="google-mark" aria-hidden="true">G</span>
-                <span id="google-auth-main-label">Google</span>
+              ) : null}
+              {!isDebugFlavor
+                ? <input id="hide-unknown-artists" type="checkbox" hidden />
+                : (
+                  <label>
+                    <input id="hide-unknown-artists" type="checkbox" /> Hide unknown artists
+                  </label>
+                )}
+              <div className="quick-filter-bar" id="quick-filter-bar" />
+            </div>
+            <div className="header-global-actions">
+              {hasProFeatures ? (
+                <button type="button" className="google-auth-main-btn" id="google-auth-main-btn" title="Connect Google">
+                  <span className="google-mark" aria-hidden="true">G</span>
+                  <span id="google-auth-main-label">Google</span>
+                </button>
+              ) : null}
+              <button type="button" className="icon-btn mute-icon-btn" id="mute-btn" aria-pressed="false" title="Mute" aria-label="Mute">
+                <span id="mute-btn-icon" aria-hidden="true">🔊</span>
               </button>
-            ) : null}
-            <button type="button" className="icon-btn" id="mute-btn" aria-pressed="false" title="Mute">Mute</button>
+            </div>
           </div>
         </div>
         <input id="scan-directory" type="hidden" />
