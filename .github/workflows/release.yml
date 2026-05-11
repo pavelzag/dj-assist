@@ -173,7 +173,8 @@ jobs:
       matrix:
         flavor:
           - debug
-          - prod
+          - free-prod
+          - pro-prod
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       USE_HARD_LINKS: 'false'
@@ -251,6 +252,7 @@ jobs:
           echo "DJ_ASSIST_PYTHON_STANDALONE=$py_root" >> "$GITHUB_ENV"
 
       - name: Verify Google OAuth config
+        if: ${{ matrix.flavor != 'free-prod' }}
         env:
           GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
@@ -268,7 +270,7 @@ jobs:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          if [ -z "${GOOGLE_CLIENT_ID}" ]; then
+          if [ "${{ matrix.flavor }}" != "free-prod" ] && [ -z "${GOOGLE_CLIENT_ID}" ]; then
             echo "GOOGLE_CLIENT_ID must be set as a repository variable or secret for release builds." >&2
             exit 1
           fi
@@ -280,11 +282,25 @@ jobs:
         with:
           name: macos-${{ matrix.flavor }}-${{ needs.prepare-release.outputs.tag }}
           path: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
+            dist-electron/${{ matrix.flavor }}/*.dmg
+            dist-electron/${{ matrix.flavor }}/*.zip
+
+  publish-release:
+    name: Publish Release Assets (${{ needs.prepare-release.outputs.tag }})
+    needs:
+      - prepare-release
+      - build-macos
+    if: "${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || (github.ref_type == 'branch' && github.ref_name == 'master') }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS build artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: macos-*-${{ needs.prepare-release.outputs.tag }}
+          path: release-assets
+          merge-multiple: true
 
       - name: Publish GitHub release assets
-        if: ${{ matrix.flavor == 'prod' }}
         uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -292,8 +308,8 @@ jobs:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
           target_commitish: ${{ needs.prepare-release.outputs.sha }}
           files: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
+            release-assets/*.dmg
+            release-assets/*.zip
           generate_release_notes: true
           prerelease: ${{ contains(needs.prepare-release.outputs.tag, '-') }}
           make_latest: ${{ github.event_name == 'workflow_dispatch' && toJSON(inputs.make_latest) || 'legacy' }}
