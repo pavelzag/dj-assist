@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import packageJson from '../../../package.json';
+import { appFlavor as resolveAppFlavor } from '@/lib/app-flavor';
 
 export default function AppShell({
   clientInit,
@@ -7,8 +8,10 @@ export default function AppShell({
   clientInit: ReactNode;
 }) {
   const appVersion = packageJson.version;
-  const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' ? 'prod' : 'debug';
-  const isProdFlavor = appFlavor === 'prod';
+  const appFlavor = resolveAppFlavor();
+  const isDebugFlavor = appFlavor === 'debug';
+  const isFreeProdFlavor = appFlavor === 'free-prod';
+  const hasProFeatures = appFlavor !== 'free-prod';
   return (
     <>
       <header data-platform="electron">
@@ -35,12 +38,12 @@ export default function AppShell({
             <input id="bpm-min" type="number" step="0.1" placeholder="BPM min" />
             <input id="bpm-max" type="number" step="0.1" placeholder="BPM max" />
             <input id="key-filter" placeholder="Key" />
-            {isProdFlavor ? null : (
+            {isDebugFlavor ? (
               <label>
                 <input id="show-pending-google-drive-imports" type="checkbox" /> Show unrecognized imports
               </label>
-            )}
-            {isProdFlavor
+            ) : null}
+            {!isDebugFlavor
               ? <input id="hide-unknown-artists" type="checkbox" hidden />
               : (
                 <label>
@@ -50,12 +53,12 @@ export default function AppShell({
             <div className="quick-filter-bar" id="quick-filter-bar" />
           </div>
           <div className="header-global-actions">
-            {isProdFlavor ? null : (
+            {hasProFeatures ? (
               <button type="button" className="google-auth-main-btn" id="google-auth-main-btn" title="Connect Google">
                 <span className="google-mark" aria-hidden="true">G</span>
                 <span id="google-auth-main-label">Google</span>
               </button>
-            )}
+            ) : null}
             <button type="button" className="icon-btn" id="mute-btn" aria-pressed="false" title="Mute">Mute</button>
           </div>
         </div>
@@ -90,7 +93,7 @@ export default function AppShell({
             <button type="button" className="panel-tab active" id="tab-track" data-panel="track">Track</button>
             <button type="button" className="panel-tab" id="tab-sets" data-panel="sets">Playlists</button>
             <button type="button" className="panel-tab" id="tab-library" data-panel="library">Collection</button>
-            {isProdFlavor ? null : <button type="button" className="panel-tab" id="tab-activity" data-panel="activity">Activity</button>}
+            {isDebugFlavor ? <button type="button" className="panel-tab" id="tab-activity" data-panel="activity">Activity</button> : null}
           </div>
           <div id="panel-track">
             <div className="detail" id="detail">
@@ -261,7 +264,7 @@ export default function AppShell({
         </div>
       </div>
 
-      {isProdFlavor ? null : (
+      {hasProFeatures ? (
         <div className="modal" id="vpn-warning-modal" aria-hidden="true">
           <div className="modal-card">
             <div className="modal-head">
@@ -279,7 +282,7 @@ export default function AppShell({
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
       <div className="modal" id="tap-bpm-modal" aria-hidden="true">
         <div className="modal-card">
@@ -309,7 +312,7 @@ export default function AppShell({
         </div>
       </div>
 
-      {isProdFlavor ? null : (
+      {hasProFeatures ? (
         <div className="modal" id="google-auth-upsell-modal" aria-hidden="true">
           <div className="modal-card google-auth-upsell-card">
             <div className="modal-head">
@@ -335,9 +338,9 @@ export default function AppShell({
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {isProdFlavor ? null : (
+      {hasProFeatures ? (
         <div className="modal" id="google-drive-folder-modal" aria-hidden="true">
           <div className="modal-card google-drive-folder-card">
             <div className="modal-head">
@@ -374,7 +377,7 @@ export default function AppShell({
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
       <div className="modal" id="add-music-source-modal" aria-hidden="true">
         <div className="modal-card add-music-source-card">
@@ -398,7 +401,7 @@ export default function AppShell({
                   <span>Pick a local folder and run the regular desktop scan.</span>
                 </span>
               </button>
-              {isProdFlavor ? null : (
+              {hasProFeatures ? (
                 <button className="add-music-source-option" id="add-music-source-google-drive-btn" type="button">
                   <span className="add-music-source-option-icon" aria-hidden="true">G</span>
                   <span className="add-music-source-option-copy">
@@ -406,9 +409,9 @@ export default function AppShell({
                     <span>Browse and import tracks from your Google Drive.</span>
                   </span>
                 </button>
-              )}
+              ) : null}
             </div>
-            {isProdFlavor ? (
+            {isFreeProdFlavor ? (
               <div className="pro-roadmap-card">
                 <strong>Free and open source, permanently.</strong>
                 <span>A future Pro version is planned for Google Drive library import and playlist sharing across devices.</span>

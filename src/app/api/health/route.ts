@@ -10,12 +10,12 @@ import {
   serverRuntimeSummary,
 } from '@/lib/runtime-settings';
 import { getClientLogPath } from '@/lib/app-log';
-import { isProdAppFlavor } from '@/lib/app-flavor';
+import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
 export const runtime = 'nodejs';
 
 export async function GET() {
-  const prodFlavor = isProdAppFlavor();
+  const googleEnabled = googleFeaturesEnabled();
   let python: string | null = null;
   let pythonError: string | null = null;
   try {
@@ -27,11 +27,11 @@ export async function GET() {
   const databasePath = getDatabasePath();
   const spotify = await effectiveSpotifyCredentials();
   if (spotify.credentials) applySpotifyCredentialsToEnv(spotify.credentials);
-  const googleOauth = prodFlavor
-    ? { credentials: null, summary: { configured: false, source: 'none', client_id_masked: null, has_secret: false, missing: [] as string[] } }
-    : await effectiveGoogleOauthCredentials();
+  const googleOauth = googleEnabled
+    ? await effectiveGoogleOauthCredentials()
+    : { credentials: null, summary: { configured: false, source: 'none', client_id_masked: null, has_secret: false, missing: [] as string[] } };
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
-  const googleOauthDiag = prodFlavor ? null : await googleOauthDiagnostics();
+  const googleOauthDiag = googleEnabled ? await googleOauthDiagnostics() : null;
   const server = await serverRuntimeSummary();
 
   return NextResponse.json({

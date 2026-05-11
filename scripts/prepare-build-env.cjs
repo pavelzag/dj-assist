@@ -11,12 +11,20 @@ function optionalValue(name) {
   return value || undefined;
 }
 
+function normalizeFlavor(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'pro-prod' || raw === 'pro') return 'pro-prod';
+  if (raw === 'free-prod' || raw === 'free' || raw === 'prod') return 'free-prod';
+  return 'debug';
+}
+
+const appFlavor = normalizeFlavor(optionalValue('DJ_ASSIST_APP_FLAVOR') || optionalValue('NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR') || 'debug');
 const buildEnv = {
-  DJ_ASSIST_APP_FLAVOR: optionalValue('DJ_ASSIST_APP_FLAVOR') || optionalValue('NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR') || 'debug',
-  NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR: optionalValue('NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR') || optionalValue('DJ_ASSIST_APP_FLAVOR') || 'debug',
+  DJ_ASSIST_APP_FLAVOR: appFlavor,
+  NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR: appFlavor,
 };
 
-if (buildEnv.DJ_ASSIST_APP_FLAVOR !== 'prod' && buildEnv.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR !== 'prod') {
+if (appFlavor !== 'free-prod') {
   buildEnv.GOOGLE_CLIENT_ID = optionalValue('GOOGLE_CLIENT_ID');
   buildEnv.GOOGLE_CLIENT_SECRET = optionalValue('GOOGLE_CLIENT_SECRET');
 }

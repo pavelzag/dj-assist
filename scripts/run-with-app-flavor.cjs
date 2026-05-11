@@ -3,11 +3,19 @@ const path = require('node:path');
 
 function main() {
   const [, , flavorArg, scriptName] = process.argv;
-  const flavor = flavorArg === 'prod' ? 'prod' : 'debug';
+  const rawFlavor = String(flavorArg || '').trim().toLowerCase();
+  const flavor =
+    rawFlavor === 'pro-prod' || rawFlavor === 'pro'
+      ? 'pro-prod'
+      : rawFlavor === 'free-prod' || rawFlavor === 'free' || rawFlavor === 'prod'
+        ? 'free-prod'
+        : rawFlavor === 'debug'
+          ? 'debug'
+          : '';
   const targetScript = String(scriptName || '').trim();
 
-  if (!targetScript) {
-    console.error('Usage: node scripts/run-with-app-flavor.cjs <debug|prod> <npm-script>');
+  if (!flavor || !targetScript) {
+    console.error('Usage: node scripts/run-with-app-flavor.cjs <debug|free-prod|pro-prod> <npm-script>');
     process.exit(1);
   }
 

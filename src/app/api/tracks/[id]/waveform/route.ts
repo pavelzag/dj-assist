@@ -1,5 +1,7 @@
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import { access } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrackById } from '@/lib/db';
 import { resolveWorkingPython } from '@/lib/scan';
@@ -25,6 +27,20 @@ export async function GET(
   if (!track?.path) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
+  if (String(track.decode_failed ?? '').trim() === '1' || String(track.decode_failed ?? '').trim().toLowerCase() === 'true') {
+    return NextResponse.json({
+      ok: false,
+      code: 'waveform_unavailable',
+      error: 'Waveform unavailable because this track could not be decoded during scan.',
+    }, { status: 422 });
+  }
+  if (Number(track.duration ?? 0) <= 0) {
+    return NextResponse.json({
+      ok: false,
+      code: 'waveform_unavailable',
+      error: 'Waveform unavailable because this track has no decoded duration.',
+    }, { status: 422 });
+  }
   let localPath: string;
   if (String(track.path).startsWith('gdrive:')) {
     if (!googleFeaturesEnabled()) {
@@ -40,6 +56,12 @@ export async function GET(
     }
   } else {
     localPath = track.path;
+  }
+
+  try {
+    await access(localPath, constants.R_OK);
+  } catch {
+    return NextResponse.json({ ok: false, code: 'file_missing', error: 'Audio file is missing or unreadable.' }, { status: 404 });
   }
 
   const requestedWidth = Number(request.nextUrl.searchParams.get('width') ?? '640');

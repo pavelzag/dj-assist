@@ -3,13 +3,17 @@
 import { useEffect } from 'react';
 import type { PlatformAdapter } from './platform';
 import { matchesTrackSearchQuery } from '@/lib/track-search';
+import { appFlavor as resolveAppFlavor } from '@/lib/app-flavor';
 
 export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
   useEffect(() => {
-    const appFlavor = process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR === 'prod' ? 'prod' : 'debug';
-    const isProdFlavor = appFlavor === 'prod';
-    const googleAuthUiEnabled = !isProdFlavor;
-    const shouldShowSpotifyArtFallbackHint = !isProdFlavor;
+    const appFlavor = resolveAppFlavor();
+    const isDebugFlavor = appFlavor === 'debug';
+    const isProdFlavor = appFlavor !== 'debug';
+    const isFreeProdFlavor = appFlavor === 'free-prod';
+    const hasProFeatures = appFlavor !== 'free-prod';
+    const googleAuthUiEnabled = hasProFeatures;
+    const shouldShowSpotifyArtFallbackHint = isDebugFlavor;
     type ScanSummary = {
       scanned: number;
       analyzed: number;
@@ -155,7 +159,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       loadLibraryOnStartup: true,
       defaultListDensity: 'comfortable',
       collapseScanLog: true,
-      scanProgressToasts: !isProdFlavor,
+      scanProgressToasts: isDebugFlavor,
       listShowAlbum: true,
       listShowBitrate: true,
       listShowTags: true,
@@ -248,6 +252,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let frontendLogSignature = '';
     let frontendLogPathLabel = '';
     let frontendLogRefreshInFlight = false;
+    const failedClientLogWarnings = new Set<string>();
     const recentScanLogSignatures = new Map<string, number>();
     let queuedRefreshMode: 'light' | 'full' | null = null;
     let commandPaletteResults: Array<{ label: string; meta: string; kind: 'command' | 'track' | 'artist'; run: () => void }> = [];
@@ -1425,7 +1430,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function hasServerEntitlement(capability: string) {
-      if (!isProdFlavor) return true;
+      if (isDebugFlavor || appFlavor === 'pro-prod') return true;
       return serverEntitlements.has(capability);
     }
 
@@ -1434,7 +1439,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function googleDriveFeatureStatusLabel() {
-      if (!isProdFlavor) return 'Available in debug build.';
+      if (isDebugFlavor) return 'Available in debug build.';
+      if (appFlavor === 'pro-prod') return 'Included in this Pro build.';
       if (canUseGoogleDriveFeature()) return 'Included in your DJ Assist Sync access.';
       if (googleSignedInUser()) return 'Google Drive import is part of DJ Assist Sync.';
       return 'Sign in and subscribe to DJ Assist Sync to use Google Drive.';
@@ -1457,7 +1463,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const subscription = serverAccountSession?.subscription && typeof serverAccountSession.subscription === 'object'
         ? serverAccountSession.subscription as Record<string, unknown>
         : null;
-      if (!subscription) return isProdFlavor ? 'Free' : 'Debug';
+      if (!subscription) return appFlavor === 'pro-prod' ? 'Pro' : (isFreeProdFlavor ? 'Free' : 'Debug');
       const planKey = String(subscription.plan_key ?? 'free').trim() || 'free';
       const status = String(subscription.status ?? 'inactive').trim() || 'inactive';
       return `${planKey} · ${status}`;
@@ -2626,7 +2632,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function openPanel(panel: 'track' | 'sets' | 'library' | 'activity') {
-      const nextPanel = isProdFlavor && panel === 'activity' ? 'track' : panel;
+      const nextPanel = !isDebugFlavor && panel === 'activity' ? 'track' : panel;
       document.querySelector<HTMLElement>(`.panel-tab[data-panel="${nextPanel}"]`)?.click();
     }
 
@@ -2758,7 +2764,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           void loadTracks();
         } },
       ];
-      if (!isProdFlavor) {
+      if (isDebugFlavor) {
         commands.splice(8, 0, { label: 'Open Activity', meta: 'Panel', run: () => openPanel('activity') });
       }
       const trackResults = tracks
@@ -2879,7 +2885,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function trackSourceDetailMarkup(track: Record<string, unknown>): string {
       const sources = Array.isArray(track.sources) ? track.sources as Record<string, unknown>[] : [];
       const sourcePreference = String(track.source_preference ?? '').trim();
-      const canPreferDriveSource = !isProdFlavor;
+      const canPreferDriveSource = hasProFeatures;
       if (!sources.length) {
         return `<div class="scan-preflight">Source path: ${esc(String(track.path ?? ''))}</div>`;
       }
@@ -3783,6 +3789,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         category,
         context,
       });
+      const useKeepalive = new TextEncoder().encode(payload).length <= 60_000;
       void (async () => {
         let lastError = '';
         let lastStatus: number | null = null;
@@ -3792,7 +3799,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             const response = await fetch('/api/logs/client', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              keepalive: true,
+              keepalive: useKeepalive,
               body: payload,
             });
             if (response.ok) return;
@@ -3806,6 +3813,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             await new Promise((resolve) => window.setTimeout(resolve, attempt * 250));
           }
         }
+        const warningKey = `${category}:${message}:${lastStatus ?? lastError}`.slice(0, 240);
+        if (failedClientLogWarnings.has(warningKey)) return;
+        failedClientLogWarnings.add(warningKey);
+        if (failedClientLogWarnings.size > 40) failedClientLogWarnings.clear();
         console.warn('[frontend-log] failed to persist log entry', {
           message,
           level,
@@ -3815,6 +3826,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           responseBody: lastBody,
         });
       })();
+    }
+
+    function isExpectedWaveformUnavailable(error: unknown): boolean {
+      if (!(error instanceof Error)) return false;
+      return error.message.includes('waveform_unavailable') || error.message.includes('could not be decoded during scan') || error.message.includes('no decoded duration');
     }
 
     function appendScanLog(
@@ -4432,13 +4448,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         <div class="bulk-toolbar-main">
           <strong>${selected.length} selected</strong>
           <button type="button" class="btn" id="bulk-select-all-visible-btn">Select All Visible</button>
-          <button type="button" class="btn" id="bulk-select-drive-missing-bpm-btn">Select Drive Missing BPM</button>
-          <button type="button" class="btn" id="bulk-analyze-drive-missing-bpm-btn">Analyze Visible Drive Missing BPM</button>
           <button type="button" class="btn danger" id="bulk-delete-btn">Delete</button>
-          <button type="button" class="btn" id="bulk-reanalyze-bpm-btn">Analyze BPM</button>
-          <button type="button" class="btn" id="bulk-reanalyze-art-btn">Fill Missing Art</button>
-          <button type="button" class="btn" id="bulk-ignore-btn">Ignore</button>
-          <button type="button" class="btn" id="bulk-unignore-btn">Unignore</button>
           ${sets.length ? `
             <select id="bulk-set-select">
               ${setOptions}
@@ -4502,21 +4512,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('bulk-select-all-visible-btn')?.addEventListener('click', () => {
         selectAllVisibleTracks();
       });
-      document.getElementById('bulk-select-drive-missing-bpm-btn')?.addEventListener('click', () => {
-        selectVisibleGoogleDriveTracksMissingBpm();
-      });
-      document.getElementById('bulk-analyze-drive-missing-bpm-btn')?.addEventListener('click', () => {
-        void analyzeVisibleGoogleDriveTracksMissingBpm();
-      });
-      document.getElementById('bulk-ignore-btn')?.addEventListener('click', () => { void runBulkAction('ignore'); });
-      document.getElementById('bulk-unignore-btn')?.addEventListener('click', () => { void runBulkAction('unignore'); });
       document.getElementById('bulk-delete-btn')?.addEventListener('click', () => { openDeleteTracksModal([...selectedTrackIds], 'bulk'); });
-      document.getElementById('bulk-reanalyze-bpm-btn')?.addEventListener('click', () => {
-        void reanalyzeBpmBulk([...selectedTrackIds], { label: 'selected tracks' });
-      });
-      document.getElementById('bulk-reanalyze-art-btn')?.addEventListener('click', () => {
-        void reanalyzeArtBulk([...selectedTrackIds], { label: 'selected tracks' });
-      });
       document.getElementById('bulk-add-set-btn')?.addEventListener('click', () => {
         const select = document.getElementById('bulk-set-select') as HTMLSelectElement | null;
         if (!select?.value) return;
@@ -5078,6 +5074,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             if (payload && typeof payload.error === 'string' && payload.error.trim()) {
               message = payload.error;
             }
+            if (payload && typeof payload.code === 'string' && payload.code.trim()) {
+              message = `${payload.code}: ${message}`;
+            }
           } catch {
             // Ignore malformed error payloads and use the generic message.
           }
@@ -5215,6 +5214,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (isExpectedWaveformUnavailable(error)) {
+          renderFallbackWaveform();
+          bindFallbackScrubbing();
+          return;
+        }
         appendScanLog(`Waveform preview fallback for track ${trackId}: ${message}`, 'warning', {
           category: 'waveform',
           trackId,
@@ -5239,7 +5243,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     document.querySelectorAll('.panel-tab').forEach((btn) => {
       btn.addEventListener('click', () => {
         const requestedPanel = ((btn as HTMLElement).dataset.panel ?? 'track') as 'track' | 'sets' | 'library' | 'activity';
-        const panel = isProdFlavor && requestedPanel === 'activity' ? 'track' : requestedPanel;
+        const panel = !isDebugFlavor && requestedPanel === 'activity' ? 'track' : requestedPanel;
         currentPanel = panel;
         document.querySelectorAll('.panel-tab').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
@@ -5249,7 +5253,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (panelActivity) panelActivity.style.display = panel === 'activity' ? '' : 'none';
         if (panel === 'sets') renderSetsPanel();
         if (panel === 'library') renderLibraryPanel();
-        if (panel === 'activity' && !isProdFlavor) renderActivityPanel();
+        if (panel === 'activity' && isDebugFlavor) renderActivityPanel();
       });
     });
 
@@ -5865,31 +5869,33 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           </div>
         </div>
         <div class="detail-inner">
-          <div class="detail-mode-tabs">
-            <button type="button" class="detail-mode-tab ${currentDetailMode === 'overview' ? 'active' : ''}" data-detail-mode="overview">Overview</button>
-            <button type="button" class="detail-mode-tab ${currentDetailMode === 'match' ? 'active' : ''}" data-detail-mode="match">Match / Metadata</button>
-          </div>
-          <div class="buttons">
-            <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
-            <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
-            <button class="btn" id="reanalyze-art-btn" type="button">Reanalyze Art</button>
-            ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
-            <button class="btn" id="open-tunebat-btn" type="button" title="Open this track on Tunebat">Tunebat</button>
-            ${track.youtube_url ? '<button class="btn" id="open-youtube-btn" type="button">YouTube</button>' : ''}
-            ${sets.length > 0 ? `
-              <div style="display:inline-flex;gap:6px;align-items:center;">
-                <select id="set-select" style="background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;">
-                  ${setOptions}
-                </select>
-                <button class="btn" id="add-to-set-btn" type="button">+ Add to playlist</button>
-                <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
-              </div>
-            ` : `
-              <div style="display:inline-flex;gap:6px;align-items:center;">
-                <button class="btn" id="open-sets-btn" type="button">+ Add to playlist</button>
-                <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
-              </div>
-            `}
+          <div class="detail-sticky-menu">
+            <div class="detail-mode-tabs">
+              <button type="button" class="detail-mode-tab ${currentDetailMode === 'overview' ? 'active' : ''}" data-detail-mode="overview">Overview</button>
+              <button type="button" class="detail-mode-tab ${currentDetailMode === 'match' ? 'active' : ''}" data-detail-mode="match">Match / Metadata</button>
+            </div>
+            <div class="buttons detail-action-buttons">
+              <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
+              <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
+              <button class="btn" id="reanalyze-art-btn" type="button">Reanalyze Art</button>
+              ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
+              <button class="btn" id="open-tunebat-btn" type="button" title="Open this track on Tunebat">Tunebat</button>
+              ${track.youtube_url ? '<button class="btn" id="open-youtube-btn" type="button">YouTube</button>' : ''}
+              ${sets.length > 0 ? `
+                <div style="display:inline-flex;gap:6px;align-items:center;">
+                  <select id="set-select" style="background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;">
+                    ${setOptions}
+                  </select>
+                  <button class="btn" id="add-to-set-btn" type="button">+ Add to playlist</button>
+                  <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
+                </div>
+              ` : `
+                <div style="display:inline-flex;gap:6px;align-items:center;">
+                  <button class="btn" id="open-sets-btn" type="button">+ Add to playlist</button>
+                  <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
+                </div>
+              `}
+            </div>
           </div>
           <div class="detail-sources">
             ${trackSourceDetailMarkup(track)}
@@ -6572,7 +6578,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           <button class="btn" id="create-set-btn" type="button">Create</button>
         </div>
       `;
-      const proPlaylistRoadmap = isProdFlavor ? `
+      const proPlaylistRoadmap = isFreeProdFlavor ? `
         <div class="pro-roadmap-card playlist-roadmap-card">
           <strong>Local playlists stay free.</strong>
           <span>Cross-device playlist sharing is planned for a future Pro version.</span>
@@ -7092,7 +7098,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const accountEntitlementChips = serverEntitlements.size
         ? [...serverEntitlements].sort().map((capability) => `<span class="chip subtle">${esc(formatCapabilityLabel(capability))}</span>`).join('')
         : '';
-      const googleDriveCardMarkup = isProdFlavor ? '' : `
+      const googleDriveCardMarkup = hasProFeatures ? `
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
             <div class="scan-preflight">Import audio file metadata from the connected Google Drive account into DJ Assist. Imported Drive items are added to the Songs list locally and synced to the server.</div>
@@ -7120,7 +7126,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <span id="google-drive-import-stage-scope">${esc(googleDriveImportScopeLabel)}</span>
               </div>
             </div>
-            <div class="scan-preflight subtle">Detailed import events are shown in Activity.</div>
+            <div class="scan-preflight subtle">${isDebugFlavor ? 'Detailed import events are shown in Activity.' : 'Import progress is shown here while the job runs.'}</div>
             <div class="buttons">
               <button type="button" class="btn" id="google-drive-import-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>Import Google Drive Metadata</button>
               <button type="button" class="btn secondary" id="google-drive-preview-btn" ${googleUser && googleDrive?.connected ? '' : 'disabled'}>${googleDriveFilesLoaded ? 'Refresh Drive Files' : 'Preview Drive Files'}</button>
@@ -7128,7 +7134,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <button type="button" class="btn secondary" id="google-drive-connect-btn">${googleUser ? 'Manage Google' : 'Sign in with Google'}</button>
             </div>
           </section>
-      `;
+      ` : '';
       const recentImportsMarkup = `
         <section class="library-card">
           <div class="scan-log-head"><strong>Recent Imports</strong></div>
@@ -7229,11 +7235,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <div class="scan-preflight">
                 ${googleUser
                   ? `${esc(String(accountUser?.email ?? googleUser.email ?? googleUser.name ?? 'Google user'))} · ${esc(accountPlanSummary())}`
-                  : 'Debug build keeps premium capabilities available without account gating.'}
+                  : isDebugFlavor
+                    ? 'Debug build keeps premium capabilities available without account gating.'
+                    : 'Sign in with Google to use Pro sync features.'}
               </div>
-              <div class="scan-preflight">
+              ${isDebugFlavor ? `<div class="scan-preflight">
                 Debug build: account checks are visible, but premium features stay unlocked for development.
-              </div>
+              </div>` : ''}
               ${accountEntitlementChips ? `<div class="chips">${accountEntitlementChips}</div>` : ''}
               <div class="buttons">
                 <button type="button" class="btn secondary" id="account-status-google-btn">${googleUser ? 'Manage Google' : 'Sign in with Google'}</button>
@@ -7277,7 +7285,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             </div>
           </section>
-          ${isProdFlavor ? '' : `<section class="library-card" hidden>
+          ${isDebugFlavor ? `<section class="library-card">
             <div class="scan-log-head"><strong>Fast Scan Server</strong></div>
             <div class="preferences-list">
               <label class="preference-row"><input id="server-sync-enabled" type="checkbox" ${serverRuntimeSummary()?.enabled !== false ? 'checked' : ''} /><span>Send scan results to DJ Assist Server</span></label>
@@ -7309,8 +7317,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <button type="button" class="btn secondary" id="google-sign-out-btn">Sign out</button>
               </div>
             </div>
-          </section>`}
-          ${isProdFlavor ? '' : `<section class="library-card" hidden>
+          </section>` : ''}
+          ${isDebugFlavor ? `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Spotify Credentials</strong></div>
             <div class="preferences-list">
               <label class="preference-field">
@@ -7327,14 +7335,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <button type="button" class="btn" id="spotify-test-saved-btn">Test Saved</button>
               </div>
             </div>
-          </section>`}
-          ${isProdFlavor ? '' : `<section class="library-card" hidden>
+          </section>` : ''}
+          ${isDebugFlavor ? `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Smart Crates</strong></div>
             <div class="chips">
               ${smartCrates.map((crate) => `<button type="button" class="chip nav-chip smart-crate-btn" data-query="${esc(crate.query)}">${esc(crate.label)} · ${esc(crate.count)}</button>`).join('')}
             </div>
-          </section>`}
-          ${isProdFlavor ? '' : `<section class="library-card" hidden>
+          </section>` : ''}
+          ${isDebugFlavor ? `<section class="library-card" hidden>
             <div class="scan-log-head"><strong>Artist Browser</strong></div>
             <div class="scan-history">
               ${artists.map((artist) => `
@@ -7345,7 +7353,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 </div>
               `).join('')}
             </div>
-          </section>`}
+          </section>` : ''}
         </div>
       `;
 
@@ -7652,7 +7660,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function renderActivityPanel() {
-      if (isProdFlavor || !activityPanel) return;
+      if (!isDebugFlavor || !activityPanel) return;
       const spotify = spotifyRuntimeSummary();
       const diagnostics = [
         { label: 'Database', ok: Boolean(runtimeHealth?.database_url_set), value: runtimeHealth?.database_path ?? 'Not configured' },

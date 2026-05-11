@@ -24,18 +24,20 @@ function readBundledBuildEnv() {
 }
 
 function appFlavorFromEnv(buildEnv = readBundledBuildEnv()) {
-  const flavor = String(
+  const rawFlavor = String(
     process.env.DJ_ASSIST_APP_FLAVOR
       || process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR
       || buildEnv.DJ_ASSIST_APP_FLAVOR
       || buildEnv.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR
       || '',
-  ).trim();
-  return flavor === 'prod' ? 'prod' : 'debug';
+  ).trim().toLowerCase();
+  if (rawFlavor === 'pro-prod' || rawFlavor === 'pro') return 'pro-prod';
+  if (rawFlavor === 'free-prod' || rawFlavor === 'free' || rawFlavor === 'prod') return 'free-prod';
+  return 'debug';
 }
 
 function googleFeaturesEnabled() {
-  return appFlavorFromEnv() !== 'prod';
+  return appFlavorFromEnv() !== 'free-prod';
 }
 
 function applyBundledBuildEnv() {
@@ -49,7 +51,7 @@ function applyBundledBuildEnv() {
   if (appFlavor && !process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR) {
     process.env.NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR = appFlavor;
   }
-  if (appFlavor === 'prod') {
+  if (appFlavor === 'free-prod') {
     delete process.env.GOOGLE_CLIENT_ID;
     delete process.env.GOOGLE_CLIENT_SECRET;
     return;

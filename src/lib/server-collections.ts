@@ -4,7 +4,7 @@ import {
   getClientId,
 } from '@/lib/runtime-settings';
 import { fetchServerEntitlements } from '@/lib/server-account';
-import { isProdAppFlavor } from '@/lib/app-flavor';
+import { googleFeaturesEnabled, isDebugAppFlavor, isProProdAppFlavor } from '@/lib/app-flavor';
 
 type CollectionTrackReference = {
   position: number;
@@ -189,11 +189,12 @@ async function getServerAuthHeaders() {
 }
 
 async function canUsePlaylistSyncFeature() {
+  if (!googleFeaturesEnabled()) return false;
   const user = await effectiveUserData();
   const googleIdToken = String(user.google_id_token ?? '').trim();
   const googleAccessToken = String(user.google_access_token ?? '').trim();
   if (user.type !== 'google' || (!googleIdToken && !googleAccessToken)) return false;
-  if (!isProdAppFlavor()) return true;
+  if (isDebugAppFlavor() || isProProdAppFlavor()) return true;
   const response = await fetchServerEntitlements();
   return Array.isArray(response?.entitlements) && response.entitlements.includes('playlist_sync');
 }

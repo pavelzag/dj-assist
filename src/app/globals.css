@@ -1424,7 +1424,25 @@ main {
 .chip.warn    { background: rgba(255,173,51,0.1);  color: #ffd48a; border-color: rgba(255,173,51,0.35); }
 .chip.success { background: rgba(54,197,126,0.1); color: #9cf4c7; border-color: rgba(54,197,126,0.35); }
 .chip.subtle  { background: rgba(255,255,255,0.03); color: var(--muted); border-color: var(--line); }
-.detail-inner { padding: 14px 16px; }
+.detail-inner { padding: 0 16px 14px; }
+.detail-sticky-menu {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0 -16px 14px;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(9,13,23,0.98), rgba(9,13,23,0.94)),
+    var(--panel);
+  backdrop-filter: blur(12px);
+}
+.detail-sticky-menu .detail-mode-tabs {
+  margin-bottom: 10px;
+}
+.detail-action-buttons {
+  margin-bottom: 0;
+}
 .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .btn {
   display: inline-flex; align-items: center; gap: 8px;
