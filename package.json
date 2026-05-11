@@ -1,6 +1,6 @@
 {
   "name": "dj-assist",
-  "version": "0.5.116",
+  "version": "0.5.117",
   "private": true,
   "main": "electron/main.cjs",
   "engines": {
