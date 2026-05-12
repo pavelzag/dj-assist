@@ -465,7 +465,20 @@ export async function cancelScanJob(jobId: string): Promise<void> {
   if (!job) throw new Error('Scan job not found');
   if (!job.child) return;
   job.state.status = 'cancelled';
-  job.child.kill('SIGTERM');
+  job.state.currentFile = '';
+  emitJobState(job);
+  await updatePersistentState(job);
+  const child = job.child;
+  child.kill('SIGTERM');
+  setTimeout(() => {
+    if (job.child === child) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // Ignore late kill failures if the process already exited.
+      }
+    }
+  }, 2500);
   await pushLog(job, 'warning', 'Scan cancelled by user', 'cancel');
 }
 
