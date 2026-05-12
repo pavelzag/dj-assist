@@ -13,6 +13,13 @@ import {
 import { isIgnoredGoogleDriveAudioFileName } from '@/lib/google-drive-files';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
 import { parseTrackSearchQuery } from '@/lib/track-search';
+import {
+  cloudSourceLabel,
+  cloudSourceKindFromPath,
+  cloudTrackPath,
+  normalizeCloudSourceKind,
+  type CloudSourceKind,
+} from '@/lib/cloud-source';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -372,17 +379,20 @@ function serializeTags(tags: string[]): string {
   return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].join(', ');
 }
 
-type PreferredSourceKind = 'local' | 'google_drive' | null;
+type PreferredSourceKind = 'local' | CloudSourceKind | null;
 
 function preferredSourceTagValue(track: Pick<Track, 'custom_tags'>): PreferredSourceKind {
   const tags = parseTags(track.custom_tags);
   if (tags.includes('preferred_source:local')) return 'local';
-  if (tags.includes('preferred_source:google_drive')) return 'google_drive';
+  const matched = tags
+    .map((tag) => tag.startsWith('preferred_source:') ? normalizeCloudSourceKind(tag.slice('preferred_source:'.length)) : null)
+    .find((kind): kind is CloudSourceKind => Boolean(kind));
+  if (matched) return matched;
   return null;
 }
 
 function withPreferredSourceTag(existingTags: string | null, preferredSource: PreferredSourceKind): string {
-  const nextTags = parseTags(existingTags).filter((tag) => tag !== 'preferred_source:local' && tag !== 'preferred_source:google_drive');
+  const nextTags = parseTags(existingTags).filter((tag) => !tag.startsWith('preferred_source:'));
   if (preferredSource) nextTags.push(`preferred_source:${preferredSource}`);
   return serializeTags(nextTags);
 }
@@ -438,7 +448,7 @@ export interface Track {
 }
 
 export type SerializedTrackSource = {
-  kind: 'local' | 'google_drive';
+  kind: 'local' | CloudSourceKind;
   label: string;
   path: string | null;
   track_id: number;
@@ -707,9 +717,12 @@ export function serializeTrack(
     effective_bpm: effectiveBpm,
     effective_key: effectiveKey,
     sources: buildTrackSources([track]),
-    source_kinds: [isGoogleDriveTrackPathValue(track.path) ? 'google_drive' : 'local'],
-    has_local_source: !isGoogleDriveTrackPathValue(track.path),
-    has_google_drive_source: isGoogleDriveTrackPathValue(track.path),
+    source_kinds: [cloudSourceKindFromPath(track.path) ?? 'local'],
+    has_local_source: !cloudSourceKindFromPath(track.path),
+    has_google_drive_source: cloudSourceKindFromPath(track.path) === 'google_drive',
+    has_one_drive_source: cloudSourceKindFromPath(track.path) === 'onedrive',
+    has_dropbox_source: cloudSourceKindFromPath(track.path) === 'dropbox',
+    has_cloud_source: Boolean(cloudSourceKindFromPath(track.path)),
   };
 }
 
@@ -717,19 +730,19 @@ function trackIdentity(track: Track): string {
   return track.spotify_id || track.file_hash || `${track.artist ?? ''}|${track.title ?? ''}|${Math.round(track.duration ?? 0)}`;
 }
 
-function isGoogleDriveTrackPathValue(pathValue: string | null): boolean {
-  return String(pathValue ?? '').trim().startsWith('gdrive:');
+function isCloudTrackPathValue(pathValue: string | null): boolean {
+  return cloudSourceKindFromPath(pathValue) !== null;
 }
 
 function preferredTrackOrder(a: Track, b: Track): number {
   const preferredSource = preferredSourceTagValue(a) ?? preferredSourceTagValue(b);
   if (preferredSource) {
-    const aMatchesPreference = preferredSource === 'google_drive' ? isGoogleDriveTrackPathValue(a.path) : !isGoogleDriveTrackPathValue(a.path);
-    const bMatchesPreference = preferredSource === 'google_drive' ? isGoogleDriveTrackPathValue(b.path) : !isGoogleDriveTrackPathValue(b.path);
+    const aMatchesPreference = cloudSourceKindFromPath(a.path) === preferredSource;
+    const bMatchesPreference = cloudSourceKindFromPath(b.path) === preferredSource;
     if (aMatchesPreference !== bMatchesPreference) return aMatchesPreference ? -1 : 1;
   }
-  const aLocal = !isGoogleDriveTrackPathValue(a.path);
-  const bLocal = !isGoogleDriveTrackPathValue(b.path);
+  const aLocal = !isCloudTrackPathValue(a.path);
+  const bLocal = !isCloudTrackPathValue(b.path);
   if (aLocal !== bLocal) return aLocal ? -1 : 1;
   const aHasBpm = Number(a.bpm_override ?? a.bpm ?? a.spotify_tempo ?? 0) > 0;
   const bHasBpm = Number(b.bpm_override ?? b.bpm ?? b.spotify_tempo ?? 0) > 0;
@@ -752,13 +765,13 @@ function buildTrackSources(tracks: Track[]): SerializedTrackSource[] {
   return [...tracks]
     .sort(preferredTrackOrder)
     .flatMap((track) => {
-      const kind: SerializedTrackSource['kind'] = isGoogleDriveTrackPathValue(track.path) ? 'google_drive' : 'local';
+      const kind: SerializedTrackSource['kind'] = cloudSourceKindFromPath(track.path) ?? 'local';
       const key = `${kind}:${track.path ?? ''}:${track.id}`;
       if (seen.has(key)) return [];
       seen.add(key);
       return [{
         kind,
-        label: kind === 'google_drive' ? 'Google Drive' : 'Local',
+        label: kind === 'local' ? 'Local' : cloudSourceLabel(kind),
         path: track.path,
         track_id: track.id,
         file_hash: track.file_hash ?? null,
@@ -845,6 +858,9 @@ export function serializeTrackGroup(
     source_kinds: [...new Set(combinedSources.map((source) => source.kind))],
     has_local_source: combinedSources.some((source) => source.kind === 'local'),
     has_google_drive_source: combinedSources.some((source) => source.kind === 'google_drive'),
+    has_one_drive_source: combinedSources.some((source) => source.kind === 'onedrive'),
+    has_dropbox_source: combinedSources.some((source) => source.kind === 'dropbox'),
+    has_cloud_source: combinedSources.some((source) => source.kind !== 'local'),
     source_track_ids: tracks.map((track) => track.id),
     source_count: combinedSources.length,
     source_preference: preferredSourceTagValue(primary),
@@ -1203,6 +1219,18 @@ export async function purgeIgnoredGoogleDriveTracks(): Promise<number> {
   return before;
 }
 
+export async function purgeIgnoredCloudTracks(kind: CloudSourceKind): Promise<number> {
+  const prefix = `${kind === 'google_drive' ? 'gdrive' : kind}:%`;
+  const before = Number(
+    queryOne<Record<string, unknown>>(
+      `SELECT COUNT(*) AS count FROM tracks WHERE path LIKE '${prefix}' AND title LIKE '._%'`,
+    )?.count ?? 0,
+  );
+  if (!before) return 0;
+  execute(`DELETE FROM tracks WHERE path LIKE '${prefix}' AND title LIKE '._%'`);
+  return before;
+}
+
 export async function propagateAlbumArt(trackId: number): Promise<{ propagated: number; updatedIds: number[] }> {
   const track = queryOne<Record<string, unknown>>(
     'SELECT album_group_key, album_art_url, album_art_source, album_art_confidence FROM tracks WHERE id = ? LIMIT 1',
@@ -1331,6 +1359,179 @@ export async function importGoogleDriveTracks(input: {
     }
   });
   return { imported, updated };
+}
+
+export async function importCloudTracks(input: {
+  kind: CloudSourceKind;
+  files: Array<{
+    id: string;
+    name: string;
+    modifiedTime?: string | null;
+    size?: string | null;
+    md5Checksum?: string | null;
+  }>;
+  folderId?: string;
+  folderName?: string;
+}): Promise<{ imported: number; updated: number }> {
+  const files = input.files.filter((file) => {
+    const fileId = String(file.id ?? '').trim();
+    const name = String(file.name ?? '').trim();
+    return fileId && !isIgnoredGoogleDriveAudioFileName(name);
+  });
+  if (!files.length) return { imported: 0, updated: 0 };
+  let imported = 0;
+  let updated = 0;
+  const folderTag = String(input.folderId ?? '').trim();
+  const folderName = String(input.folderName ?? '').trim();
+  const sourceTag = `source:${input.kind}`;
+  const analysisStatus = `${input.kind}_metadata`;
+  const pathPrefix = `${input.kind === 'google_drive' ? 'gdrive' : input.kind}`;
+  transaction(() => {
+    for (const file of files) {
+      const fileId = String(file.id ?? '').trim();
+      const path = cloudTrackPath(input.kind, fileId);
+      const derivedTitle = String(file.name ?? '').replace(/\.[^.]+$/, '').trim() || String(file.name ?? '').trim() || fileId;
+      const modifiedAt = String(file.modifiedTime ?? '').trim();
+      const fileMtime = modifiedAt ? new Date(modifiedAt).getTime() / 1000 : null;
+      const fileSize = Number(file.size ?? 0);
+      const existing = queryOne<Record<string, unknown>>('SELECT id, title, custom_tags FROM tracks WHERE path = ? LIMIT 1', path);
+      const tags = [
+        ...parseTags(String(existing?.custom_tags ?? '')),
+        sourceTag,
+        ...(folderTag ? [`${pathPrefix}-folder:${folderTag}`] : []),
+        ...(folderName ? [`${pathPrefix}-folder-name:${folderName}`] : []),
+      ];
+      const serializedTags = serializeTags(tags);
+      if (existing) {
+        execute(
+          `UPDATE tracks
+           SET title = ?,
+               file_hash = ?,
+               file_size = ?,
+               file_mtime = ?,
+               custom_tags = ?,
+               analysis_status = COALESCE(analysis_status, ?)
+           WHERE id = ?`,
+          String(existing.title ?? '').trim() || derivedTitle,
+          String(file.md5Checksum ?? '').trim() || null,
+          Number.isFinite(fileSize) && fileSize > 0 ? fileSize : null,
+          fileMtime,
+          serializedTags,
+          analysisStatus,
+          Number(existing.id),
+        );
+        updated += 1;
+      } else {
+        execute(
+          `INSERT INTO tracks (
+             path, title, artist, album, duration, bitrate, bpm, bpm_override, bpm_confidence,
+             key, key_numeric, spotify_id, spotify_uri, spotify_url, spotify_preview_url,
+             spotify_tempo, spotify_key, spotify_mode, album_art_url, album_art_source,
+             album_art_confidence, album_art_review_status, album_art_review_notes, album_group_key,
+             embedded_album_art, album_art_match_debug, spotify_album_name, spotify_match_score,
+             spotify_high_confidence, youtube_url, bpm_source, analysis_status, analysis_error,
+             decode_failed, analysis_stage, analysis_debug, file_hash, file_size, file_mtime,
+             ignored, custom_tags, artist_canonical, album_canonical, manual_cues, track_notes
+           ) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?, 0, ?, NULL, NULL, '[]', NULL)`,
+          path,
+          derivedTitle,
+          analysisStatus,
+          String(file.md5Checksum ?? '').trim() || null,
+          Number.isFinite(fileSize) && fileSize > 0 ? fileSize : null,
+          fileMtime,
+          serializedTags,
+        );
+        imported += 1;
+      }
+    }
+  });
+  return { imported, updated };
+}
+
+export async function updateCloudTrackLocalMetadata(
+  kind: CloudSourceKind,
+  fileId: string,
+  patch: {
+    title?: string | null;
+    artist?: string | null;
+    album?: string | null;
+    duration?: number | null;
+    bitrate?: number | null;
+    bpm?: number | null;
+    key?: string | null;
+    embedded_album_art_url?: string | null;
+    spotify_id?: string | null;
+    spotify_tempo?: number | null;
+    spotify_album_name?: string | null;
+    metadata_source?: string | null;
+    metadata_recovery_debug?: Record<string, unknown> | null;
+  },
+): Promise<void> {
+  const path = cloudTrackPath(kind, String(fileId ?? '').trim());
+  const currentRow = queryOne<Record<string, unknown>>('SELECT * FROM tracks WHERE path = ? LIMIT 1', path);
+  if (!currentRow) return;
+  const current = mapTrack(currentRow);
+
+  const title = patch.title !== undefined ? patch.title : current.title;
+  const artist = patch.artist !== undefined ? patch.artist : current.artist;
+  const album = patch.album !== undefined ? patch.album : current.album;
+  const artistCanonical = canonicalizeArtistName(artist);
+  const albumCanonical = canonicalizeAlbumName(album);
+  const albumGroupKey = artistCanonical && albumCanonical ? `${artistCanonical}::${albumCanonical}` : current.album_group_key;
+  const embeddedArtUrl = patch.embedded_album_art_url !== undefined ? patch.embedded_album_art_url : current.album_art_url;
+  const hasEmbeddedArt = Boolean(String(embeddedArtUrl ?? '').trim());
+  const nextBpm = patch.bpm != null && patch.bpm > 0 ? patch.bpm : current.bpm;
+  const nextKey = patch.key !== undefined ? patch.key : current.key;
+  const nextSpotifyId = patch.spotify_id !== undefined ? patch.spotify_id : current.spotify_id;
+  const nextSpotifyTempo = patch.spotify_tempo != null && patch.spotify_tempo > 0 ? patch.spotify_tempo : current.spotify_tempo;
+  const nextSpotifyAlbumName = patch.spotify_album_name !== undefined ? patch.spotify_album_name : current.spotify_album_name;
+  const metadataSource = String(patch.metadata_source ?? '').trim();
+  const metadataRecoveryDebug = patch.metadata_recovery_debug ? JSON.stringify(patch.metadata_recovery_debug) : '';
+  const analysisDebugParts = [
+    `source=${kind}_local_metadata`,
+    `embedded_tags=${hasEmbeddedArt ? 'yes' : 'no'}`,
+    `bpm=${nextBpm ?? 0}`,
+    `key=${nextKey ?? ''}`,
+    ...(metadataSource ? [`metadata_source=${metadataSource}`] : []),
+    ...(nextSpotifyId ? [`spotify_id=${String(nextSpotifyId)}`] : []),
+    ...(nextSpotifyTempo ? [`spotify_tempo=${Number(nextSpotifyTempo)}`] : []),
+    ...(metadataRecoveryDebug ? [`recovery=${metadataRecoveryDebug}`] : []),
+  ];
+
+  execute(
+    `UPDATE tracks
+     SET title = ?, artist = ?, album = ?, duration = ?, bitrate = ?, bpm = ?, key = ?,
+         spotify_id = ?, spotify_tempo = ?, spotify_album_name = ?,
+         bpm_source = ?, analysis_status = ?, analysis_error = ?, analysis_stage = ?, analysis_debug = ?,
+         album_art_url = ?, album_art_source = ?, album_art_confidence = ?, album_art_review_status = ?,
+         album_art_review_notes = ?, embedded_album_art = ?, album_group_key = ?, artist_canonical = ?, album_canonical = ?
+     WHERE path = ?`,
+    title,
+    artist,
+    album,
+    patch.duration != null && patch.duration > 0 ? patch.duration : current.duration,
+    patch.bitrate != null && patch.bitrate > 0 ? patch.bitrate : current.bitrate,
+    nextBpm,
+    nextKey,
+    nextSpotifyId,
+    nextSpotifyTempo,
+    nextSpotifyAlbumName,
+    nextBpm ? 'tag' : current.bpm_source,
+    `${kind}_metadata`,
+    null,
+    metadataSource || `${kind}_metadata`,
+    analysisDebugParts.join(' | '),
+    hasEmbeddedArt ? embeddedArtUrl : current.album_art_url,
+    hasEmbeddedArt ? 'embedded' : current.album_art_source,
+    hasEmbeddedArt ? 100 : current.album_art_confidence,
+    hasEmbeddedArt ? 'approved' : current.album_art_review_status,
+    hasEmbeddedArt ? 'embedded artwork extracted from cloud file tags' : current.album_art_review_notes,
+    boolInt(hasEmbeddedArt || Boolean(current.embedded_album_art)),
+    albumGroupKey,
+    artistCanonical || current.artist_canonical,
+    albumCanonical || current.album_canonical,
+    path,
+  );
 }
 
 export async function bulkTrackAction(input: {
@@ -2121,7 +2322,7 @@ export interface LibraryOverview {
 }
 
 export async function getLibraryOverview(): Promise<LibraryOverview> {
-  const visibleRows = (await getAllTracks()).filter((track) => googleFeaturesEnabled() || !isGoogleDriveTrackPathValue(track.path));
+  const visibleRows = (await getAllTracks()).filter((track) => googleFeaturesEnabled() || !isCloudTrackPathValue(track.path));
   const allTracks = visibleRows.map((track) => serializeTrack(track, { includeEmbeddedArtwork: false }));
 
   const health = {

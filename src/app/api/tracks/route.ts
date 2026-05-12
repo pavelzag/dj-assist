@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { aggregateTracks, getAllTrackRows, getDatabasePath, searchTrackRows, serializeTrackGroup } from '@/lib/db';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
+import { isCloudTrackPath } from '@/lib/cloud-source';
 
 export const runtime = 'nodejs';
 
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
     const googleEnabled = googleFeaturesEnabled();
     const visibleTracks = googleEnabled
       ? tracks
-      : tracks.filter((track) => !String(track.path ?? '').trim().startsWith('gdrive:'));
+      : tracks.filter((track) => !isCloudTrackPath(track.path));
 
     let payload = aggregateTracks(visibleTracks).map((group) => serializeTrackGroup(group, { includeEmbeddedArtwork: false }));
     if (highConfidenceOnly) {

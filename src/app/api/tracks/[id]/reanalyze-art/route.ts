@@ -2,6 +2,8 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrackById, propagateAlbumArt, serializeTrack } from '@/lib/db';
+import { ensureLocalCloudTrackFile } from '@/lib/cloud-track';
+import { isCloudTrackPath } from '@/lib/cloud-source';
 import { applySpotifyCredentialsToEnv, effectiveSpotifyCredentials } from '@/lib/runtime-settings';
 import { resolveWorkingPython } from '@/lib/scan';
 
@@ -48,11 +50,19 @@ export async function POST(
     if (spotify.credentials) {
       applySpotifyCredentialsToEnv(spotify.credentials);
     }
+    let pathOverride = '';
+    if (isCloudTrackPath(currentTrack.path)) {
+      const downloaded = await ensureLocalCloudTrackFile(currentTrack.path);
+      if (downloaded) {
+        pathOverride = downloaded.localPath;
+      }
+    }
     const python = await resolveWorkingPython();
     const startedAt = Date.now();
+    const args = ['-m', 'dj_assist.cli', 'reanalyze-art', String(trackId), ...(force ? ['--force'] : []), ...(pathOverride ? ['--path-override', pathOverride] : []), '--json-output'];
     const { stdout, stderr } = await execFileAsync(
       python,
-      ['-m', 'dj_assist.cli', 'reanalyze-art', String(trackId), ...(force ? ['--force'] : []), '--json-output'],
+      args,
       {
         cwd: process.cwd(),
         env: {

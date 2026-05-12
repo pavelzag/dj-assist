@@ -580,7 +580,7 @@ def reanalyze_bpm(track_id: int, json_output: bool, path_override: str) -> None:
     )
 
 
-def _refresh_track_art(track_id: int, force: bool = False) -> dict:
+def _refresh_track_art(track_id: int, force: bool = False, path_override: str = "") -> dict:
     from .media import build_media_links, SpotifyClient
     from .scanner import _lookup_preferred_album_art, _resolve_album_art
 
@@ -614,6 +614,7 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
             "album_art_source": track.album_art_source or "",
             "timeline": timeline,
         }
+    analysis_path = path_override.strip() or track.path
 
     # Step 1: try the server — another user may have already resolved art for
     # this track, making a full Spotify round-trip unnecessary.
@@ -665,6 +666,7 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
         "ok": True,
         "track_id": track_id,
         "path": track.path,
+        "analysis_path": analysis_path,
         "artist": track.artist or "",
         "title": track.title or "",
         "album": track.album or "",
@@ -689,7 +691,7 @@ def _refresh_track_art(track_id: int, force: bool = False) -> dict:
         track.album,
         track.duration,
         fetch_album_art=not bool(preferred_album_art_url),
-        file_path=track.path,
+        file_path=analysis_path,
         enable_spotify=spotify_enabled,
         enable_acoustid=needs_acoustid,
     )
@@ -1040,9 +1042,10 @@ def _resolve_track_art_for_storage(
 @main.command(name="reanalyze-art")
 @click.argument("track_id", type=int)
 @click.option("--force", is_flag=True, help="Refresh art even if the track already has an image.")
+@click.option("--path-override", type=str, default="", help="Optional local file path to analyze instead of the stored track path.")
 @click.option("--json-output", is_flag=True, help="Emit JSON with the updated art analysis.")
-def reanalyze_art(track_id: int, force: bool, json_output: bool) -> None:
-    payload = _refresh_track_art(track_id, force=force)
+def reanalyze_art(track_id: int, force: bool, path_override: str, json_output: bool) -> None:
+    payload = _refresh_track_art(track_id, force=force, path_override=path_override)
     if json_output:
         click.echo(json.dumps(payload))
         return

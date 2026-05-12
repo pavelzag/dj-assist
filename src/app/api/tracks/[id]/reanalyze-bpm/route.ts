@@ -2,7 +2,8 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { NextRequest, NextResponse } from 'next/server';
 import { getTrackById, serializeTrack } from '@/lib/db';
-import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
+import { ensureLocalCloudTrackFile } from '@/lib/cloud-track';
+import { isCloudTrackPath } from '@/lib/cloud-source';
 import { resolveWorkingPython } from '@/lib/scan';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
 
@@ -25,23 +26,21 @@ export async function POST(
   try {
     let pathOverride = '';
     let googleDriveDownload: Record<string, unknown> | null = null;
-    if (String(currentTrack.path ?? '').startsWith('gdrive:')) {
+    if (isCloudTrackPath(currentTrack.path)) {
       if (!googleFeaturesEnabled()) {
         return NextResponse.json({ error: 'not found' }, { status: 404 });
       }
-      const fileId = String(currentTrack.path ?? '').slice('gdrive:'.length).trim();
-      if (!fileId) {
-        return NextResponse.json({ error: 'Google Drive track is missing its file ID.' }, { status: 400 });
+      const downloaded = await ensureLocalCloudTrackFile(currentTrack.path);
+      if (downloaded) {
+        pathOverride = downloaded.localPath;
+        googleDriveDownload = {
+          fileId: String(currentTrack.path ?? ''),
+          localPath: downloaded.localPath,
+          cached: downloaded.cached,
+          name: downloaded.name,
+          mimeType: downloaded.mimeType,
+        };
       }
-      const downloaded = await ensureLocalGoogleDriveTrackFile(fileId);
-      pathOverride = downloaded.localPath;
-      googleDriveDownload = {
-        fileId,
-        localPath: downloaded.localPath,
-        cached: downloaded.cached,
-        name: downloaded.name,
-        mimeType: downloaded.mimeType,
-      };
     }
 
     const python = await resolveWorkingPython();

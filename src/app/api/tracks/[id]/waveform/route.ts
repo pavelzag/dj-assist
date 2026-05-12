@@ -6,8 +6,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getTrackById } from '@/lib/db';
 import { resolveWorkingPython } from '@/lib/scan';
 import { readCachedWaveform, writeCachedWaveform, type WaveformPeaksPayload } from '@/lib/waveforms';
-import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
-import { googleFeaturesEnabled } from '@/lib/app-flavor';
+import { ensureLocalCloudTrackFile } from '@/lib/cloud-track';
+import { isCloudTrackPath } from '@/lib/cloud-source';
 
 export const runtime = 'nodejs';
 
@@ -41,21 +41,17 @@ export async function GET(
       error: 'Waveform unavailable because this track has no decoded duration.',
     }, { status: 422 });
   }
-  let localPath: string;
-  if (String(track.path).startsWith('gdrive:')) {
-    if (!googleFeaturesEnabled()) {
-      return NextResponse.json({ error: 'not found' }, { status: 404 });
-    }
-    const fileId = String(track.path).slice('gdrive:'.length);
+  let localPath = track.path;
+  if (isCloudTrackPath(track.path)) {
     try {
-      const localFile = await ensureLocalGoogleDriveTrackFile(fileId);
-      localPath = localFile.localPath;
+      const cloudTrack = await ensureLocalCloudTrackFile(track.path);
+      if (cloudTrack) {
+        localPath = cloudTrack.localPath;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `Google Drive download failed: ${message}` }, { status: 502 });
+      return NextResponse.json({ error: `Cloud download failed: ${message}` }, { status: 502 });
     }
-  } else {
-    localPath = track.path;
   }
 
   try {

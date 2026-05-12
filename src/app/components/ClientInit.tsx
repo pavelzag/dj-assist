@@ -1775,6 +1775,122 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
+    function cloudProviderLabel(provider: 'onedrive' | 'dropbox') {
+      return provider === 'onedrive' ? 'OneDrive' : 'Dropbox';
+    }
+
+    function cloudProviderSettingsKey(provider: 'onedrive' | 'dropbox') {
+      return provider === 'onedrive' ? 'onedriveOauth' : 'dropboxOauth';
+    }
+
+    function cloudProviderRuntimeSummary(provider: 'onedrive' | 'dropbox') {
+      const server = runtimeHealth?.server && typeof runtimeHealth.server === 'object'
+        ? runtimeHealth.server as Record<string, unknown>
+        : null;
+      const summary = server?.[cloudProviderSettingsKey(provider)];
+      return summary && typeof summary === 'object' ? summary as Record<string, unknown> : null;
+    }
+
+    function cloudProviderStatusLabel(provider: 'onedrive' | 'dropbox') {
+      const summary = cloudProviderRuntimeSummary(provider);
+      if (!summary) return `Sign in to connect ${cloudProviderLabel(provider)}.`;
+      if (summary.configured) return `${cloudProviderLabel(provider)} OAuth configured.`;
+      return `Sign in to connect ${cloudProviderLabel(provider)}.`;
+    }
+
+    async function submitCloudOauthCredentials(provider: 'onedrive' | 'dropbox') {
+      const label = cloudProviderLabel(provider);
+      const clientIdInput = document.getElementById(`${provider}-client-id`) as HTMLInputElement | null;
+      const clientSecretInput = document.getElementById(`${provider}-client-secret`) as HTMLInputElement | null;
+      const saveBtn = document.getElementById(`${provider}-oauth-save-btn`) as HTMLButtonElement | null;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+      }
+      try {
+        const response = await fetch(`/api/settings/cloud/${provider}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: clientIdInput?.value.trim() ?? '',
+            clientSecret: clientSecretInput?.value.trim() ?? '',
+          }),
+        });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          showToast(String(payload.error ?? `Could not save ${label} settings.`), 'error');
+          return;
+        }
+        await loadRuntimeHealth();
+        renderLibraryPanel();
+        showToast(`${label} OAuth settings updated.`, 'success');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = `Save ${label}`;
+        }
+      }
+    }
+
+    async function startCloudSignIn(provider: 'onedrive' | 'dropbox') {
+      const label = cloudProviderLabel(provider);
+      try {
+        const desktopApi = (window as Window & {
+          djAssistDesktop?: {
+            appUrl?: string | null;
+            getAppUrl?: () => Promise<string | null>;
+            openExternal?: (url: string) => Promise<boolean>;
+          };
+        }).djAssistDesktop;
+        const dynamicAppUrl = desktopApi?.getAppUrl ? await desktopApi.getAppUrl().catch(() => null) : null;
+        const appBaseUrl =
+          String(dynamicAppUrl ?? '').trim() ||
+          String(desktopApi?.appUrl ?? '').trim() ||
+          window.location.origin;
+        const targetUrl = new URL(`/api/auth/cloud/${provider}/start`, appBaseUrl).toString();
+        if (desktopApi?.openExternal) {
+          const result = await desktopApi.openExternal(targetUrl);
+          if (result === false) {
+            showToast(`Could not open the browser for ${label} sign-in.`, 'error');
+            return;
+          }
+        } else {
+          window.location.href = targetUrl;
+          return;
+        }
+        setTimeout(() => {
+          void loadRuntimeHealth().then(() => renderLibraryPanel());
+        }, 3000);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      }
+    }
+
+    async function importCloudLibrary(provider: 'onedrive' | 'dropbox') {
+      const label = cloudProviderLabel(provider);
+      try {
+        const response = await fetch(`/api/cloud/${provider}/import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ maxFiles: 2000 }),
+        });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          showToast(String(payload.error ?? `Could not import from ${label}.`), 'error');
+          return;
+        }
+        showToast(`${label} import complete.`, 'success');
+        await Promise.all([
+          loadTracks(searchEl.value.trim()),
+          loadLibraryOverview(),
+        ]);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      }
+    }
+
     function stopGoogleSignInPoll() {
       if (googleSignInPollTimer) {
         clearInterval(googleSignInPollTimer);
@@ -7278,6 +7394,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const googleOauthConfigured = googleOauth?.configured === true;
       const googleDrive = googleDriveRuntimeSummary();
       const googleUser = googleSignedInUser();
+      const onedriveOauth = cloudProviderRuntimeSummary('onedrive');
+      const dropboxOauth = cloudProviderRuntimeSummary('dropbox');
       const accountUser = serverAccountSession?.user && typeof serverAccountSession.user === 'object'
         ? serverAccountSession.user as Record<string, unknown>
         : null;
@@ -7325,6 +7443,30 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
       ` : '';
+      const cloudProviderImportCardsMarkup = hasProFeatures ? (['onedrive', 'dropbox'] as const).map((provider) => {
+        const label = cloudProviderLabel(provider);
+        const summary = provider === 'onedrive' ? onedriveOauth : dropboxOauth;
+        const clientId = String(summary?.client_id_masked ?? '');
+        const hasSecret = Boolean(summary?.has_secret);
+        const configured = Boolean(summary?.configured);
+        return `
+          <section class="library-card">
+            <div class="scan-log-head"><strong>${esc(label)} Import</strong></div>
+            <div class="scan-preflight">${esc(label)} can be used as a cloud import source in pro builds.</div>
+            <div class="scan-preflight" id="${provider}-oauth-status">${esc(cloudProviderStatusLabel(provider))}</div>
+            <div class="scan-preflight">${configured ? `Configured${clientId ? ` · ${clientId}` : ''}${hasSecret ? ' · secret saved' : ''}` : 'Not configured yet.'}</div>
+            <div class="buttons">
+              <button type="button" class="btn secondary" id="${provider}-oauth-start-btn">${configured ? `Sign in with ${label}` : `Sign in with ${label}`}</button>
+              <button type="button" class="btn secondary" id="${provider}-oauth-save-btn">${configured ? `Save ${label}` : `Save ${label}`}</button>
+              <button type="button" class="btn" id="${provider}-import-btn" ${configured ? '' : 'disabled'}>Import ${label}</button>
+            </div>
+            <div class="metadata-grid cloud-oauth-grid">
+              <label><span>${label} Client ID</span><input id="${provider}-client-id" placeholder="${label} Client ID" /></label>
+              <label><span>${label} Client Secret</span><input id="${provider}-client-secret" type="password" placeholder="${label} Client Secret" /></label>
+            </div>
+          </section>
+        `;
+      }).join('') : '';
       const recentImportsMarkup = isDebugFlavor ? `
         <section class="library-card">
           <div class="scan-log-head"><strong>Recent Imports</strong></div>
@@ -7449,6 +7591,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           ${duplicateGroupsMarkup}
           ${artworkToolsMarkup}
           ${googleDriveCardMarkup}
+          ${cloudProviderImportCardsMarkup}
           <section class="library-card">
             <div class="scan-log-head"><strong>Preferences</strong></div>
             <div class="preferences-list">
@@ -7816,6 +7959,34 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
         void signInWithGoogle();
+      });
+      document.getElementById('onedrive-oauth-save-btn')?.addEventListener('click', () => {
+        void submitCloudOauthCredentials('onedrive');
+      });
+      document.getElementById('dropbox-oauth-save-btn')?.addEventListener('click', () => {
+        void submitCloudOauthCredentials('dropbox');
+      });
+      document.getElementById('onedrive-client-id')?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void submitCloudOauthCredentials('onedrive');
+      });
+      document.getElementById('dropbox-client-id')?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void submitCloudOauthCredentials('dropbox');
+      });
+      document.getElementById('onedrive-oauth-start-btn')?.addEventListener('click', () => {
+        void startCloudSignIn('onedrive');
+      });
+      document.getElementById('dropbox-oauth-start-btn')?.addEventListener('click', () => {
+        void startCloudSignIn('dropbox');
+      });
+      document.getElementById('onedrive-import-btn')?.addEventListener('click', () => {
+        void importCloudLibrary('onedrive');
+      });
+      document.getElementById('dropbox-import-btn')?.addEventListener('click', () => {
+        void importCloudLibrary('dropbox');
       });
       document.getElementById('account-status-google-btn')?.addEventListener('click', () => {
         openGoogleAuthModal();

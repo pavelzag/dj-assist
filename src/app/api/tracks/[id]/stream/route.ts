@@ -5,8 +5,8 @@ import { NextRequest } from 'next/server';
 import { createReadStream, existsSync, statSync } from 'fs';
 import path from 'path';
 import { getTrackById } from '@/lib/db';
-import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
-import { googleFeaturesEnabled } from '@/lib/app-flavor';
+import { ensureLocalCloudTrackFile } from '@/lib/cloud-track';
+import { isCloudTrackPath } from '@/lib/cloud-source';
 
 export const runtime = 'nodejs';
 
@@ -62,23 +62,19 @@ export async function GET(
   if (!track?.path) {
     return Response.json({ error: 'not found' }, { status: 404 });
   }
-  let filePath: string;
+  let filePath: string = resolveTrackPath(track.path);
   let mimeTypeOverride: string | null = null;
-  if (String(track.path).startsWith('gdrive:')) {
-    if (!googleFeaturesEnabled()) {
-      return Response.json({ error: 'not found' }, { status: 404 });
-    }
-    const fileId = String(track.path).slice('gdrive:'.length);
+  if (isCloudTrackPath(track.path)) {
     try {
-      const localFile = await ensureLocalGoogleDriveTrackFile(fileId);
-      filePath = localFile.localPath;
-      mimeTypeOverride = localFile.mimeType || null;
+      const cloudTrack = await ensureLocalCloudTrackFile(track.path);
+      if (cloudTrack) {
+        filePath = cloudTrack.localPath;
+        mimeTypeOverride = cloudTrack.mimeType || null;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return Response.json({ error: `Google Drive download failed: ${message}` }, { status: 502 });
+      return Response.json({ error: `Cloud download failed: ${message}` }, { status: 502 });
     }
-  } else {
-    filePath = resolveTrackPath(track.path);
   }
   if (!existsSync(filePath)) {
     return Response.json({ error: 'file missing' }, { status: 404 });

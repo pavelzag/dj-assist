@@ -5,6 +5,7 @@ import { aggregateTracks, getAllTrackRows, getTrackById, getTrackGroupMembers, s
 import { getRecommendedNextTracks, type RecommendationIntent } from '@/lib/analyzer';
 import { resolveWorkingPython } from '@/lib/scan';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
+import { isCloudTrackPath } from '@/lib/cloud-source';
 
 export const runtime = 'nodejs';
 
@@ -25,13 +26,13 @@ export async function GET(
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
   const googleEnabled = googleFeaturesEnabled();
-  if (!googleEnabled && String(track.path ?? '').trim().startsWith('gdrive:')) {
+  if (!googleEnabled && isCloudTrackPath(track.path)) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
 
-  const allTracks = (await getAllTrackRows()).filter((candidate) => googleEnabled || !String(candidate.path ?? '').trim().startsWith('gdrive:'));
+  const allTracks = (await getAllTrackRows()).filter((candidate) => googleEnabled || !isCloudTrackPath(candidate.path));
   const groupedTracks = aggregateTracks(allTracks);
-  const trackGroup = (await getTrackGroupMembers(track.id)).filter((candidate) => googleEnabled || !String(candidate.path ?? '').trim().startsWith('gdrive:'));
+  const trackGroup = (await getTrackGroupMembers(track.id)).filter((candidate) => googleEnabled || !isCloudTrackPath(candidate.path));
   const groupedTrack = trackGroup[0];
   if (!groupedTrack) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
@@ -67,10 +68,10 @@ export async function PATCH(
   const currentTrack = await getTrackById(trackId);
   if (!currentTrack) return NextResponse.json({ error: 'not found' }, { status: 404 });
   const googleEnabled = googleFeaturesEnabled();
-  if (!googleEnabled && String(currentTrack.path ?? '').trim().startsWith('gdrive:')) {
+  if (!googleEnabled && isCloudTrackPath(currentTrack.path)) {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
-  const trackGroup = (await getTrackGroupMembers(trackId)).filter((track) => googleEnabled || !String(track.path ?? '').trim().startsWith('gdrive:'));
+  const trackGroup = (await getTrackGroupMembers(trackId)).filter((track) => googleEnabled || !isCloudTrackPath(track.path));
   const groupIds = trackGroup.map((track) => track.id);
 
   if (body.bpm !== undefined) {
@@ -93,7 +94,7 @@ export async function PATCH(
       const writablePaths = [...new Set(
         trackGroup
           .map((track) => String(track.path ?? '').trim())
-          .filter((path) => path && !path.startsWith('gdrive:') && path.toLowerCase().endsWith('.mp3')),
+          .filter((path) => path && !isCloudTrackPath(path) && path.toLowerCase().endsWith('.mp3')),
       )];
       for (const writablePath of writablePaths) {
         const args = [
@@ -152,6 +153,6 @@ export async function PATCH(
     await Promise.all(groupIds.map((id) => updateTrackMetadata(id, patch)));
   }
 
-  const refreshedGroup = (await getTrackGroupMembers(trackId)).filter((track) => googleEnabled || !String(track.path ?? '').trim().startsWith('gdrive:'));
+  const refreshedGroup = (await getTrackGroupMembers(trackId)).filter((track) => googleEnabled || !isCloudTrackPath(track.path));
   return NextResponse.json({ track: serializeTrackGroup(refreshedGroup) });
 }

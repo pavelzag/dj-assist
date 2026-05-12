@@ -17,6 +17,10 @@ export type GoogleOauthCredentials = {
   clientSecret?: string;
 };
 
+export type OneDriveOauthCredentials = GoogleOauthCredentials;
+
+export type DropboxOauthCredentials = GoogleOauthCredentials;
+
 type RuntimeSettings = {
   spotify?: SpotifyCredentials & {
     updatedAt?: string;
@@ -24,10 +28,20 @@ type RuntimeSettings = {
   googleOauth?: GoogleOauthCredentials & {
     updatedAt?: string;
   };
+  onedriveOauth?: OneDriveOauthCredentials & {
+    updatedAt?: string;
+  };
+  dropboxOauth?: DropboxOauthCredentials & {
+    updatedAt?: string;
+  };
   server?: ServerSettings;
   scanProfile?: ScanProfileSettings;
   auth?: AuthSettings;
+  onedriveAuth?: CloudAuthSettings;
+  dropboxAuth?: CloudAuthSettings;
   pendingGoogleAuth?: PendingGoogleAuthSession;
+  pendingOneDriveAuth?: PendingCloudAuthSession;
+  pendingDropboxAuth?: PendingCloudAuthSession;
   clientId?: string;
 };
 
@@ -78,11 +92,32 @@ export type AuthSettings = {
   updatedAt?: string;
 };
 
+export type CloudAuthProvider = 'google' | 'onedrive' | 'dropbox';
+
+export type CloudAuthSettings = {
+  provider: CloudAuthProvider;
+  id: string;
+  email?: string;
+  emailVerified?: boolean;
+  name?: string;
+  picture?: string;
+  idToken?: string;
+  accessToken?: string;
+  accessTokenExpiresAt?: string;
+  refreshToken?: string;
+  scopes?: string[];
+  updatedAt?: string;
+};
+
 export type PendingGoogleAuthSession = {
   state: string;
   verifier: string;
   nonce: string;
   createdAt: string;
+};
+
+export type PendingCloudAuthSession = PendingGoogleAuthSession & {
+  provider: Exclude<CloudAuthProvider, 'google'>;
 };
 
 export type UserData = {
@@ -361,10 +396,55 @@ export async function saveGoogleAuth(auth: Omit<AuthSettings, 'provider' | 'upda
   return next;
 }
 
+export async function saveOneDriveAuth(auth: Omit<CloudAuthSettings, 'provider' | 'updatedAt'>): Promise<CloudAuthSettings> {
+  const current = await loadRuntimeSettings();
+  const existing = current.onedriveAuth?.provider === 'onedrive' ? current.onedriveAuth : null;
+  const next: CloudAuthSettings = {
+    provider: 'onedrive',
+    ...(existing ?? {}),
+    ...auth,
+    accessToken: auth.accessToken ?? existing?.accessToken,
+    accessTokenExpiresAt: auth.accessTokenExpiresAt ?? existing?.accessTokenExpiresAt,
+    refreshToken: auth.refreshToken ?? existing?.refreshToken,
+    scopes: auth.scopes ?? existing?.scopes,
+    updatedAt: new Date().toISOString(),
+  };
+  await saveRuntimeSettings({ ...current, onedriveAuth: next });
+  return next;
+}
+
+export async function saveDropboxAuth(auth: Omit<CloudAuthSettings, 'provider' | 'updatedAt'>): Promise<CloudAuthSettings> {
+  const current = await loadRuntimeSettings();
+  const existing = current.dropboxAuth?.provider === 'dropbox' ? current.dropboxAuth : null;
+  const next: CloudAuthSettings = {
+    provider: 'dropbox',
+    ...(existing ?? {}),
+    ...auth,
+    accessToken: auth.accessToken ?? existing?.accessToken,
+    accessTokenExpiresAt: auth.accessTokenExpiresAt ?? existing?.accessTokenExpiresAt,
+    refreshToken: auth.refreshToken ?? existing?.refreshToken,
+    scopes: auth.scopes ?? existing?.scopes,
+    updatedAt: new Date().toISOString(),
+  };
+  await saveRuntimeSettings({ ...current, dropboxAuth: next });
+  return next;
+}
+
 export async function clearAuthSettings(): Promise<void> {
   const current = await loadRuntimeSettings();
   const next = { ...current };
   delete next.auth;
+  delete next.onedriveAuth;
+  delete next.dropboxAuth;
+  await saveRuntimeSettings(next);
+}
+
+export async function clearAuthSettingsForProvider(provider: CloudAuthProvider): Promise<void> {
+  const current = await loadRuntimeSettings();
+  const next = { ...current };
+  if (provider === 'google') delete next.auth;
+  if (provider === 'onedrive') delete next.onedriveAuth;
+  if (provider === 'dropbox') delete next.dropboxAuth;
   await saveRuntimeSettings(next);
 }
 
@@ -384,6 +464,37 @@ export async function loadPendingGoogleAuthSession(): Promise<PendingGoogleAuthS
   const session = current.pendingGoogleAuth;
   if (!session?.state || !session.verifier || !session.nonce) return null;
   return session;
+}
+
+export async function savePendingCloudAuthSession(
+  provider: Exclude<CloudAuthProvider, 'google'>,
+  session: Omit<PendingCloudAuthSession, 'createdAt' | 'provider'>,
+): Promise<void> {
+  const current = await loadRuntimeSettings();
+  await saveRuntimeSettings({
+    ...current,
+    [provider === 'onedrive' ? 'pendingOneDriveAuth' : 'pendingDropboxAuth']: {
+      provider,
+      ...session,
+      createdAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function loadPendingCloudAuthSession(provider: Exclude<CloudAuthProvider, 'google'>): Promise<PendingCloudAuthSession | null> {
+  const current = await loadRuntimeSettings();
+  const session = provider === 'onedrive' ? current.pendingOneDriveAuth : current.pendingDropboxAuth;
+  if (!session?.state || !session.verifier || !session.nonce) return null;
+  return session;
+}
+
+export async function clearPendingCloudAuthSession(provider: Exclude<CloudAuthProvider, 'google'>): Promise<void> {
+  const current = await loadRuntimeSettings();
+  const key = provider === 'onedrive' ? 'pendingOneDriveAuth' : 'pendingDropboxAuth';
+  if (!current[key]) return;
+  const next = { ...current };
+  delete next[key];
+  await saveRuntimeSettings(next);
 }
 
 export async function clearPendingGoogleAuthSession(): Promise<void> {
@@ -452,7 +563,7 @@ function hasUsableGoogleAccessToken(auth: AuthSettings): boolean {
   return expiresAt > Date.now() + 30_000;
 }
 
-function authScopes(auth: AuthSettings): string[] {
+function authScopes(auth: Pick<AuthSettings, 'scopes'> | Pick<CloudAuthSettings, 'scopes'>): string[] {
   return Array.isArray(auth.scopes)
     ? auth.scopes.filter((scope): scope is string => typeof scope === 'string' && scope.trim().length > 0)
     : [];
@@ -470,6 +581,13 @@ function computeAccessTokenExpiresAt(expiresInSeconds: unknown): string | undefi
 }
 
 function parseGoogleScopes(value: unknown): string[] {
+  return String(value ?? '')
+    .split(/\s+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+}
+
+function parseScopes(value: unknown): string[] {
   return String(value ?? '')
     .split(/\s+/)
     .map((scope) => scope.trim())
@@ -518,6 +636,85 @@ async function refreshGoogleAuth(auth: AuthSettings): Promise<AuthSettings | nul
   }
 }
 
+async function refreshOneDriveAuth(auth: CloudAuthSettings): Promise<CloudAuthSettings | null> {
+  const refreshToken = String(auth.refreshToken ?? '').trim();
+  if (!refreshToken) return null;
+
+  const oauth = await effectiveOneDriveOauthCredentials();
+  const clientId = String(oauth.credentials?.clientId ?? '').trim();
+  const clientSecret = String(oauth.credentials?.clientSecret ?? '').trim();
+  if (!clientId) return null;
+
+  try {
+    const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        ...(clientSecret ? { client_secret: clientSecret } : {}),
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+        scope: ['openid', 'profile', 'email', 'offline_access', 'User.Read', 'Files.Read'].join(' '),
+      }).toString(),
+      cache: 'no-store',
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as Record<string, unknown>;
+    return await saveOneDriveAuth({
+      id: auth.id,
+      email: auth.email,
+      emailVerified: auth.emailVerified,
+      name: auth.name,
+      picture: auth.picture,
+      accessToken: String(payload.access_token ?? auth.accessToken ?? '').trim() || undefined,
+      accessTokenExpiresAt: computeAccessTokenExpiresAt(payload.expires_in) ?? auth.accessTokenExpiresAt,
+      refreshToken,
+      scopes: parseScopes(payload.scope).length ? parseScopes(payload.scope) : auth.scopes,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function refreshDropboxAuth(auth: CloudAuthSettings): Promise<CloudAuthSettings | null> {
+  const refreshToken = String(auth.refreshToken ?? '').trim();
+  if (!refreshToken) return null;
+
+  const oauth = await effectiveDropboxOauthCredentials();
+  const clientId = String(oauth.credentials?.clientId ?? '').trim();
+  const clientSecret = String(oauth.credentials?.clientSecret ?? '').trim();
+  if (!clientId) return null;
+
+  try {
+    const response = await fetch('https://api.dropboxapi.com/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        ...(clientSecret ? { client_secret: clientSecret } : {}),
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }).toString(),
+      cache: 'no-store',
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as Record<string, unknown>;
+    return await saveDropboxAuth({
+      id: auth.id,
+      email: auth.email,
+      emailVerified: auth.emailVerified,
+      name: auth.name,
+      picture: auth.picture,
+      accessToken: String(payload.access_token ?? auth.accessToken ?? '').trim() || undefined,
+      accessTokenExpiresAt: computeAccessTokenExpiresAt(payload.expires_in) ?? auth.accessTokenExpiresAt,
+      refreshToken,
+      scopes: parseScopes(payload.scope).length ? parseScopes(payload.scope) : auth.scopes,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function getGoogleDriveAccessToken(): Promise<{
   accessToken: string;
   userData: UserData;
@@ -549,6 +746,44 @@ export async function getGoogleDriveAccessToken(): Promise<{
     throw new Error('Google Drive access token is unavailable.');
   }
   return { accessToken, userData };
+}
+
+export async function getOneDriveAccessToken(): Promise<{
+  accessToken: string;
+  auth: CloudAuthSettings;
+}> {
+  const settings = await loadRuntimeSettings();
+  let auth = settings.onedriveAuth;
+  if (!auth || auth.provider !== 'onedrive' || !auth.id) {
+    throw new Error('OneDrive sign-in is required before importing from OneDrive.');
+  }
+  if (!auth.accessToken || !auth.accessTokenExpiresAt || Date.parse(auth.accessTokenExpiresAt) <= Date.now() + 30_000) {
+    const refreshed = await refreshOneDriveAuth(auth);
+    auth = refreshed ?? auth;
+  }
+  if (!auth.accessToken) {
+    throw new Error('OneDrive access token is unavailable. Sign in again and retry the import.');
+  }
+  return { accessToken: auth.accessToken, auth };
+}
+
+export async function getDropboxAccessToken(): Promise<{
+  accessToken: string;
+  auth: CloudAuthSettings;
+}> {
+  const settings = await loadRuntimeSettings();
+  let auth = settings.dropboxAuth;
+  if (!auth || auth.provider !== 'dropbox' || !auth.id) {
+    throw new Error('Dropbox sign-in is required before importing from Dropbox.');
+  }
+  if (!auth.accessToken || !auth.accessTokenExpiresAt || Date.parse(auth.accessTokenExpiresAt) <= Date.now() + 30_000) {
+    const refreshed = await refreshDropboxAuth(auth);
+    auth = refreshed ?? auth;
+  }
+  if (!auth.accessToken) {
+    throw new Error('Dropbox access token is unavailable. Sign in again and retry the import.');
+  }
+  return { accessToken: auth.accessToken, auth };
 }
 
 function googleIdTokenExpiresAt(token: string): number | null {
@@ -583,18 +818,38 @@ export async function serverRuntimeSummary() {
   const googleOauth = googleEnabled
     ? await effectiveGoogleOauthCredentials()
     : { credentials: null, summary: { configured: false, source: 'none' as const, client_id_masked: null, has_secret: false, missing: [] } };
+  const onedriveOauth = googleEnabled
+    ? await effectiveOneDriveOauthCredentials()
+    : { credentials: null, summary: { configured: false, source: 'none' as const, client_id_masked: null, has_secret: false, missing: [] } };
+  const dropboxOauth = googleEnabled
+    ? await effectiveDropboxOauthCredentials()
+    : { credentials: null, summary: { configured: false, source: 'none' as const, client_id_masked: null, has_secret: false, missing: [] } };
   const settings = await loadRuntimeSettings();
   const auth = googleEnabled && settings.auth?.provider === 'google' ? settings.auth : null;
+  const onedriveAuth = googleEnabled && settings.onedriveAuth?.provider === 'onedrive' ? settings.onedriveAuth : null;
+  const dropboxAuth = googleEnabled && settings.dropboxAuth?.provider === 'dropbox' ? settings.dropboxAuth : null;
   return {
     ...server,
     activeUrl: server.localDebug ? server.localServerUrl : server.serverUrl,
     user: publicUserSummary(user),
     googleAuthConfigured: googleEnabled && (googleOauth.summary.configured || googleAuthConfigured()),
     googleOauth: googleOauth.summary,
+    onedriveOauth: onedriveOauth.summary,
+    dropboxOauth: dropboxOauth.summary,
     googleDrive: {
       connected: googleEnabled && Boolean(auth && hasGoogleDriveScope(auth)),
       hasRefreshToken: Boolean(auth?.refreshToken),
       scopes: auth ? authScopes(auth) : [],
+    },
+    onedrive: {
+      connected: googleEnabled && Boolean(onedriveAuth?.refreshToken || onedriveAuth?.accessToken),
+      hasRefreshToken: Boolean(onedriveAuth?.refreshToken),
+      scopes: onedriveAuth ? authScopes(onedriveAuth) : [],
+    },
+    dropbox: {
+      connected: googleEnabled && Boolean(dropboxAuth?.refreshToken || dropboxAuth?.accessToken),
+      hasRefreshToken: Boolean(dropboxAuth?.refreshToken),
+      scopes: dropboxAuth ? authScopes(dropboxAuth) : [],
     },
   };
 }
@@ -657,6 +912,36 @@ export async function saveGoogleOauthSettings(credentials: GoogleOauthCredential
   await fs.writeFile(runtimeSettingsPath(), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
 }
 
+export async function saveOneDriveOauthSettings(credentials: OneDriveOauthCredentials): Promise<void> {
+  await ensureSettingsDirectory();
+  const current = await loadRuntimeSettings();
+  const clientSecret = String(credentials.clientSecret ?? '').trim();
+  const next: RuntimeSettings = {
+    ...current,
+    onedriveOauth: {
+      clientId: credentials.clientId.trim(),
+      ...(clientSecret ? { clientSecret } : {}),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  await fs.writeFile(runtimeSettingsPath(), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+}
+
+export async function saveDropboxOauthSettings(credentials: DropboxOauthCredentials): Promise<void> {
+  await ensureSettingsDirectory();
+  const current = await loadRuntimeSettings();
+  const clientSecret = String(credentials.clientSecret ?? '').trim();
+  const next: RuntimeSettings = {
+    ...current,
+    dropboxOauth: {
+      clientId: credentials.clientId.trim(),
+      ...(clientSecret ? { clientSecret } : {}),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  await fs.writeFile(runtimeSettingsPath(), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+}
+
 export function maskClientId(value: string | null | undefined): string | null {
   const clientId = String(value ?? '').trim();
   if (!clientId) return null;
@@ -688,6 +973,24 @@ export function applyGoogleOauthCredentialsToEnv(credentials: Partial<GoogleOaut
   else delete process.env.GOOGLE_CLIENT_ID;
   if (clientSecret) process.env.GOOGLE_CLIENT_SECRET = clientSecret;
   else delete process.env.GOOGLE_CLIENT_SECRET;
+}
+
+export function applyOneDriveOauthCredentialsToEnv(credentials: Partial<OneDriveOauthCredentials> | null | undefined) {
+  const clientId = String(credentials?.clientId ?? '').trim();
+  const clientSecret = String(credentials?.clientSecret ?? '').trim();
+  if (clientId) process.env.ONEDRIVE_CLIENT_ID = clientId;
+  else delete process.env.ONEDRIVE_CLIENT_ID;
+  if (clientSecret) process.env.ONEDRIVE_CLIENT_SECRET = clientSecret;
+  else delete process.env.ONEDRIVE_CLIENT_SECRET;
+}
+
+export function applyDropboxOauthCredentialsToEnv(credentials: Partial<DropboxOauthCredentials> | null | undefined) {
+  const clientId = String(credentials?.clientId ?? '').trim();
+  const clientSecret = String(credentials?.clientSecret ?? '').trim();
+  if (clientId) process.env.DROPBOX_CLIENT_ID = clientId;
+  else delete process.env.DROPBOX_CLIENT_ID;
+  if (clientSecret) process.env.DROPBOX_CLIENT_SECRET = clientSecret;
+  else delete process.env.DROPBOX_CLIENT_SECRET;
 }
 
 export async function effectiveSpotifyCredentials(): Promise<{
@@ -785,6 +1088,64 @@ export async function effectiveGoogleOauthCredentials(): Promise<{
       missing: ['GOOGLE_CLIENT_ID'],
     },
   };
+}
+
+async function effectiveProviderOauthCredentials(
+  provider: 'onedrive' | 'dropbox',
+): Promise<{
+  credentials: GoogleOauthCredentials | null;
+  summary: GoogleOauthSettingsSummary;
+}> {
+  const settings = await loadRuntimeSettings();
+  const savedKey = provider === 'onedrive' ? settings.onedriveOauth : settings.dropboxOauth;
+  const savedId = String(savedKey?.clientId ?? '').trim();
+  const savedSecret = String(savedKey?.clientSecret ?? '').trim();
+  const envPrefix = provider === 'onedrive' ? 'ONEDRIVE' : 'DROPBOX';
+  const envId = String(process.env[`${envPrefix}_CLIENT_ID` as keyof NodeJS.ProcessEnv] ?? '').trim();
+  const envSecret = String(process.env[`${envPrefix}_CLIENT_SECRET` as keyof NodeJS.ProcessEnv] ?? '').trim();
+  if (envId) {
+    const mergedSecret = envSecret || (savedId && savedId === envId ? savedSecret : '');
+    return {
+      credentials: { clientId: envId, ...(mergedSecret ? { clientSecret: mergedSecret } : {}) },
+      summary: {
+        configured: true,
+        source: 'env',
+        client_id_masked: maskClientId(envId),
+        has_secret: Boolean(mergedSecret),
+        missing: [],
+      },
+    };
+  }
+  if (savedId) {
+    return {
+      credentials: { clientId: savedId, ...(savedSecret ? { clientSecret: savedSecret } : {}) },
+      summary: {
+        configured: true,
+        source: 'saved',
+        client_id_masked: maskClientId(savedId),
+        has_secret: Boolean(savedSecret),
+        missing: [],
+      },
+    };
+  }
+  return {
+    credentials: null,
+    summary: {
+      configured: false,
+      source: 'none',
+      client_id_masked: null,
+      has_secret: false,
+      missing: [`${envPrefix}_CLIENT_ID`],
+    },
+  };
+}
+
+export async function effectiveOneDriveOauthCredentials() {
+  return effectiveProviderOauthCredentials('onedrive');
+}
+
+export async function effectiveDropboxOauthCredentials() {
+  return effectiveProviderOauthCredentials('dropbox');
 }
 
 export async function googleOauthDiagnostics(): Promise<GoogleOauthDiagnostics> {

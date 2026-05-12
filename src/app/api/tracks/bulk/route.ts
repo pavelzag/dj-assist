@@ -4,7 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { cpus } from 'node:os';
 import { bulkTrackAction, getTracksByIds } from '@/lib/db';
-import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
+import { ensureLocalCloudTrackFile } from '@/lib/cloud-track';
+import { isCloudTrackPath } from '@/lib/cloud-source';
 import { applySpotifyCredentialsToEnv, effectiveSpotifyCredentials } from '@/lib/runtime-settings';
 import { resolveWorkingPython } from '@/lib/scan';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
@@ -77,9 +78,20 @@ export async function POST(request: NextRequest) {
     const python = await resolveWorkingPython();
     const results = await mapWithConcurrency<number, Record<string, unknown>>(ids as number[], BULK_REANALYZE_ART_CONCURRENCY, async (id) => {
       try {
+        const track = (await getTracksByIds([id]))[0];
+        if (!track) {
+          return { id, ok: false, message: 'Track not found.' };
+        }
+        let pathOverride = '';
+        if (isCloudTrackPath(track.path)) {
+          const downloaded = await ensureLocalCloudTrackFile(track.path);
+          if (downloaded) {
+            pathOverride = downloaded.localPath;
+          }
+        }
         const { stdout, stderr } = await execFileAsync(
           python,
-          ['-m', 'dj_assist.cli', 'reanalyze-art', String(id), ...(force ? ['--force'] : []), '--json-output'],
+          ['-m', 'dj_assist.cli', 'reanalyze-art', String(id), ...(force ? ['--force'] : []), ...(pathOverride ? ['--path-override', pathOverride] : []), '--json-output'],
           {
             cwd: process.cwd(),
             env: process.env,
@@ -139,16 +151,17 @@ export async function POST(request: NextRequest) {
       try {
         let pathOverride = '';
         let googleDriveDownload: Record<string, unknown> | null = null;
-        if (String(track.path ?? '').startsWith('gdrive:')) {
+        if (isCloudTrackPath(track.path)) {
           if (!googleFeaturesEnabled()) {
             return { id, ok: false, message: 'Track not found.' };
           }
-          const fileId = String(track.path ?? '').slice('gdrive:'.length).trim();
-          if (!fileId) throw new Error('Google Drive track is missing its file ID.');
-          const downloaded = await ensureLocalGoogleDriveTrackFile(fileId);
+          const downloaded = await ensureLocalCloudTrackFile(track.path);
+          if (!downloaded) {
+            throw new Error('Cloud track could not be downloaded.');
+          }
           pathOverride = downloaded.localPath;
           googleDriveDownload = {
-            fileId,
+            fileId: String(track.path ?? ''),
             localPath: downloaded.localPath,
             cached: downloaded.cached,
             name: downloaded.name,
