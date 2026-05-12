@@ -2,6 +2,7 @@ const path = require('node:path');
 const nodeNet = require('node:net');
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
 const { spawn, spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, dialog, ipcMain, nativeImage, net: electronNet, protocol, screen, shell } = require('electron');
@@ -312,11 +313,106 @@ function validateBundledPythonPath(binaryPath) {
   return false;
 }
 
+function readSysctlValue(name) {
+  try {
+    const probe = spawnSync('sysctl', ['-n', name], { encoding: 'utf8' });
+    if (probe.status !== 0) return '';
+    return String(probe.stdout || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function scanEnvVarSet(name) {
+  return String(process.env[name] ?? '').trim() !== '';
+}
+
+function detectScanProfile() {
+  const machine = os.machine();
+  const model = readSysctlValue('hw.model');
+  const perfCores = parsePositiveInt(readSysctlValue('hw.perflevel0.physicalcpu'));
+  const totalCores = parsePositiveInt(readSysctlValue('hw.ncpu')) || os.cpus().length || 0;
+  const memBytes = parsePositiveInt(readSysctlValue('hw.memsize'));
+  const memGiB = memBytes > 0 ? memBytes / (1024 ** 3) : 0;
+
+  const isAppleSilicon = machine === 'arm64';
+  const highProfile = isAppleSilicon && perfCores >= 6 && totalCores >= 8 && memGiB >= 16;
+
+  return {
+    name: highProfile ? 'high' : 'low',
+    machine,
+    model,
+    perfCores,
+    totalCores,
+    memGiB,
+    settings: highProfile
+      ? {
+          analysisWorkers: '6',
+          scanConcurrency: '6',
+          artworkWorkers: '3',
+          dbCommitBatchSize: '40',
+          deferArtworkEnrichment: 'auto',
+        }
+      : {
+          analysisWorkers: '3',
+          scanConcurrency: '3',
+          artworkWorkers: '2',
+          dbCommitBatchSize: '20',
+          deferArtworkEnrichment: 'auto',
+        },
+  };
+}
+
+function applyAutoScanProfile() {
+  const trackedEnvVars = [
+    'DJ_ASSIST_ANALYSIS_WORKERS',
+    'DJ_ASSIST_SCAN_CONCURRENCY',
+    'DJ_ASSIST_ARTWORK_WORKERS',
+    'DJ_ASSIST_DB_COMMIT_BATCH_SIZE',
+    'DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT',
+  ];
+  const hasExplicitOverride = trackedEnvVars.some(scanEnvVarSet);
+  if (hasExplicitOverride) {
+    appendMainLog(
+      `Scan profile auto-selection skipped because explicit overrides are set: ${trackedEnvVars.filter(scanEnvVarSet).join(', ')}`,
+    );
+    return;
+  }
+
+  const profile = detectScanProfile();
+  process.env.DJ_ASSIST_ANALYSIS_WORKERS = profile.settings.analysisWorkers;
+  process.env.DJ_ASSIST_SCAN_CONCURRENCY = profile.settings.scanConcurrency;
+  process.env.DJ_ASSIST_ARTWORK_WORKERS = profile.settings.artworkWorkers;
+  process.env.DJ_ASSIST_DB_COMMIT_BATCH_SIZE = profile.settings.dbCommitBatchSize;
+  process.env.DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT = profile.settings.deferArtworkEnrichment;
+  appendMainLog(
+    [
+      `Applied auto scan profile=${profile.name}`,
+      `machine=${profile.machine || 'unknown'}`,
+      `model=${profile.model || 'unknown'}`,
+      `perf_cores=${profile.perfCores || 0}`,
+      `total_cores=${profile.totalCores || 0}`,
+      `mem_gib=${profile.memGiB ? profile.memGiB.toFixed(1) : '0.0'}`,
+      `analysis_workers=${profile.settings.analysisWorkers}`,
+      `scan_concurrency=${profile.settings.scanConcurrency}`,
+      `artwork_workers=${profile.settings.artworkWorkers}`,
+      `db_commit_batch_size=${profile.settings.dbCommitBatchSize}`,
+      `defer_artwork_enrichment=${profile.settings.deferArtworkEnrichment}`,
+    ].join(' '),
+  );
+}
+
 function applyManagedRuntimeEnv() {
   applyBundledBuildEnv();
   process.env.DJ_ASSIST_DB_PATH = resolveManagedDatabasePath();
   process.env.DJ_ASSIST_CONFIG_DIR = resolveManagedConfigDir();
   process.env.DJ_ASSIST_LOG_DIR = app.getPath('logs');
+  applyAutoScanProfile();
   const spotifySettings = readManagedSpotifySettings();
   if (spotifySettings) {
     process.env.SPOTIFY_CLIENT_ID = spotifySettings.clientId;
