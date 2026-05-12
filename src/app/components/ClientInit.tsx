@@ -176,6 +176,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let queuedDbRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let refreshInFlight = false;
     let refreshQueued = false;
+    let lastDbRefreshAt = 0;
     let tracks: Record<string, unknown>[] = [];
     let sortMode = 'bpm-asc';
     let activeArtistScope = '';
@@ -4179,6 +4180,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       refreshInFlight = true;
+      lastDbRefreshAt = Date.now();
       try {
         await loadTracks(searchEl.value.trim());
         if ((options?.mode ?? 'full') === 'full') {
@@ -4214,6 +4216,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function queueDbRefresh(delayMs = 4500, mode: 'light' | 'full' = 'light') {
       if (queuedDbRefreshTimer) clearTimeout(queuedDbRefreshTimer);
       queuedRefreshMode = mode === 'full' ? 'full' : queuedRefreshMode ?? 'light';
+      const elapsedSinceRefresh = Date.now() - lastDbRefreshAt;
+      const effectiveDelay = elapsedSinceRefresh >= 1500
+        ? 0
+        : Math.max(delayMs, 1500 - elapsedSinceRefresh);
       queuedDbRefreshTimer = setTimeout(() => {
         queuedDbRefreshTimer = null;
         void refreshFromDb({
@@ -4221,7 +4227,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           includeHistory: mode === 'full',
           mode,
         });
-      }, delayMs);
+      }, effectiveDelay);
     }
 
     function pushRecentDirectory(directory: string) {
