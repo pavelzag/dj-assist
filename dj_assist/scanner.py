@@ -5,17 +5,17 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, Future, TimeoutError as FutureTimeoutError
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Callable, Optional
 
 from tqdm import tqdm
 
+from .analyzer import analyze_track, detect_key, read_tag_bpm
 from .db import Database
 from .media import build_media_links
 
@@ -38,7 +38,6 @@ _EMPTY_PREVIEWS: dict = {
 # Max seconds to wait for Spotify before skipping it for a given track.
 _SPOTIFY_TIMEOUT = float(os.getenv("SPOTIFY_TIMEOUT", "3"))
 _SPOTIFY_TIMEOUT_STREAK_LIMIT = int(os.getenv("SPOTIFY_TIMEOUT_STREAK_LIMIT", "3"))
-_ANALYSIS_SUBPROCESS_TIMEOUT = float(os.getenv("ANALYSIS_SUBPROCESS_TIMEOUT", "180"))
 _SERVER_LOOKUP_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_LOOKUP_TIMEOUT", os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "4")))
 _SERVER_UPLOAD_TIMEOUT = float(os.getenv("DJ_ASSIST_SERVER_UPLOAD_TIMEOUT", os.getenv("DJ_ASSIST_SERVER_TIMEOUT", "12")))
 _SERVER_ART_UPLOAD_CACHE: dict[str, str] = {}
@@ -404,80 +403,130 @@ def _same_file_signature(existing, file_size: int, file_mtime: float) -> bool:
         return False
 
 
-def _run_isolated_analysis(filepath: str, bpm_lookup: str, auto_double_bpm: bool) -> dict:
-    command = [
-        sys.executable,
-        "-m",
-        "dj_assist.cli",
-        "analyze-file",
-        filepath,
-        "--bpm-lookup",
-        bpm_lookup,
-    ]
-    if auto_double_bpm:
-        command.append("--auto-double")
+def _analysis_workers() -> int:
+    raw = os.getenv("DJ_ASSIST_ANALYSIS_WORKERS", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    cpu_count = os.cpu_count() or 4
+    return max(1, min(4, cpu_count))
+
+
+def _scan_concurrency() -> int:
+    raw = os.getenv("DJ_ASSIST_SCAN_CONCURRENCY", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return _analysis_workers()
+
+
+def _artwork_workers() -> int:
+    raw = os.getenv("DJ_ASSIST_ARTWORK_WORKERS", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return 2
+
+
+def _db_commit_batch_size() -> int:
+    raw = os.getenv("DJ_ASSIST_DB_COMMIT_BATCH_SIZE", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return 25
+
+
+def _artwork_defer_threshold() -> int:
+    raw = os.getenv("DJ_ASSIST_DEFER_ARTWORK_THRESHOLD", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return 100
+
+
+def _defer_artwork_enrichment(total_files: int, fetch_album_art: bool) -> bool:
+    if not fetch_album_art:
+        return False
+    raw = os.getenv("DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT", "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return total_files >= _artwork_defer_threshold()
+
+
+def _run_local_analysis(filepath: str, bpm_lookup: str, auto_double_bpm: bool) -> dict:
+    bpm = 0.0
+    bpm_source = ""
+    bpm_error = ""
+    bpm_confidence = 0.0
+    decode_failed = False
+    key = ""
+    key_numeric = ""
+    key_confidence = 0.0
+
+    can_local = bpm_lookup in {"auto", "local", "both"}
+    can_tag = bpm_lookup in {"auto", "local", "tag", "both"}
 
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=_ANALYSIS_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "bpm": 0.0,
-            "bpm_source": "",
-            "bpm_error": "analysis_timeout",
-            "bpm_confidence": 0.0,
-            "decode_failed": True,
-            "key": "",
-            "key_numeric": "",
-            "debug": "analysis_subprocess=timeout",
-        }
+        if can_local:
+            analysis = analyze_track(filepath)
+            bpm = analysis.bpm
+            bpm_source = analysis.bpm_source
+            bpm_error = analysis.bpm_error
+            bpm_confidence = analysis.bpm_confidence
+            decode_failed = analysis.decode_failed
+            key = analysis.key
+            key_numeric = analysis.key_numeric
+            key_confidence = analysis.key_confidence
+
+        if not bpm and can_tag:
+            tag_bpm = read_tag_bpm(filepath)
+            if tag_bpm:
+                bpm = tag_bpm
+                bpm_source = "tag"
+                bpm_error = ""
+
+        if not can_local:
+            key, key_numeric, key_confidence = detect_key(filepath)
+
+        if auto_double_bpm and bpm and 60.0 <= bpm <= 80.0:
+            bpm = float(round(bpm * 2))
+            bpm_source = (bpm_source + "+doubled") if bpm_source else "doubled"
     except Exception as exc:
         return {
             "bpm": 0.0,
             "bpm_source": "",
-            "bpm_error": "analysis_subprocess_error",
+            "bpm_error": "analysis_in_process_error",
             "bpm_confidence": 0.0,
             "decode_failed": True,
             "key": "",
             "key_numeric": "",
-            "debug": f"analysis_subprocess_error={exc}",
+            "confidence": 0.0,
+            "debug": f"analysis_in_process_error={exc}",
         }
 
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        stdout = (result.stdout or "").strip()
-        detail = stderr or stdout or f"exit={result.returncode}"
-        return {
-            "bpm": 0.0,
-            "bpm_source": "",
-            "bpm_error": "analysis_subprocess_failed",
-            "bpm_confidence": 0.0,
-            "decode_failed": True,
-            "key": "",
-            "key_numeric": "",
-            "debug": f"analysis_subprocess_failed={detail}",
-        }
-
-    try:
-        payload = json.loads(result.stdout)
-        payload["debug"] = ""
-        return payload
-    except Exception as exc:
-        return {
-            "bpm": 0.0,
-            "bpm_source": "",
-            "bpm_error": "analysis_subprocess_invalid_json",
-            "bpm_confidence": 0.0,
-            "decode_failed": True,
-            "key": "",
-            "key_numeric": "",
-            "debug": f"analysis_subprocess_invalid_json={exc}",
-        }
+    return {
+        "bpm": bpm,
+        "bpm_source": bpm_source,
+        "bpm_error": bpm_error,
+        "bpm_confidence": bpm_confidence,
+        "decode_failed": decode_failed,
+        "key": key,
+        "key_numeric": key_numeric,
+        "confidence": key_confidence,
+        "debug": "analysis_in_process",
+    }
 
 
 def _tag_value(tags, *keys: str) -> Optional[str]:
@@ -1063,6 +1112,119 @@ def _resolve_album_art(
     return result
 
 
+def _should_compute_hash(existing, unchanged: bool, lookup_allowed: bool) -> bool:
+    if existing is None or not unchanged:
+        return True
+    if lookup_allowed and not getattr(existing, "file_hash", None):
+        return True
+    return False
+
+
+def _process_scan_candidate(
+    filepath: str,
+    metadata: dict,
+    *,
+    file_hash: str,
+    file_size: int,
+    file_mtime: float,
+    bpm_lookup: str,
+    fetch_album_art: bool,
+    spotify_enabled: bool,
+    fast_scan: bool,
+    auto_double_bpm: bool,
+    server_lookup_enabled: bool,
+    defer_artwork: bool,
+) -> dict:
+    previews = dict(_EMPTY_PREVIEWS)
+    preferred_album_art_url = ""
+    preferred_album_art_source = ""
+    user = _user_data()
+    lookup_log = ""
+    server_track = None
+
+    if server_lookup_enabled:
+        server_track, lookup_log = _lookup_server_track(file_hash)
+
+    if server_track:
+        track_data = _server_track_to_local(server_track, filepath, file_hash, file_size, file_mtime)
+        if track_data.get("album_art_url"):
+            preferred_album_art_url = str(track_data.get("album_art_url") or "")
+            preferred_album_art_source = str(track_data.get("album_art_source") or "server_lookup")
+        if not _server_track_needs_local_analysis(server_track):
+            return {
+                "status": "server_match",
+                "filepath": filepath,
+                "metadata": metadata,
+                "track_data": track_data,
+                "lookup_log": lookup_log,
+                "user": user,
+            }
+        metadata = _seed_metadata_from_server(metadata, track_data)
+
+    can_spotify = bpm_lookup in {"auto", "spotify", "both"}
+    needs_acoustid = (not fast_scan) and (not bool(metadata["artist"] and metadata["title"]))
+    analysis = _run_local_analysis(filepath, bpm_lookup, auto_double_bpm)
+
+    previews = build_media_links(
+        metadata["artist"],
+        metadata["title"],
+        metadata["album"],
+        metadata["duration"],
+        metadata["track_number"],
+        metadata["release_year"],
+        fetch_album_art and not defer_artwork,
+        filepath,
+        spotify_enabled if not fast_scan else False,
+        needs_acoustid,
+    )
+
+    return {
+        "status": "analyzed",
+        "filepath": filepath,
+        "metadata": metadata,
+        "analysis": analysis,
+        "previews": previews,
+        "lookup_log": lookup_log,
+        "preferred_album_art_url": preferred_album_art_url,
+        "preferred_album_art_source": preferred_album_art_source,
+        "server_track": server_track,
+        "file_hash": file_hash,
+        "file_size": file_size,
+        "file_mtime": file_mtime,
+        "can_spotify": can_spotify,
+        "needs_acoustid": needs_acoustid,
+        "defer_artwork": defer_artwork,
+        "user": user,
+    }
+
+
+def _process_deferred_artwork_candidate(
+    filepath: str,
+    metadata: dict,
+    *,
+    spotify_enabled: bool,
+    fast_scan: bool,
+    needs_acoustid: bool,
+) -> dict:
+    previews = build_media_links(
+        metadata.get("artist"),
+        metadata.get("title"),
+        metadata.get("album"),
+        metadata.get("duration"),
+        metadata.get("track_number"),
+        metadata.get("release_year"),
+        True,
+        filepath,
+        spotify_enabled if not fast_scan else False,
+        needs_acoustid,
+    )
+    return {
+        "filepath": filepath,
+        "metadata": metadata,
+        "previews": previews,
+    }
+
+
 def scan_directory(
     directory: str,
     db: Database,
@@ -1078,7 +1240,6 @@ def scan_directory(
 ) -> dict:
     results = {"scanned": 0, "analyzed": 0, "skipped": 0, "errors": 0}
     audio_files = []
-
     for root, _dirs, files in os.walk(directory):
         for filename in files:
             if _should_ignore_scan_file(filename):
@@ -1088,16 +1249,12 @@ def scan_directory(
 
     total_files = len(audio_files)
     processed = 0
+    scan_started_at = time.perf_counter()
 
     def _emit(event: dict) -> None:
         if not progress_callback:
             return
-        payload = {
-            "current": processed,
-            "total": total_files,
-            **event,
-        }
-        progress_callback(payload)
+        progress_callback({"current": processed, "total": total_files, **event})
 
     if progress_callback:
         _emit({"event": "scan_start", "directory": directory})
@@ -1107,19 +1264,29 @@ def scan_directory(
     def _step(label: str, filepath: str) -> None:
         if verbose:
             _emit({"event": "track_step", "path": filepath, "file": Path(filepath).name, "step": label})
-        if verbose:
             tqdm.write(f"  [{label}] {Path(filepath).name}")
 
     album_art_cache: dict[str, dict] = {}
     artist_art_cache: dict[str, dict] = {}
     folder_bpm_context: dict[str, list[float]] = {}
-
-    spotify_scan_enabled = spotify_enabled
-    enrichment_enabled = bool(fetch_album_art) or not fast_scan
-    spotify_timeout_streak = 0
+    defer_artwork = _defer_artwork_enrichment(total_files, fetch_album_art)
+    scan_workers = _scan_concurrency()
+    analysis_workers = _analysis_workers()
+    artwork_workers = _artwork_workers() if defer_artwork else 1
+    commit_batch_size = _db_commit_batch_size()
+    lookup_allowed, _ = _lookup_server_allowed()
     server_sync_enabled = _server_enabled()
     server_failure_streak = 0
     server_failure_limit = 2 if _server_is_local_debug() else 4
+    pending_writes = 0
+    scan_session = db.get_session()
+    metrics = {
+        "hashed_files": 0,
+        "server_matches": 0,
+        "deferred_artwork_jobs": 0,
+        "completed_artwork_jobs": 0,
+        "db_commits": 0,
+    }
 
     def _record_server_result(log: str) -> None:
         nonlocal server_sync_enabled, server_failure_streak
@@ -1145,10 +1312,406 @@ def scan_directory(
             }
         )
 
-    with ThreadPoolExecutor(max_workers=1) as spotify_pool:
-        iterator = audio_files if progress_callback else tqdm(audio_files, desc="Scanning")
-        for filepath in iterator:
+    def _commit_pending(*, force: bool = False) -> None:
+        nonlocal pending_writes
+        if pending_writes <= 0:
+            return
+        if not force and pending_writes < commit_batch_size:
+            return
+        scan_session.commit()
+        pending_writes = 0
+        metrics["db_commits"] += 1
+
+    def _enqueue_artwork_enrichment(track_id: int, filepath: str, metadata: dict, needs_acoustid: bool, art_pool, pending_art: dict) -> None:
+        if not defer_artwork:
+            return
+        if not metadata.get("artist") and not metadata.get("title"):
+            return
+        future = art_pool.submit(
+            _process_deferred_artwork_candidate,
+            filepath,
+            dict(metadata),
+            spotify_enabled=spotify_enabled,
+            fast_scan=fast_scan,
+            needs_acoustid=needs_acoustid,
+        )
+        pending_art[future] = {"track_id": track_id}
+        metrics["deferred_artwork_jobs"] += 1
+
+    def _drain_artwork_futures(pending_art: dict, *, block: bool = False) -> None:
+        nonlocal pending_writes
+        if not pending_art:
+            return
+        done = set()
+        if block:
+            done, _ = wait(set(pending_art.keys()), return_when=FIRST_COMPLETED)
+        else:
+            done = {future for future in pending_art if future.done()}
+        for future in done:
+            context = pending_art.pop(future)
             try:
+                payload = future.result()
+                metadata = payload["metadata"]
+                previews = payload["previews"]
+                preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
+                    db,
+                    metadata.get("artist"),
+                    metadata.get("album") or previews.get("spotify_album_name"),
+                    previews.get("spotify_album_name"),
+                )
+                album_art = _resolve_album_art(
+                    metadata,
+                    previews,
+                    True,
+                    album_art_cache,
+                    artist_art_cache,
+                    preferred_album_art_url=preferred_album_art_url,
+                    preferred_album_art_source=preferred_album_art_source,
+                )
+                album_art_url = str(album_art.get("album_art_url") or "")
+                if not album_art_url:
+                    continue
+                db.update_track_fields(
+                    context["track_id"],
+                    {
+                        "spotify_id": previews.get("spotify_id"),
+                        "spotify_uri": previews.get("spotify_uri"),
+                        "spotify_url": previews.get("spotify_url"),
+                        "spotify_preview_url": previews.get("spotify_preview_url"),
+                        "spotify_tempo": previews.get("spotify_tempo"),
+                        "spotify_key": previews.get("spotify_key"),
+                        "spotify_mode": previews.get("spotify_mode"),
+                        "spotify_album_name": previews.get("spotify_album_name"),
+                        "spotify_match_score": float(previews.get("spotify_match_score") or 0.0),
+                        "spotify_high_confidence": str(previews.get("spotify_high_confidence") or False).lower(),
+                        "album_art_url": album_art_url,
+                        "album_art_source": album_art["album_art_source"],
+                        "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
+                        "album_art_review_status": album_art["album_art_review_status"],
+                        "album_art_review_notes": album_art["album_art_review_notes"],
+                        "album_group_key": album_art["album_group_key"],
+                        "embedded_album_art": bool(album_art.get("embedded_album_art")),
+                        "album_art_match_debug": json.dumps(
+                            {
+                                "source": album_art["album_art_source"],
+                                "confidence": float(album_art.get("album_art_confidence") or 0.0),
+                                "review_status": album_art["album_art_review_status"],
+                                "review_notes": album_art["album_art_review_notes"],
+                                "group_key": album_art["album_group_key"],
+                                "candidates": album_art.get("album_art_candidates") or [],
+                                "spotify_debug": previews.get("spotify_debug") or "",
+                            }
+                        ),
+                    },
+                    session=scan_session,
+                    commit=False,
+                    skip_empty=True,
+                )
+                pending_writes += 1
+                metrics["completed_artwork_jobs"] += 1
+                _emit(
+                    {
+                        "event": "log",
+                        "level": "success",
+                        "message": (
+                            f"{Path(payload['filepath']).name}: background artwork enrichment "
+                            f"stored source={album_art['album_art_source'] or 'none'}"
+                        ),
+                    }
+                )
+                _commit_pending()
+            except Exception as exc:
+                _emit(
+                    {
+                        "event": "log",
+                        "level": "warning",
+                        "message": f"{Path(str(context.get('track_id'))).name}: artwork enrichment failed: {exc}",
+                    }
+                )
+
+    def _finalize_candidate(candidate: dict, pending_art: dict, art_pool) -> None:
+        nonlocal processed, pending_writes
+        filepath = candidate["filepath"]
+        file_label = Path(filepath).name
+        lookup_log = str(candidate.get("lookup_log") or "").strip()
+        if lookup_log:
+            _record_server_result(lookup_log)
+            _emit(
+                {
+                    "event": "log",
+                    "level": "success" if candidate.get("server_track") or candidate["status"] == "server_match" else ("warning" if "error" in lookup_log else "info"),
+                    "message": f"{file_label}: dj-assist-server {lookup_log}",
+                }
+            )
+
+        if candidate["status"] == "server_match":
+            metrics["server_matches"] += 1
+            track_data = candidate["track_data"]
+            track = db.add_track(track_data, session=scan_session, commit=False)
+            pending_writes += 1
+            _commit_pending()
+            bpm = float(track_data.get("bpm") or track_data.get("spotify_tempo") or 0.0)
+            key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
+            results["analyzed"] += 1
+            processed += 1
+            _emit(
+                {
+                    "event": "track_complete",
+                    "path": filepath,
+                    "file": file_label,
+                    "status": "server_match",
+                    "artist": track_data.get("artist"),
+                    "title": track_data.get("title"),
+                    "bpm": bpm,
+                    "bpm_source": track_data.get("bpm_source") or "server",
+                    "key": key,
+                    "spotify_id": track_data.get("spotify_id"),
+                    "album_art_url": track_data.get("album_art_url"),
+                    "album_art_source": track_data.get("album_art_source"),
+                    "album_art_confidence": float(track_data.get("album_art_confidence") or 0.0),
+                    "album_art_review_status": track_data.get("album_art_review_status"),
+                    "decode_failed": track_data.get("decode_failed"),
+                }
+            )
+            _emit(
+                {
+                    "event": "log",
+                    "level": "success",
+                    "message": f"{file_label}: server match bpm={bpm or 0:.1f} key={key or 'none'}",
+                }
+            )
+            return
+
+        metadata = candidate["metadata"]
+        analysis = candidate["analysis"]
+        previews = candidate["previews"]
+        if not metadata["artist"] and previews.get("acoustid_artist"):
+            metadata["artist"] = _smart_capitalize(_normalize_artist(str(previews.get("acoustid_artist") or "")))
+        if (not metadata["title"] or not str(metadata["title"]).strip()) and previews.get("acoustid_title"):
+            metadata["title"] = _smart_capitalize(str(previews.get("acoustid_title") or "").strip() or metadata["title"])
+        if (not metadata["album"] or not str(metadata["album"]).strip()) and previews.get("acoustid_album"):
+            metadata["album"] = _smart_capitalize(str(previews.get("acoustid_album") or "").strip() or metadata["album"])
+
+        bpm = float(analysis.get("bpm") or 0.0)
+        bpm_source = str(analysis.get("bpm_source") or "")
+        bpm_error = str(analysis.get("bpm_error") or "")
+        bpm_confidence = float(analysis.get("bpm_confidence") or 0.0)
+        decode_failed = bool(analysis.get("decode_failed"))
+        key = str(analysis.get("key") or "")
+        key_numeric = str(analysis.get("key_numeric") or "")
+
+        if not bpm and candidate.get("can_spotify"):
+            spotify_bpm = float(previews.get("spotify_tempo") or 0.0)
+            if spotify_bpm:
+                bpm = spotify_bpm
+                bpm_source = "spotify"
+                bpm_error = ""
+                bpm_confidence = max(bpm_confidence, 0.55)
+        if not key and previews.get("spotify_key"):
+            key = str(previews.get("spotify_key") or "")
+            key_numeric = key
+
+        folder_context_key = _folder_context_key(filepath, metadata)
+        folder_tempos = folder_bpm_context.setdefault(folder_context_key, [])
+        bpm, bpm_confidence, bpm_source, normalization_reason = _normalize_bpm_with_context(
+            filepath,
+            metadata,
+            bpm,
+            bpm_confidence,
+            bpm_source,
+            folder_tempos,
+        )
+
+        preferred_album_art_url = str(candidate.get("preferred_album_art_url") or "")
+        preferred_album_art_source = str(candidate.get("preferred_album_art_source") or "")
+        if fetch_album_art and not preferred_album_art_url and previews.get("spotify_album_name"):
+            preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
+                db,
+                metadata.get("artist"),
+                previews.get("spotify_album_name"),
+                previews.get("spotify_album_name"),
+            )
+
+        album_art = _resolve_album_art(
+            metadata,
+            previews,
+            fetch_album_art,
+            album_art_cache,
+            artist_art_cache,
+            preferred_album_art_url=preferred_album_art_url,
+            preferred_album_art_source=preferred_album_art_source,
+        )
+        album_art_url = str(album_art.get("album_art_url") or "")
+
+        debug_parts = [
+            f"file={filepath}",
+            f"analysis_mode=in_process_pool",
+            f"bpm={bpm or 0.0}",
+            f"bpm_source={bpm_source or 'none'}",
+            f"key={key or 'none'}",
+            f"spotify_id={previews.get('spotify_id') or 'none'}",
+            f"acoustid_id={previews.get('acoustid_id') or 'none'}",
+            f"album_art_source={album_art.get('album_art_source') or 'none'}",
+        ]
+        if normalization_reason:
+            debug_parts.append(f"bpm_normalized={normalization_reason}")
+
+        bpm_missing_reason = ""
+        bpm_missing_detail = ""
+        if not bpm:
+            bpm_missing_reason, bpm_missing_detail = _describe_missing_bpm(
+                bpm_error=bpm_error,
+                decode_failed=decode_failed,
+                can_spotify=bool(candidate.get("can_spotify")),
+                enrichment_enabled=True,
+                spotify_scan_enabled=spotify_enabled,
+                previews=previews,
+                metadata=metadata,
+            )
+            debug_parts.append(f"bpm_missing_reason={bpm_missing_reason}")
+
+        track_data = {
+            "path": filepath,
+            "title": metadata["title"],
+            "artist": metadata["artist"],
+            "album": metadata["album"],
+            "duration": metadata["duration"],
+            "bitrate": metadata["bitrate"],
+            "bpm": bpm,
+            "key": key,
+            "key_numeric": key_numeric,
+            "spotify_id": previews["spotify_id"],
+            "spotify_uri": previews["spotify_uri"],
+            "spotify_url": previews["spotify_url"],
+            "spotify_preview_url": previews["spotify_preview_url"],
+            "spotify_tempo": previews["spotify_tempo"],
+            "spotify_key": previews["spotify_key"],
+            "spotify_mode": previews["spotify_mode"],
+            "album_art_url": album_art_url,
+            "spotify_album_name": previews["spotify_album_name"],
+            "spotify_match_score": float(previews.get("spotify_match_score") or 0.0),
+            "spotify_high_confidence": str(previews.get("spotify_high_confidence") or False).lower(),
+            "album_art_source": album_art["album_art_source"],
+            "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
+            "album_art_review_status": album_art["album_art_review_status"],
+            "album_art_review_notes": album_art["album_art_review_notes"],
+            "album_group_key": album_art["album_group_key"],
+            "embedded_album_art": bool(album_art.get("embedded_album_art")),
+            "album_art_match_debug": json.dumps(
+                {
+                    "source": album_art["album_art_source"],
+                    "confidence": float(album_art.get("album_art_confidence") or 0.0),
+                    "review_status": album_art["album_art_review_status"],
+                    "review_notes": album_art["album_art_review_notes"],
+                    "group_key": album_art["album_group_key"],
+                    "candidates": album_art.get("album_art_candidates") or [],
+                    "spotify_debug": previews.get("spotify_debug") or "",
+                }
+            ),
+            "youtube_url": previews["youtube_url"],
+            "analysis_status": "ok" if bpm else "needs_review",
+            "analysis_error": bpm_error,
+            "decode_failed": decode_failed,
+            "analysis_stage": "analysis_pool",
+            "analysis_debug": " | ".join(debug_parts),
+            "bpm_source": bpm_source,
+            "bpm_confidence": bpm_confidence,
+            "file_hash": candidate["file_hash"],
+            "file_size": candidate["file_size"],
+            "file_mtime": candidate["file_mtime"],
+        }
+        track = db.add_track(track_data, session=scan_session, commit=False)
+        pending_writes += 1
+        _commit_pending()
+
+        if defer_artwork and fetch_album_art and not album_art_url:
+            _enqueue_artwork_enrichment(track.id, filepath, metadata, bool(candidate.get("needs_acoustid")), art_pool, pending_art)
+
+        uploaded = False
+        upload_log = ""
+        if server_sync_enabled:
+            uploaded, upload_log = _upload_track_to_server(track_data, candidate["file_hash"] or filepath)
+        elif _server_enabled():
+            upload_log = "upload skipped (server temporarily disabled)"
+        if upload_log:
+            _record_server_result(upload_log)
+            _emit(
+                {
+                    "event": "log",
+                    "level": "success" if uploaded else ("warning" if "skipped" in upload_log else "error"),
+                    "message": f"{file_label}: dj-assist-server {upload_log}",
+                }
+            )
+
+        if bpm > 0 and (bpm_confidence >= 0.45 or "sanity" in bpm_source or bpm_source == "spotify"):
+            folder_tempos.append(float(bpm))
+            if len(folder_tempos) > 24:
+                del folder_tempos[:-24]
+
+        results["analyzed"] += 1
+        processed += 1
+        _emit(
+            {
+                "event": "track_complete",
+                "path": filepath,
+                "file": file_label,
+                "status": "analyzed",
+                "artist": metadata["artist"],
+                "title": metadata["title"],
+                "bpm": bpm,
+                "bpm_source": bpm_source,
+                "key": key,
+                "spotify_id": previews["spotify_id"],
+                "album_art_url": album_art_url,
+                "album_art_source": album_art["album_art_source"],
+                "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
+                "album_art_review_status": album_art["album_art_review_status"],
+                "decode_failed": decode_failed,
+                "server_uploaded": uploaded,
+                "server_upload_log": upload_log,
+                "bpm_missing_reason": bpm_missing_reason,
+                "bpm_missing_detail": bpm_missing_detail,
+            }
+        )
+        _emit(
+            {
+                "event": "log",
+                "level": "success" if bpm else "warning",
+                "message": (
+                    f"{file_label}: bpm={bpm or 0:.1f} src={bpm_source or 'none'} "
+                    f"key={key or 'none'} spotify={'yes' if previews['spotify_id'] else 'no'} "
+                    f"art={'yes' if album_art_url else 'no'} source={album_art['album_art_source'] or 'none'} "
+                    f"review={album_art['album_art_review_status']}"
+                ),
+            }
+        )
+        if verbose:
+            label = f"{metadata['artist'] or '?'} - {metadata['title'] or Path(filepath).stem}"
+            bpm_str = f"{bpm:.1f} ({bpm_source})" if bpm else "no BPM"
+            key_str = key or "no key"
+            art_reason = _art_debug_reason(previews, fetch_album_art)
+            art_icon = "🎨" if album_art_url else "✗"
+            tqdm.write(f"  {art_icon} {label}  |  {bpm_str}  |  {key_str}  |  art: {art_reason}")
+
+    pending_scan: dict[Future, str] = {}
+    pending_art: dict[Future, dict] = {}
+
+    _emit(
+        {
+            "event": "log",
+            "level": "info",
+            "message": (
+                f"Scan pipeline ready: files={total_files} scan_workers={scan_workers} "
+                f"analysis_workers={analysis_workers} artwork_workers={artwork_workers} "
+                f"batch_commit={commit_batch_size} defer_artwork={'yes' if defer_artwork else 'no'}"
+            ),
+        }
+    )
+
+    iterator = audio_files if progress_callback else tqdm(audio_files, desc="Scanning")
+    try:
+        with ThreadPoolExecutor(max_workers=max(scan_workers, analysis_workers)) as scan_pool, ThreadPoolExecutor(max_workers=artwork_workers) as art_pool:
+            for filepath in iterator:
                 _emit({"event": "track_start", "path": filepath, "file": Path(filepath).name})
                 _step("db-lookup", filepath)
                 existing = db.get_track_by_path(filepath)
@@ -1171,552 +1734,85 @@ def scan_directory(
                     elif rescan_mode == "missing-art":
                         if not fetch_album_art or has_art:
                             skip_reason = "album_art_present"
-
                 if skip_reason:
                     results["skipped"] += 1
                     processed += 1
-                    _emit(
-                        {
-                            "event": "track_complete",
-                            "path": filepath,
-                            "file": Path(filepath).name,
-                            "status": "skipped",
-                            "reason": skip_reason,
-                        }
-                    )
+                    _emit({"event": "track_complete", "path": filepath, "file": Path(filepath).name, "status": "skipped", "reason": skip_reason})
                     _emit({"event": "log", "level": "info", "message": f"{Path(filepath).name}: skipped ({skip_reason})"})
+                    _drain_artwork_futures(pending_art)
                     continue
 
-                should_compute_hash = existing is None or not unchanged or not getattr(existing, "file_hash", None)
-                file_hash = get_file_hash(filepath) if should_compute_hash else str(getattr(existing, "file_hash", "") or "")
-
+                should_hash = _should_compute_hash(existing, unchanged, lookup_allowed and server_sync_enabled)
+                file_hash = get_file_hash(filepath) if should_hash else str(getattr(existing, "file_hash", "") or "")
+                if should_hash:
+                    metrics["hashed_files"] += 1
                 results["scanned"] += 1
                 _step("metadata", filepath)
                 metadata = extract_metadata(filepath)
-                if verbose:
-                    _emit(
-                        {
-                            "event": "track_metadata",
-                            "path": filepath,
-                            "file": Path(filepath).name,
-                            "artist": metadata["artist"],
-                            "title": metadata["title"],
-                            "album": metadata["album"],
-                            "duration": metadata["duration"],
-                            "bitrate": metadata["bitrate"],
-                            "track_number": metadata["track_number"],
-                            "release_year": metadata["release_year"],
-                            "embedded_album_art": bool(metadata["embedded_album_art_url"]),
-                        }
-                    )
-
-                user = _user_data()
-                lookup_allowed, _ = _lookup_server_allowed()
-                if lookup_allowed and server_sync_enabled:
-                    _emit(
-                        {
-                            "event": "log",
-                            "level": "info",
-                            "message": (
-                                f"{Path(filepath).name}: sending lookup to dj-assist-server "
-                                f"url={_server_url('/api/v1/tracks/lookup')} user={user.get('type', 'unknown')}"
-                            ),
-                        }
-                    )
-                server_track = None
-                lookup_log = ""
-                preferred_album_art_url = ""
-                preferred_album_art_source = ""
-                if lookup_allowed and server_sync_enabled:
-                    server_track, lookup_log = _lookup_server_track(file_hash)
-                elif lookup_allowed and not server_sync_enabled:
-                    lookup_log = "lookup skipped (server temporarily disabled)"
-                if lookup_log:
-                    _record_server_result(lookup_log)
-                    _emit(
-                        {
-                            "event": "log",
-                            "level": "success" if server_track else ("warning" if "error" in lookup_log else "info"),
-                            "message": f"{Path(filepath).name}: dj-assist-server {lookup_log}",
-                        }
-                    )
-                if server_track:
-                    track_data = _server_track_to_local(server_track, filepath, file_hash, file_size, file_mtime)
-                    if track_data.get("album_art_url"):
-                        preferred_album_art_url = str(track_data.get("album_art_url") or "")
-                        preferred_album_art_source = str(track_data.get("album_art_source") or "server_lookup")
-                    bpm = float(track_data.get("bpm") or track_data.get("spotify_tempo") or 0.0)
-                    key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
-                    bpm_missing_reason = ""
-                    bpm_missing_detail = ""
-                    server_needs_local_analysis = _server_track_needs_local_analysis(server_track)
-                    if bpm <= 0:
-                        bpm_missing_reason = "server_match_without_bpm"
-                        bpm_missing_detail = "server matched the track by file hash but the server record has no BPM"
-                    if not server_needs_local_analysis:
-                        db.add_track(track_data)
-                        results["analyzed"] += 1
-                        processed += 1
-                        _emit(
-                            {
-                                "event": "track_complete",
-                                "path": filepath,
-                                "file": Path(filepath).name,
-                                "status": "server_match",
-                                "artist": track_data.get("artist"),
-                                "title": track_data.get("title"),
-                                "bpm": bpm,
-                                "bpm_source": track_data.get("bpm_source") or "server",
-                                "key": key,
-                                "spotify_id": track_data.get("spotify_id"),
-                                "album_art_url": track_data.get("album_art_url"),
-                                "album_art_source": track_data.get("album_art_source"),
-                                "album_art_confidence": float(track_data.get("album_art_confidence") or 0.0),
-                                "album_art_review_status": track_data.get("album_art_review_status"),
-                                "decode_failed": track_data.get("decode_failed"),
-                                "bpm_missing_reason": bpm_missing_reason,
-                                "bpm_missing_detail": bpm_missing_detail,
-                            }
-                        )
-                        if bpm <= 0:
-                            _emit(
-                                {
-                                    "event": "log",
-                                    "eventType": "bpm_missing",
-                                    "level": "warning",
-                                    "message": (
-                                        f"{Path(filepath).name}: missing BPM ({bpm_missing_reason}) - "
-                                        f"{bpm_missing_detail}"
-                                    ),
-                                    "path": filepath,
-                                    "file": Path(filepath).name,
-                                    "artist": track_data.get("artist"),
-                                    "title": track_data.get("title"),
-                                    "bpm_missing_reason": bpm_missing_reason,
-                                    "bpm_missing_detail": bpm_missing_detail,
-                                    "spotify_id": track_data.get("spotify_id"),
-                                    "analysis_status": track_data.get("analysis_status"),
-                                    "analysis_debug": track_data.get("analysis_debug"),
-                                }
-                            )
-                        _emit(
-                            {
-                                "event": "log",
-                                "level": "success",
-                                "message": (
-                                    f"{Path(filepath).name}: server match bpm={bpm or 0:.1f} "
-                                    f"key={key or 'none'}"
-                                ),
-                            }
-                        )
-                        continue
-
-                    metadata = _seed_metadata_from_server(metadata, track_data)
-                    if track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric"):
-                        key = str(track_data.get("key") or track_data.get("spotify_key") or track_data.get("key_numeric") or "")
-                        key_numeric = str(track_data.get("key_numeric") or key)
-                    debug_parts = [f"file={filepath}"]
-                    if metadata["artist"] or metadata["title"]:
-                        debug_parts.append(f"metadata=artist:{metadata['artist'] or 'none'} title:{metadata['title'] or 'none'}")
-                    debug_parts.append("server_match=needs_local_analysis")
-                    debug_parts.append(f"server_bpm={bpm or 0.0}")
-                    debug_parts.append(f"server_key={key or 'none'}")
-                else:
-                    bpm_missing_reason = ""
-                    bpm_missing_detail = ""
-
-                bpm = 0.0
-                bpm_source = ""
-                bpm_error = ""
-                decode_failed = False
-                bpm_confidence = 0.0
-                analysis_stage = "start"
-                if not server_track:
-                    debug_parts = [f"file={filepath}"]
-                can_local = bpm_lookup in {"auto", "local", "both"}
-                can_tag = bpm_lookup in {"auto", "local", "tag", "both"}
-                can_spotify = bpm_lookup in {"auto", "spotify", "both"}
-
-                if metadata["artist"] or metadata["title"]:
-                    debug_parts.append(f"metadata=artist:{metadata['artist'] or 'none'} title:{metadata['title'] or 'none'}")
-                debug_parts.append(f"spotify_lookup=artist:{metadata['artist'] or 'none'} title:{metadata['title'] or 'none'}")
-                debug_parts.append("album_art=enabled" if fetch_album_art else "album_art=disabled")
-                debug_parts.append(f"title_cleaned={metadata['title'] or 'none'}")
-
-                preferred_album_art_url = ""
-                preferred_album_art_source = ""
-                if fetch_album_art and not preferred_album_art_url:
-                    preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
-                        db,
-                        metadata.get("artist"),
-                        metadata.get("album"),
-                    )
-                    if preferred_album_art_url:
-                        debug_parts.append(f"album_art_preferred={preferred_album_art_source}")
-
-                # Submit remote metadata lookup immediately so it runs
-                # concurrently with BPM/key detection in the main thread.
-                spotify_future: Future | None = None
-                if enrichment_enabled:
-                    needs_acoustid = (not fast_scan) and (not bool(metadata["artist"] and metadata["title"]))
-                    _step("metadata lookup (async)", filepath)
-                    spotify_future = spotify_pool.submit(
-                        build_media_links,
-                        metadata["artist"],
-                        metadata["title"],
-                        metadata["album"],
-                        metadata["duration"],
-                        metadata["track_number"],
-                        metadata["release_year"],
-                        fetch_album_art and not bool(preferred_album_art_url),
-                        filepath,
-                        spotify_scan_enabled if not fast_scan else False,
-                        needs_acoustid,
-                    )
-                    if fast_scan:
-                        debug_parts.append("art_fallbacks=enabled_fast_scan")
-                        debug_parts.append("spotify_scan=disabled_fast_scan")
-                        debug_parts.append("acoustid=disabled_fast_scan")
-                    else:
-                        debug_parts.append("acoustid=enabled_missing_metadata" if needs_acoustid else "acoustid=skipped_metadata_present")
-
-                if can_local or can_tag:
-                    _step("isolated-analysis", filepath)
-                    analysis_stage = "isolated_analysis"
-                    analysis = _run_isolated_analysis(filepath, bpm_lookup, auto_double_bpm)
-                    bpm = float(analysis.get("bpm") or 0.0)
-                    bpm_source = str(analysis.get("bpm_source") or "")
-                    bpm_error = str(analysis.get("bpm_error") or "")
-                    bpm_confidence = float(analysis.get("bpm_confidence") or 0.0)
-                    decode_failed = bool(analysis.get("decode_failed"))
-                    key = str(analysis.get("key") or "")
-                    key_numeric = str(analysis.get("key_numeric") or "")
-                    debug_parts.append(f"isolated_bpm={bpm or 0.0}")
-                    debug_parts.append(f"isolated_bpm_confidence={bpm_confidence:.3f}")
-                    if bpm_source:
-                        debug_parts.append(f"isolated_bpm_source={bpm_source}")
-                    if key:
-                        debug_parts.append(f"isolated_key={key}")
-                    if bpm_error:
-                        debug_parts.append(f"isolated_error={bpm_error}")
-                    if analysis.get("debug"):
-                        debug_parts.append(str(analysis.get("debug")))
-                    if decode_failed:
-                        debug_parts.append("decode_test=failed")
-                else:
-                    key = ""
-                    key_numeric = ""
-
-                # Collect Spotify result — if it's still running, wait up to
-                # _SPOTIFY_TIMEOUT seconds then give up and continue without it.
-                if enrichment_enabled and spotify_future is not None:
-                    _step("await-spotify", filepath)
-                    try:
-                        previews = spotify_future.result(timeout=_SPOTIFY_TIMEOUT)
-                        spotify_timeout_streak = 0
-                    except FutureTimeoutError:
-                        previews = dict(_EMPTY_PREVIEWS)
-                        spotify_future.cancel()
-                        spotify_timeout_streak += 1
-                        _emit({"event": "log", "level": "warning", "message": f"Spotify timeout for {Path(filepath).name}"})
-                        if spotify_scan_enabled and spotify_timeout_streak >= max(1, _SPOTIFY_TIMEOUT_STREAK_LIMIT):
-                            spotify_scan_enabled = False
-                            _emit(
-                                {
-                                    "event": "log",
-                                    "level": "warning",
-                                    "message": (
-                                        f"Spotify disabled for the rest of this scan after "
-                                        f"{spotify_timeout_streak} consecutive timeouts."
-                                    ),
-                                }
-                            )
-                        if verbose:
-                            tqdm.write(f"  [spotify timeout] {Path(filepath).name}")
-                else:
-                    previews = dict(_EMPTY_PREVIEWS)
-
-                if not metadata["artist"] and previews.get("acoustid_artist"):
-                    metadata["artist"] = _normalize_artist(str(previews.get("acoustid_artist") or ""))
-                    metadata["artist"] = _smart_capitalize(metadata["artist"])
-                    if metadata["artist"]:
-                        debug_parts.append(f"acoustid_artist={metadata['artist']}")
-                if (not metadata["title"] or not str(metadata["title"]).strip()) and previews.get("acoustid_title"):
-                    metadata["title"] = str(previews.get("acoustid_title") or "").strip() or metadata["title"]
-                    metadata["title"] = _smart_capitalize(metadata["title"])
-                    if metadata["title"]:
-                        debug_parts.append(f"acoustid_title={metadata['title']}")
-                if (not metadata["album"] or not str(metadata["album"]).strip()) and previews.get("acoustid_album"):
-                    metadata["album"] = str(previews.get("acoustid_album") or "").strip() or metadata["album"]
-                    metadata["album"] = _smart_capitalize(metadata["album"])
-                    if metadata["album"]:
-                        debug_parts.append(f"acoustid_album={metadata['album']}")
-
-                if not bpm and can_spotify:
-                    analysis_stage = "spotify_bpm"
-                    spotify_bpm = float(previews.get("spotify_tempo") or 0.0)
-                    if spotify_bpm:
-                        bpm = spotify_bpm
-                        bpm_source = "spotify"
-                        bpm_error = ""
-                        bpm_confidence = max(bpm_confidence, 0.55)
-                        debug_parts.append(f"spotify_bpm={spotify_bpm}")
-                    else:
-                        debug_parts.append("spotify_bpm=none")
-
-                if not key and previews.get("spotify_key"):
-                    key = str(previews.get("spotify_key") or "")
-                    key_numeric = key
-                    debug_parts.append(f"spotify_key={key}")
-
-                folder_context_key = _folder_context_key(filepath, metadata)
-                folder_tempos = folder_bpm_context.setdefault(folder_context_key, [])
-                bpm, bpm_confidence, bpm_source, normalization_reason = _normalize_bpm_with_context(
+                future = scan_pool.submit(
+                    _process_scan_candidate,
                     filepath,
-                    metadata,
-                    bpm,
-                    bpm_confidence,
-                    bpm_source,
-                    folder_tempos,
+                    dict(metadata),
+                    file_hash=file_hash,
+                    file_size=file_size,
+                    file_mtime=file_mtime,
+                    bpm_lookup=bpm_lookup,
+                    fetch_album_art=fetch_album_art,
+                    spotify_enabled=spotify_enabled,
+                    fast_scan=fast_scan,
+                    auto_double_bpm=auto_double_bpm,
+                    server_lookup_enabled=bool(lookup_allowed and server_sync_enabled),
+                    defer_artwork=defer_artwork,
                 )
-                if normalization_reason:
-                    debug_parts.append(f"bpm_normalized={normalization_reason}")
-                    debug_parts.append(f"folder_context_median={_context_median(folder_tempos):.1f}")
+                pending_scan[future] = filepath
+                if len(pending_scan) >= scan_workers:
+                    done, _ = wait(set(pending_scan.keys()), return_when=FIRST_COMPLETED)
+                    for done_future in done:
+                        pending_scan.pop(done_future, None)
+                        _finalize_candidate(done_future.result(), pending_art, art_pool)
+                    _drain_artwork_futures(pending_art)
 
-                debug_parts.append(f"spotify_id={previews.get('spotify_id') or 'none'}")
-                debug_parts.append(f"acoustid_id={previews.get('acoustid_id') or 'none'}")
-                debug_parts.append(f"album_art_url={previews.get('album_art_url') or 'none'}")
-                if fast_scan:
-                    debug_parts.append("enrichment=disabled_fast_scan")
-                if not spotify_scan_enabled:
-                    debug_parts.append("spotify_scan=disabled_after_timeouts")
-                if previews.get("spotify_debug"):
-                    debug_parts.append(f"spotify_debug={previews.get('spotify_debug')}")
-                if previews.get("theaudiodb_debug"):
-                    debug_parts.append(f"theaudiodb_debug={previews.get('theaudiodb_debug')}")
-                if previews.get("musicbrainz_debug"):
-                    debug_parts.append(f"musicbrainz_debug={previews.get('musicbrainz_debug')}")
-                if previews.get("discogs_debug"):
-                    debug_parts.append(f"discogs_debug={previews.get('discogs_debug')}")
-                if previews.get("acoustid_debug"):
-                    debug_parts.append(f"acoustid_debug={previews.get('acoustid_debug')}")
+            while pending_scan:
+                done, _ = wait(set(pending_scan.keys()), return_when=FIRST_COMPLETED)
+                for done_future in done:
+                    pending_scan.pop(done_future, None)
+                    _finalize_candidate(done_future.result(), pending_art, art_pool)
+                _drain_artwork_futures(pending_art)
 
-                if not bpm:
-                    debug_parts.append("bpm=missing")
-                if not key:
-                    debug_parts.append("key=missing")
+            while pending_art:
+                _drain_artwork_futures(pending_art, block=True)
 
-                bpm_missing_reason = ""
-                bpm_missing_detail = ""
-                if not bpm:
-                    bpm_missing_reason, bpm_missing_detail = _describe_missing_bpm(
-                        bpm_error=bpm_error,
-                        decode_failed=decode_failed,
-                        can_spotify=can_spotify,
-                        enrichment_enabled=enrichment_enabled,
-                        spotify_scan_enabled=spotify_scan_enabled,
-                        previews=previews,
-                        metadata=metadata,
-                    )
-                    debug_parts.append(f"bpm_missing_reason={bpm_missing_reason}")
-                    debug_parts.append(f"bpm_missing_detail={bpm_missing_detail}")
+        _commit_pending(force=True)
+    except Exception:
+        scan_session.rollback()
+        raise
+    finally:
+        scan_session.close()
 
-                if fetch_album_art and not preferred_album_art_url and previews.get("spotify_album_name"):
-                    preferred_album_art_url, preferred_album_art_source = _lookup_preferred_album_art(
-                        db,
-                        metadata.get("artist"),
-                        previews.get("spotify_album_name"),
-                        previews.get("spotify_album_name"),
-                    )
-                    if preferred_album_art_url:
-                        debug_parts.append(f"album_art_preferred={preferred_album_art_source}")
-
-                album_art = _resolve_album_art(
-                    metadata,
-                    previews,
-                    fetch_album_art,
-                    album_art_cache,
-                    artist_art_cache,
-                    preferred_album_art_url=preferred_album_art_url,
-                    preferred_album_art_source=preferred_album_art_source,
-                )
-                album_art_url = str(album_art["album_art_url"] or "")
-                debug_parts.append(f"album_art_source={album_art['album_art_source'] or 'none'}")
-                debug_parts.append(f"album_art_confidence={float(album_art['album_art_confidence'] or 0.0):.1f}")
-                debug_parts.append(f"album_art_review={album_art['album_art_review_status']}")
-                if album_art.get("album_group_key"):
-                    debug_parts.append(f"album_group={album_art['album_group_key']}")
-
-                track_data = {
-                        "path": filepath,
-                        "title": metadata["title"],
-                        "artist": metadata["artist"],
-                        "album": metadata["album"],
-                        "duration": metadata["duration"],
-                        "bitrate": metadata["bitrate"],
-                        "bpm": bpm,
-                        "key": key,
-                        "key_numeric": key_numeric,
-                        "spotify_id": previews["spotify_id"],
-                        "spotify_uri": previews["spotify_uri"],
-                        "spotify_url": previews["spotify_url"],
-                        "spotify_preview_url": previews["spotify_preview_url"],
-                        "spotify_tempo": previews["spotify_tempo"],
-                        "spotify_key": previews["spotify_key"],
-                        "spotify_mode": previews["spotify_mode"],
-                        "album_art_url": album_art_url,
-                        "spotify_album_name": previews["spotify_album_name"],
-                        "spotify_match_score": float(previews.get("spotify_match_score") or 0.0),
-                        "spotify_high_confidence": str(previews.get("spotify_high_confidence") or False).lower(),
-                        "album_art_source": album_art["album_art_source"],
-                        "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
-                        "album_art_review_status": album_art["album_art_review_status"],
-                        "album_art_review_notes": album_art["album_art_review_notes"],
-                        "album_group_key": album_art["album_group_key"],
-                        "embedded_album_art": bool(album_art.get("embedded_album_art")),
-                        "album_art_match_debug": json.dumps(
-                            {
-                                "source": album_art["album_art_source"],
-                                "confidence": float(album_art.get("album_art_confidence") or 0.0),
-                                "review_status": album_art["album_art_review_status"],
-                                "review_notes": album_art["album_art_review_notes"],
-                                "group_key": album_art["album_group_key"],
-                                "candidates": album_art.get("album_art_candidates") or [],
-                                "spotify_debug": previews.get("spotify_debug") or "",
-                                "spotify_album_name": previews.get("spotify_album_name") or "",
-                                "spotify_track_number": previews.get("spotify_track_number") or 0,
-                                "spotify_release_year": previews.get("spotify_release_year") or 0,
-                            }
-                        ),
-                        "youtube_url": previews["youtube_url"],
-                        "analysis_status": "ok" if bpm else "needs_review",
-                        "analysis_error": bpm_error,
-                        "decode_failed": decode_failed,
-                        "analysis_stage": analysis_stage,
-                        "analysis_debug": " | ".join(debug_parts),
-                        "bpm_source": bpm_source,
-                        "bpm_confidence": bpm_confidence,
-                        "file_hash": file_hash,
-                        "file_size": file_size,
-                        "file_mtime": file_mtime,
-                    }
-                db.add_track(track_data)
-                if server_sync_enabled:
-                    _emit(
-                        {
-                            "event": "log",
-                            "level": "info",
-                            "message": (
-                                f"{Path(filepath).name}: sending track to dj-assist-server "
-                                f"url={_server_url('/api/v1/ingest')} user={user.get('type', 'unknown')}"
-                            ),
-                        }
-                    )
-                uploaded = False
-                upload_log = ""
-                if server_sync_enabled:
-                    uploaded, upload_log = _upload_track_to_server(track_data, file_hash or filepath)
-                elif _server_enabled():
-                    upload_log = "upload skipped (server temporarily disabled)"
-                if upload_log:
-                    _record_server_result(upload_log)
-                    _emit(
-                        {
-                            "event": "log",
-                            "level": "success" if uploaded else ("warning" if "skipped" in upload_log else "error"),
-                            "message": f"{Path(filepath).name}: dj-assist-server {upload_log}",
-                        }
-                    )
-                if bpm > 0 and (bpm_confidence >= 0.45 or "sanity" in bpm_source or bpm_source == "spotify"):
-                    folder_tempos.append(float(bpm))
-                    if len(folder_tempos) > 24:
-                        del folder_tempos[:-24]
-                results["analyzed"] += 1
-                processed += 1
-                _emit(
-                    {
-                        "event": "track_complete",
-                        "path": filepath,
-                        "file": Path(filepath).name,
-                        "status": "analyzed",
-                        "artist": metadata["artist"],
-                        "title": metadata["title"],
-                        "bpm": bpm,
-                        "bpm_source": bpm_source,
-                        "key": key,
-                        "spotify_id": previews["spotify_id"],
-                        "album_art_url": album_art_url,
-                        "album_art_source": album_art["album_art_source"],
-                        "album_art_confidence": float(album_art.get("album_art_confidence") or 0.0),
-                        "album_art_review_status": album_art["album_art_review_status"],
-                        "decode_failed": decode_failed,
-                        "server_uploaded": uploaded,
-                        "server_upload_log": upload_log,
-                        "bpm_missing_reason": bpm_missing_reason,
-                        "bpm_missing_detail": bpm_missing_detail,
-                    }
-                )
-                if not bpm:
-                    _emit(
-                        {
-                            "event": "log",
-                            "eventType": "bpm_missing",
-                            "level": "warning",
-                            "message": (
-                                f"{Path(filepath).name}: missing BPM ({bpm_missing_reason}) - "
-                                f"{bpm_missing_detail}"
-                            ),
-                            "path": filepath,
-                            "file": Path(filepath).name,
-                            "artist": metadata["artist"],
-                            "title": metadata["title"],
-                            "analysis_error": bpm_error,
-                            "decode_failed": decode_failed,
-                            "bpm_missing_reason": bpm_missing_reason,
-                            "bpm_missing_detail": bpm_missing_detail,
-                            "spotify_id": previews["spotify_id"],
-                            "spotify_tempo": previews["spotify_tempo"],
-                            "acoustid_id": previews["acoustid_id"],
-                            "analysis_debug": " | ".join(debug_parts),
-                        }
-                    )
-                _emit(
-                    {
-                        "event": "log",
-                        "level": "success" if bpm else "warning",
-                        "message": (
-                            f"{Path(filepath).name}: bpm={bpm or 0:.1f} src={bpm_source or 'none'} "
-                            f"key={key or 'none'} spotify={'yes' if previews['spotify_id'] else 'no'} "
-                            f"art={'yes' if album_art_url else 'no'} source={album_art['album_art_source'] or 'none'} "
-                            f"review={album_art['album_art_review_status']}"
-                        ),
-                    }
-                )
-
-                if verbose:
-                    label = f"{metadata['artist'] or '?'} - {metadata['title'] or Path(filepath).stem}"
-                    bpm_str = f"{bpm:.1f} ({bpm_source})" if bpm else "no BPM"
-                    key_str = key or "no key"
-                    art_reason = _art_debug_reason(previews, fetch_album_art)
-                    art_icon = "🎨" if album_art_url else "✗"
-                    tqdm.write(f"  {art_icon} {label}  |  {bpm_str}  |  {key_str}  |  art: {art_reason}")
-
-            except Exception as exc:
-                results["errors"] += 1
-                processed += 1
-                _emit(
-                    {
-                        "event": "track_complete",
-                        "path": filepath,
-                        "file": Path(filepath).name,
-                        "status": "error",
-                        "error": str(exc),
-                    }
-                )
-                if progress_callback:
-                    progress_callback({"event": "log", "level": "error", "message": f"Error processing {filepath}: {exc}"})
-                else:
-                    tqdm.write(f"\nError processing {filepath}: {exc}")
-
+    elapsed_s = max(0.001, time.perf_counter() - scan_started_at)
+    _emit(
+        {
+            "event": "log",
+            "level": "info",
+            "message": (
+                f"Scan metrics: elapsed={elapsed_s:.2f}s processed={processed}/{total_files} "
+                f"hashed={metrics['hashed_files']} server_matches={metrics['server_matches']} "
+                f"deferred_art={metrics['deferred_artwork_jobs']} completed_art={metrics['completed_artwork_jobs']} "
+                f"db_commits={metrics['db_commits']} throughput={processed / elapsed_s:.2f} files/s"
+            ),
+            "metrics": {
+                **metrics,
+                "elapsed_seconds": round(elapsed_s, 3),
+                "throughput_files_per_second": round(processed / elapsed_s, 3),
+                "processed_files": processed,
+                "total_files": total_files,
+                "defer_artwork": defer_artwork,
+                "scan_workers": scan_workers,
+                "analysis_workers": analysis_workers,
+                "artwork_workers": artwork_workers,
+                "db_commit_batch_size": commit_batch_size,
+            },
+        }
+    )
     _emit({"event": "scan_complete", "results": results})
     return results

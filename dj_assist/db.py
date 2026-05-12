@@ -124,6 +124,13 @@ class SetTrack(Base):
 
 class Database:
     @staticmethod
+    def _apply_track_fields(target: Track, data: dict, *, skip_empty: bool) -> None:
+        for key, value in data.items():
+            if skip_empty and value in (None, ""):
+                continue
+            setattr(target, key, value)
+
+    @staticmethod
     def _track_identity(track: Track) -> str:
         return track.spotify_id or track.file_hash or f"{track.artist or ''}|{track.title or ''}|{round(track.duration or 0)}"
 
@@ -255,19 +262,17 @@ class Database:
     def get_session(self):
         return self.Session()
 
-    def add_track(self, track_data: dict) -> Track:
-        session = self.get_session()
+    def add_track(self, track_data: dict, *, session=None, commit: bool = True) -> Track:
+        owns_session = session is None
+        session = session or self.get_session()
         try:
-            def _apply_fields(target: Track, data: dict, *, skip_empty: bool) -> None:
-                for key, value in data.items():
-                    if skip_empty and value in (None, ""):
-                        continue
-                    setattr(target, key, value)
-
             existing = session.query(Track).filter_by(path=track_data["path"]).first()
             if existing:
-                _apply_fields(existing, track_data, skip_empty=False)
-                session.commit()
+                self._apply_track_fields(existing, track_data, skip_empty=False)
+                if commit:
+                    session.commit()
+                else:
+                    session.flush()
                 return existing
 
             duplicate = None
@@ -289,14 +294,20 @@ class Database:
                     )
 
             if duplicate:
-                _apply_fields(duplicate, track_data, skip_empty=True)
-                session.commit()
+                self._apply_track_fields(duplicate, track_data, skip_empty=True)
+                if commit:
+                    session.commit()
+                else:
+                    session.flush()
                 return duplicate
 
             track = Track(**track_data)
             session.add(track)
             try:
-                session.commit()
+                if commit:
+                    session.commit()
+                else:
+                    session.flush()
                 return track
             except IntegrityError:
                 # A concurrent insert can win the UNIQUE(path) race between
@@ -305,11 +316,40 @@ class Database:
                 raced = session.query(Track).filter_by(path=track_data["path"]).first()
                 if not raced:
                     raise
-                _apply_fields(raced, track_data, skip_empty=False)
-                session.commit()
+                self._apply_track_fields(raced, track_data, skip_empty=False)
+                if commit:
+                    session.commit()
+                else:
+                    session.flush()
                 return raced
         finally:
-            session.close()
+            if owns_session:
+                session.close()
+
+    def update_track_fields(
+        self,
+        track_id: int,
+        fields: dict,
+        *,
+        session=None,
+        commit: bool = True,
+        skip_empty: bool = False,
+    ) -> Optional[Track]:
+        owns_session = session is None
+        session = session or self.get_session()
+        try:
+            track = session.query(Track).filter_by(id=track_id).first()
+            if not track:
+                return None
+            self._apply_track_fields(track, fields, skip_empty=skip_empty)
+            if commit:
+                session.commit()
+            else:
+                session.flush()
+            return track
+        finally:
+            if owns_session:
+                session.close()
 
     def get_track_by_path(self, path: str) -> Optional[Track]:
         session = self.get_session()
