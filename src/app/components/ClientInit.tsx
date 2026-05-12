@@ -8731,10 +8731,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void selectTrack(String(firstVisible.id), true, true);
     });
     [bpmMinEl, bpmMaxEl].forEach((el) => el.addEventListener('input', () => {
-      void loadTracks(searchEl.value.trim(), { autoplayHighlighted: true });
+      renderList(tracks);
+      syncActiveTrackRowHighlight();
     }));
     keyFilterEl.addEventListener('input', () => {
-      void loadTracks(searchEl.value.trim());
+      renderList(tracks);
+      syncActiveTrackRowHighlight();
     });
     showOnlyNoBpmEl?.addEventListener('change', () => loadTracks(searchEl.value.trim()));
     showPendingGoogleDriveImportsEl?.addEventListener('change', () => {

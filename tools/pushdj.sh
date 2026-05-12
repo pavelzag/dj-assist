@@ -13,6 +13,22 @@ format_elapsed() {
   printf '%02d:%02d' "$minutes" "$seconds"
 }
 
+format_bytes() {
+  local bytes=${1:-0}
+  awk -v bytes="$bytes" '
+    function human(value) {
+      split("B KiB MiB GiB TiB", units, " ")
+      unit = 1
+      while (value >= 1024 && unit < length(units)) {
+        value /= 1024
+        unit += 1
+      }
+      return sprintf(unit == 1 ? "%.0f %s" : "%.1f %s", value, units[unit])
+    }
+    BEGIN { print human(bytes + 0) }
+  '
+}
+
 render_progress() {
   local step=$1
   local total=$2
@@ -76,41 +92,129 @@ fi
 finish_step
 
 run_number=$(gh run view "$run_id" --json number --jq '.number')
-start_step "Watching workflow #$run_number"
+start_step "Streaming artifacts from workflow #$run_number"
 
 dest="$HOME/Downloads/dj-assist/run-$run_number"
 mkdir -p "$dest"
+github_token=$(gh auth token)
 
-gh run watch "$run_id" --compact --exit-status
-GH_PAGER=cat gh run view "$run_id" --log
-finish_step
+typeset -a expected_artifact_prefixes=(
+  "macos-debug-m1-profile-"
+  "macos-debug-m4-profile-"
+  "macos-free-prod-m1-profile-"
+  "macos-free-prod-m4-profile-"
+  "macos-pro-prod-m1-profile-"
+  "macos-pro-prod-m4-profile-"
+)
+typeset -A downloaded_artifacts=()
+typeset -A artifact_sizes=()
+total_expected_bytes=0
+downloaded_bytes=0
 
-start_step "Downloading and extracting artifacts"
-downloaded=false
-for _ in {1..24}; do
-  rm -rf "$dest"
-  mkdir -p "$dest"
-  if GH_PAGER=cat gh run download "$run_id" -D "$dest"; then
-    if find "$dest" -mindepth 1 -print -quit | grep -q .; then
-      downloaded=true
-      break
-    fi
+download_artifact() {
+  local artifact_name=$1
+  local archive_url=$2
+  local artifact_size=${3:-0}
+  local artifact_dir="${dest}/${artifact_name}"
+  local archive_path="${artifact_dir}/${artifact_name}.zip"
+  local zip_file unzip_dir
+
+  rm -rf "$artifact_dir"
+  mkdir -p "$artifact_dir"
+
+  printf 'Progress: %s / %s downloaded before this artifact\n' \
+    "$(format_bytes "$downloaded_bytes")" \
+    "$(format_bytes "$total_expected_bytes")"
+  curl --fail --location \
+    -H "Authorization: Bearer ${github_token}" \
+    -H "Accept: application/vnd.github+json" \
+    -o "$archive_path" \
+    "$archive_url"
+
+  while IFS= read -r zip_file; do
+    unzip_dir="${zip_file%.zip}"
+    rm -rf "$unzip_dir"
+    mkdir -p "$unzip_dir"
+    unzip -o "$zip_file" -d "$unzip_dir" >/dev/null
+    rm -f "$zip_file"
+  done < <(find "$artifact_dir" -type f -name '*.zip' -print)
+
+  downloaded_bytes=$(( downloaded_bytes + artifact_size ))
+  printf 'Completed %s (%s). Overall: %s / %s\n' \
+    "$artifact_name" \
+    "$(format_bytes "$artifact_size")" \
+    "$(format_bytes "$downloaded_bytes")" \
+    "$(format_bytes "$total_expected_bytes")"
+}
+
+all_expected_artifacts_downloaded() {
+  local prefix
+  for prefix in "${expected_artifact_prefixes[@]}"; do
+    [[ -n "${downloaded_artifacts[$prefix]:-}" ]] || return 1
+  done
+  return 0
+}
+
+run_finished=false
+run_conclusion=""
+
+for _ in {1..360}; do
+  artifact_json=$(gh api "repos/:owner/:repo/actions/runs/${run_id}/artifacts" --paginate || true)
+  if [[ -n "$artifact_json" ]]; then
+    while IFS=$'\t' read -r artifact_name archive_url artifact_size; do
+      [[ -n "$artifact_name" ]] || continue
+      for prefix in "${expected_artifact_prefixes[@]}"; do
+        if [[ "$artifact_name" == ${prefix}* && -z "${artifact_sizes[$prefix]:-}" ]]; then
+          artifact_sizes[$prefix]="$artifact_size"
+          total_expected_bytes=$(( total_expected_bytes + artifact_size ))
+        fi
+        if [[ "$artifact_name" == ${prefix}* && -z "${downloaded_artifacts[$prefix]:-}" ]]; then
+          printf 'Downloading %s\n' "$artifact_name"
+          download_artifact "$artifact_name" "$archive_url" "$artifact_size"
+          downloaded_artifacts[$prefix]="$artifact_name"
+          break
+        fi
+      done
+    done <<< "$(printf '%s' "$artifact_json" | jq -r '.artifacts[] | [.name, .archive_download_url, (.size_in_bytes // 0)] | @tsv')"
   fi
-  sleep 5
+
+  if all_expected_artifacts_downloaded; then
+    break
+  fi
+
+  run_status=$(gh run view "$run_id" --json status --jq '.status')
+  if [[ "$run_status" == "completed" ]]; then
+    run_finished=true
+    run_conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion')
+    break
+  fi
+
+  sleep 10
 done
 
-if [[ "$downloaded" != true ]]; then
-  echo "Artifacts were not available for download for run $run_id, or the run produced no downloadable files." >&2
+if ! all_expected_artifacts_downloaded; then
+  if [[ "$run_finished" == true ]]; then
+    GH_PAGER=cat gh run view "$run_id" --log
+    echo "Workflow #$run_number finished with conclusion '${run_conclusion}', but not all macOS artifacts were downloaded." >&2
+  else
+    echo "Timed out waiting for all macOS artifacts from workflow #$run_number." >&2
+  fi
   exit 1
 fi
 
-find "$dest" -type f -name '*.zip' | while IFS= read -r zip_file; do
-  unzip_dir="${zip_file%.zip}"
-  rm -rf "$unzip_dir"
-  mkdir -p "$unzip_dir"
-  unzip -o "$zip_file" -d "$unzip_dir"
-  rm -f "$zip_file"
-done
+if [[ "$run_finished" != true ]]; then
+  run_status=$(gh run view "$run_id" --json status --jq '.status')
+  if [[ "$run_status" == "completed" ]]; then
+    run_finished=true
+    run_conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion')
+  fi
+fi
+
+if [[ "$run_finished" == true && "$run_conclusion" != "success" ]]; then
+  GH_PAGER=cat gh run view "$run_id" --log
+  echo "Workflow #$run_number completed with conclusion '${run_conclusion}' after artifacts were downloaded." >&2
+  exit 1
+fi
 
 echo "Artifacts downloaded to: $dest"
 finish_step
