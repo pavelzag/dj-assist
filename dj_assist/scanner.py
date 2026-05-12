@@ -1279,6 +1279,7 @@ def scan_directory(
     server_failure_streak = 0
     server_failure_limit = 2 if _server_is_local_debug() else 4
     pending_writes = 0
+    early_visible_commit_budget = max(1, min(5, commit_batch_size))
     scan_session = db.get_session()
     metrics = {
         "hashed_files": 0,
@@ -1313,14 +1314,24 @@ def scan_directory(
         )
 
     def _commit_pending(*, force: bool = False) -> None:
-        nonlocal pending_writes
+        nonlocal pending_writes, early_visible_commit_budget
         if pending_writes <= 0:
             return
         if not force and pending_writes < commit_batch_size:
             return
         scan_session.commit()
         pending_writes = 0
+        if early_visible_commit_budget > 0:
+            early_visible_commit_budget -= 1
         metrics["db_commits"] += 1
+
+    def _commit_pending_for_visibility() -> None:
+        if pending_writes <= 0:
+            return
+        if early_visible_commit_budget > 0:
+            _commit_pending(force=True)
+            return
+        _commit_pending()
 
     def _enqueue_artwork_enrichment(track_id: int, filepath: str, metadata: dict, needs_acoustid: bool, art_pool, pending_art: dict) -> None:
         if not defer_artwork:
@@ -1419,7 +1430,7 @@ def scan_directory(
                         ),
                     }
                 )
-                _commit_pending()
+                _commit_pending_for_visibility()
             except Exception as exc:
                 _emit(
                     {
@@ -1622,7 +1633,7 @@ def scan_directory(
         }
         track = db.add_track(track_data, session=scan_session, commit=False)
         pending_writes += 1
-        _commit_pending()
+        _commit_pending_for_visibility()
 
         if defer_artwork and fetch_album_art and not album_art_url:
             _enqueue_artwork_enrichment(track.id, filepath, metadata, bool(candidate.get("needs_acoustid")), art_pool, pending_art)

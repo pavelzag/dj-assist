@@ -4159,7 +4159,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function currentRefreshIntervalMs(): number {
-      return isScanRunning() ? 2500 : 20000;
+      return isScanRunning() ? 1000 : 20000;
     }
 
     async function refreshFromDb(options?: { includeLibrary?: boolean; includeHistory?: boolean; mode?: 'light' | 'full' }) {
@@ -4224,6 +4224,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void job;
     }
 
+    function scanInProgressEmptyTitle() {
+      return 'Your collection is being scanned.';
+    }
+
+    function scanInProgressEmptyMessage() {
+      return 'Your collection is being scanned and will appear shortly on the screen.';
+    }
+
+    function scanAwareDetailEmptyMarkup() {
+      if (isLocalScanActive()) {
+        return `
+          <div class="empty empty-state">
+            <strong>${esc(scanInProgressEmptyTitle())}</strong>
+            <span>${esc(scanInProgressEmptyMessage())}</span>
+          </div>
+        `;
+      }
+      return '<div class="empty">Select a track from the library to view details.</div>';
+    }
+
     function renderScanHistory() {
       if (currentPanel === 'library') renderLibraryPanel();
     }
@@ -4232,7 +4252,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       activeTrackId = null;
       nowPlayingTrackId = null;
       selectedDetailTrackId = null;
-      detailEl.innerHTML = '<div class="empty">Select a track from the library to view details.</div>';
+      detailEl.innerHTML = scanAwareDetailEmptyMarkup();
       updateNowPlayingBar();
     }
 
@@ -5630,11 +5650,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         listIsVirtualized = false;
         listEl.innerHTML = `
           <div class="empty empty-state">
-            <strong>Your collection is empty.</strong>
-            <span>Choose a music source and import tracks into the desktop app.</span>
+            <strong>${esc(isLocalScanActive() ? scanInProgressEmptyTitle() : 'Your collection is empty.')}</strong>
+            <span>${esc(isLocalScanActive() ? scanInProgressEmptyMessage() : 'Choose a music source and import tracks into the desktop app.')}</span>
             <div class="empty-actions">
               <button type="button" class="btn" id="list-empty-choose-folder-btn">Add Music</button>
-              <button type="button" class="btn" id="list-empty-start-scan-btn">Start Scan</button>
+              <button type="button" class="btn" id="list-empty-start-scan-btn" title="${esc(isLocalScanActive() ? 'Stop the current scan.' : 'Start a scan.')}">${esc(isLocalScanActive() ? 'Stop Scan' : 'Start Scan')}</button>
             </div>
           </div>
         `;
@@ -7797,7 +7817,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         renderQuickFilters();
         renderBulkToolbar();
         renderList(tracks);
-        detailEl.innerHTML = '<div class="empty">Select a track from the library to view details.</div>';
+        detailEl.innerHTML = scanAwareDetailEmptyMarkup();
         updateNowPlayingBar();
       await Promise.all([
         loadLibraryOverview(),
@@ -8120,7 +8140,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             Number(event.total ?? 0),
             `${label} · ${status || reason || 'done'}`,
           );
-          queueDbRefresh(700, 'light');
+          queueDbRefresh(200, 'light');
           return;
         }
 
