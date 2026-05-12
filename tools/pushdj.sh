@@ -157,6 +157,8 @@ all_expected_artifacts_downloaded() {
 
 run_finished=false
 run_conclusion=""
+post_completion_polls=0
+max_post_completion_polls=18
 
 for _ in {1..360}; do
   artifact_json=$(gh api "repos/:owner/:repo/actions/runs/${run_id}/artifacts" --paginate || true)
@@ -186,7 +188,10 @@ for _ in {1..360}; do
   if [[ "$run_status" == "completed" ]]; then
     run_finished=true
     run_conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion')
-    break
+    post_completion_polls=$(( post_completion_polls + 1 ))
+    if [[ "$post_completion_polls" -ge "$max_post_completion_polls" ]]; then
+      break
+    fi
   fi
 
   sleep 10
