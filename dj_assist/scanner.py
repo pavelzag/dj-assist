@@ -1279,7 +1279,9 @@ def scan_directory(
     server_failure_streak = 0
     server_failure_limit = 2 if _server_is_local_debug() else 4
     pending_writes = 0
-    early_visible_commit_budget = max(1, min(5, commit_batch_size))
+    last_visible_commit_at = time.perf_counter()
+    visible_commit_batch_size = max(3, min(5, commit_batch_size))
+    visible_commit_interval_s = 0.75
     scan_session = db.get_session()
     metrics = {
         "hashed_files": 0,
@@ -1314,21 +1316,23 @@ def scan_directory(
         )
 
     def _commit_pending(*, force: bool = False) -> None:
-        nonlocal pending_writes, early_visible_commit_budget
+        nonlocal pending_writes, last_visible_commit_at
         if pending_writes <= 0:
             return
         if not force and pending_writes < commit_batch_size:
             return
         scan_session.commit()
         pending_writes = 0
-        if early_visible_commit_budget > 0:
-            early_visible_commit_budget -= 1
+        last_visible_commit_at = time.perf_counter()
         metrics["db_commits"] += 1
 
     def _commit_pending_for_visibility() -> None:
         if pending_writes <= 0:
             return
-        if early_visible_commit_budget > 0:
+        if pending_writes >= visible_commit_batch_size:
+            _commit_pending(force=True)
+            return
+        if time.perf_counter() - last_visible_commit_at >= visible_commit_interval_s:
             _commit_pending(force=True)
             return
         _commit_pending()

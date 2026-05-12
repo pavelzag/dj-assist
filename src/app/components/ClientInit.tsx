@@ -58,6 +58,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const closeCover = document.getElementById('close-cover') as HTMLButtonElement;
     const warningBanner = document.getElementById('warning-banner') as HTMLElement;
     const statusbar = document.getElementById('statusbar') as HTMLElement | null;
+    const songsFetchIndicatorEl = document.getElementById('songs-fetch-indicator') as HTMLElement | null;
     const nowPlayingBarEl = document.getElementById('now-playing-bar') as HTMLElement | null;
     const nowPlayingTitleEl = document.getElementById('now-playing-title') as HTMLElement | null;
     const nowPlayingMetaEl = document.getElementById('now-playing-meta') as HTMLElement | null;
@@ -1248,6 +1249,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           ? 'Browse a Drive folder and import its audio metadata with read-only access.'
           : googleDriveFeatureStatusLabel();
       }
+      syncSongsFetchIndicator();
+    }
+
+    function syncSongsFetchIndicator() {
+      if (!songsFetchIndicatorEl) return;
+      const active = isLocalScanActive();
+      songsFetchIndicatorEl.hidden = !active;
+      songsFetchIndicatorEl.setAttribute('aria-hidden', active ? 'false' : 'true');
     }
 
     function setGoogleDriveImportStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {

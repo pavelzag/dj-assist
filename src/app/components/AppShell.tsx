@@ -89,6 +89,14 @@ export default function AppShell({
             <button type="button" data-sort="album-asc" id="sort-album">Album ▲</button>
           </div>
           <div className="list" id="track-list" />
+          <div className="songs-fetch-indicator" id="songs-fetch-indicator" hidden>
+            <span className="songs-fetch-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            <span className="songs-fetch-text">Fetching more tracks as the scan runs…</span>
+          </div>
         </section>
 
         <section className="pane details-pane">
