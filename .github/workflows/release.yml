@@ -277,6 +277,32 @@ jobs:
           node scripts/prepare-app-icon.cjs
           npm run dist:mac:${{ matrix.flavor }}
 
+      - name: Verify artifact upload network
+        run: |
+          set -euo pipefail
+          hosts=(
+            https://github.com
+            https://pipelines.actions.githubusercontent.com
+            https://artifactcache.actions.githubusercontent.com
+          )
+          for attempt in 1 2 3; do
+            all_ok=true
+            for host in "${hosts[@]}"; do
+              if ! curl -I --silent --show-error --max-time 10 "$host" >/dev/null; then
+                all_ok=false
+                break
+              fi
+            done
+            if [ "$all_ok" = true ]; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "GitHub network check failed after ${attempt} attempts." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
