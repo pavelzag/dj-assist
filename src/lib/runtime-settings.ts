@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, cpus, machine } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
 import { googleAuthConfigured } from '@/lib/google-auth';
 import { GOOGLE_DRIVE_METADATA_SCOPE } from '@/lib/google-desktop-auth';
@@ -24,6 +25,7 @@ type RuntimeSettings = {
     updatedAt?: string;
   };
   server?: ServerSettings;
+  scanProfile?: ScanProfileSettings;
   auth?: AuthSettings;
   pendingGoogleAuth?: PendingGoogleAuthSession;
   clientId?: string;
@@ -35,6 +37,30 @@ export type ServerSettings = {
   serverUrl: string;
   localServerUrl: string;
   updatedAt?: string;
+};
+
+export type ScanProfileMode = 'auto' | 'low' | 'high';
+
+export type ScanProfileSettings = {
+  mode: ScanProfileMode;
+  updatedAt?: string;
+};
+
+export type ScanProfileRuntimeSummary = {
+  selected_mode: ScanProfileMode;
+  selected_source: 'saved' | 'default';
+  effective_mode: 'low' | 'high';
+  detected_mode: 'low' | 'high';
+  machine: string;
+  model: string | null;
+  perf_cores: number;
+  total_cores: number;
+  memory_gib: number;
+  analysis_workers: number;
+  scan_concurrency: number;
+  artwork_workers: number;
+  db_commit_batch_size: number;
+  defer_artwork_enrichment: string;
 };
 
 export type AuthSettings = {
@@ -102,6 +128,24 @@ export type GoogleOauthDiagnostics = {
 
 const DEFAULT_PRODUCTION_SERVER_URL = 'https://dj-assist-server.vercel.app';
 const DEFAULT_LOCAL_SERVER_URL = 'http://localhost:3001';
+const DEFAULT_SCAN_PROFILE_MODE: ScanProfileMode = 'auto';
+
+const SCAN_PROFILE_VALUES = {
+  low: {
+    analysis_workers: 3,
+    scan_concurrency: 3,
+    artwork_workers: 2,
+    db_commit_batch_size: 20,
+    defer_artwork_enrichment: 'auto',
+  },
+  high: {
+    analysis_workers: 6,
+    scan_concurrency: 6,
+    artwork_workers: 3,
+    db_commit_batch_size: 40,
+    defer_artwork_enrichment: 'auto',
+  },
+} as const;
 
 function envBoolean(name: string): boolean | undefined {
   const raw = process.env[name]?.trim().toLowerCase();
@@ -113,6 +157,46 @@ function envBoolean(name: string): boolean | undefined {
 
 function settingsDirectory(): string {
   return process.env.DJ_ASSIST_CONFIG_DIR?.trim() || path.join(homedir(), '.dj_assist');
+}
+
+function normalizeScanProfileMode(value: unknown): ScanProfileMode {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'low' || raw === 'high') return raw;
+  return 'auto';
+}
+
+function readSysctlValue(name: string): string {
+  try {
+    const probe = spawnSync('sysctl', ['-n', name], { encoding: 'utf8' });
+    if (probe.status !== 0) return '';
+    return String(probe.stdout || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function parsePositiveInt(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function detectAutomaticScanProfile(): Omit<ScanProfileRuntimeSummary, 'selected_mode' | 'selected_source' | 'effective_mode' | 'analysis_workers' | 'scan_concurrency' | 'artwork_workers' | 'db_commit_batch_size' | 'defer_artwork_enrichment'> & { detected_mode: 'low' | 'high' } {
+  const currentMachine = machine();
+  const model = readSysctlValue('hw.model') || null;
+  const perfCores = parsePositiveInt(readSysctlValue('hw.perflevel0.physicalcpu'));
+  const totalCores = parsePositiveInt(readSysctlValue('hw.ncpu')) || cpus().length || 0;
+  const memBytes = parsePositiveInt(readSysctlValue('hw.memsize'));
+  const memoryGiB = memBytes > 0 ? memBytes / (1024 ** 3) : 0;
+  const isAppleSilicon = currentMachine === 'arm64';
+  const detected_mode: 'low' | 'high' = isAppleSilicon && perfCores >= 6 && totalCores >= 8 && memoryGiB >= 16 ? 'high' : 'low';
+  return {
+    detected_mode,
+    machine: currentMachine,
+    model,
+    perf_cores: perfCores,
+    total_cores: totalCores,
+    memory_gib: Number(memoryGiB.toFixed(1)),
+  };
 }
 
 export function runtimeSettingsPath(): string {
@@ -185,6 +269,53 @@ export async function effectiveServerSettings(): Promise<ServerSettings> {
   }
 
   return resolved;
+}
+
+export async function effectiveScanProfileSettings(): Promise<ScanProfileSettings> {
+  const settings = await loadRuntimeSettings();
+  return {
+    mode: normalizeScanProfileMode(settings.scanProfile?.mode),
+    updatedAt: settings.scanProfile?.updatedAt,
+  };
+}
+
+export function applyScanProfileToEnv(mode: ScanProfileMode): ScanProfileRuntimeSummary {
+  const selected_mode = normalizeScanProfileMode(mode);
+  const detected = detectAutomaticScanProfile();
+  const effective_mode: 'low' | 'high' = selected_mode === 'auto' ? detected.detected_mode : selected_mode;
+  const values = SCAN_PROFILE_VALUES[effective_mode];
+  process.env.DJ_ASSIST_ANALYSIS_WORKERS = String(values.analysis_workers);
+  process.env.DJ_ASSIST_SCAN_CONCURRENCY = String(values.scan_concurrency);
+  process.env.DJ_ASSIST_ARTWORK_WORKERS = String(values.artwork_workers);
+  process.env.DJ_ASSIST_DB_COMMIT_BATCH_SIZE = String(values.db_commit_batch_size);
+  process.env.DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT = values.defer_artwork_enrichment;
+  return {
+    selected_mode,
+    selected_source: 'saved',
+    effective_mode,
+    detected_mode: detected.detected_mode,
+    machine: detected.machine,
+    model: detected.model,
+    perf_cores: detected.perf_cores,
+    total_cores: detected.total_cores,
+    memory_gib: detected.memory_gib,
+    analysis_workers: values.analysis_workers,
+    scan_concurrency: values.scan_concurrency,
+    artwork_workers: values.artwork_workers,
+    db_commit_batch_size: values.db_commit_batch_size,
+    defer_artwork_enrichment: values.defer_artwork_enrichment,
+  };
+}
+
+export async function saveScanProfileSettings(input: Partial<ScanProfileSettings>): Promise<ScanProfileSettings> {
+  const current = await loadRuntimeSettings();
+  const next: ScanProfileSettings = {
+    mode: normalizeScanProfileMode(input.mode),
+    updatedAt: new Date().toISOString(),
+  };
+  await saveRuntimeSettings({ ...current, scanProfile: next });
+  applyScanProfileToEnv(next.mode);
+  return next;
 }
 
 export async function saveServerSettings(input: Partial<ServerSettings>): Promise<ServerSettings> {
@@ -457,6 +588,32 @@ export async function serverRuntimeSummary() {
       hasRefreshToken: Boolean(auth?.refreshToken),
       scopes: auth ? authScopes(auth) : [],
     },
+  };
+}
+
+export async function scanProfileRuntimeSummary(): Promise<ScanProfileRuntimeSummary> {
+  const settings = await loadRuntimeSettings();
+  const savedMode = settings.scanProfile?.mode;
+  const selected_mode = normalizeScanProfileMode(savedMode);
+  const selected_source: 'saved' | 'default' = savedMode ? 'saved' : 'default';
+  const detected = detectAutomaticScanProfile();
+  const effective_mode: 'low' | 'high' = selected_mode === 'auto' ? detected.detected_mode : selected_mode;
+  const values = SCAN_PROFILE_VALUES[effective_mode];
+  return {
+    selected_mode,
+    selected_source,
+    effective_mode,
+    detected_mode: detected.detected_mode,
+    machine: detected.machine,
+    model: detected.model,
+    perf_cores: detected.perf_cores,
+    total_cores: detected.total_cores,
+    memory_gib: detected.memory_gib,
+    analysis_workers: Number(process.env.DJ_ASSIST_ANALYSIS_WORKERS ?? values.analysis_workers),
+    scan_concurrency: Number(process.env.DJ_ASSIST_SCAN_CONCURRENCY ?? values.scan_concurrency),
+    artwork_workers: Number(process.env.DJ_ASSIST_ARTWORK_WORKERS ?? values.artwork_workers),
+    db_commit_batch_size: Number(process.env.DJ_ASSIST_DB_COMMIT_BATCH_SIZE ?? values.db_commit_batch_size),
+    defer_artwork_enrichment: String(process.env.DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT ?? values.defer_artwork_enrichment),
   };
 }
 

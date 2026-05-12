@@ -204,6 +204,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveFoldersBusy = false;
     let googleDriveFolderFilesBusy = false;
     let serverSettingsBusy = false;
+    let scanProfileSettingsBusy = false;
     let activeSetId: number | null = null;
     let setsLoaded = false;
     const playlistDropBindings = new WeakMap<HTMLElement, number>();
@@ -1390,6 +1391,36 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return server && typeof server === 'object' ? server as Record<string, unknown> : null;
     }
 
+    function scanProfileRuntimeSummary() {
+      const profile = runtimeHealth?.scan_profile;
+      return profile && typeof profile === 'object' ? profile as Record<string, unknown> : null;
+    }
+
+    function scanProfileRuntimeLabel() {
+      const profile = scanProfileRuntimeSummary();
+      if (!profile) return 'Loading scan profile…';
+      const selected = String(profile.selected_mode ?? 'auto');
+      const effective = String(profile.effective_mode ?? 'low');
+      const detected = String(profile.detected_mode ?? effective);
+      const model = String(profile.model ?? profile.machine ?? 'this Mac').trim();
+      const analysisWorkers = Number(profile.analysis_workers ?? 0);
+      const scanConcurrency = Number(profile.scan_concurrency ?? 0);
+      const artworkWorkers = Number(profile.artwork_workers ?? 0);
+      const batchSize = Number(profile.db_commit_batch_size ?? 0);
+      const modeLabel = selected === 'auto'
+        ? `Auto → ${effective === 'high' ? 'High' : 'Low'}`
+        : (selected === 'high' ? 'High' : 'Low');
+      const detectionLabel = selected === 'auto' ? ` · detected ${detected} on ${model}` : '';
+      return `${modeLabel}${detectionLabel} · ${analysisWorkers}/${scanConcurrency}/${artworkWorkers} workers · batch ${batchSize}`;
+    }
+
+    function setScanProfileUiStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const statusEl = document.getElementById('scan-profile-status') as HTMLElement | null;
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.state = state;
+    }
+
     function serverRuntimeLabel() {
       const server = serverRuntimeSummary();
       if (!server) return 'Not configured';
@@ -1613,6 +1644,43 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (saveBtn) {
           saveBtn.disabled = false;
           saveBtn.textContent = 'Save Server Settings';
+        }
+      }
+    }
+
+    async function submitScanProfileSettings() {
+      if (scanProfileSettingsBusy) return;
+      scanProfileSettingsBusy = true;
+      const saveBtn = document.getElementById('scan-profile-save-btn') as HTMLButtonElement | null;
+      const modeInput = document.getElementById('scan-profile-mode') as HTMLSelectElement | null;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+      }
+      setScanProfileUiStatus('Saving scan profile...', 'saving');
+      try {
+        const response = await fetch('/api/settings/scan-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: modeInput?.value === 'low' || modeInput?.value === 'high' ? modeInput.value : 'auto',
+          }),
+        });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (!response.ok) {
+          setScanProfileUiStatus(String(payload.error ?? 'Could not save scan profile.'), 'error');
+          return;
+        }
+        await loadRuntimeHealth();
+        setScanProfileUiStatus(scanProfileRuntimeLabel(), 'success');
+        showToast('Scan profile updated.', 'success');
+      } catch (error) {
+        setScanProfileUiStatus(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        scanProfileSettingsBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save Scan Profile';
         }
       }
     }
@@ -7331,6 +7399,24 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               </div>
             </div>
           </section>
+          ${hasProFeatures ? `<section class="library-card">
+            <div class="scan-log-head"><strong>Scan Profile</strong></div>
+            <div class="preferences-list">
+              <label class="preference-field">
+                <span>Profile</span>
+                <select id="scan-profile-mode">
+                  <option value="auto" ${String(scanProfileRuntimeSummary()?.selected_mode ?? 'auto') === 'auto' ? 'selected' : ''}>Auto</option>
+                  <option value="low" ${String(scanProfileRuntimeSummary()?.selected_mode ?? 'auto') === 'low' ? 'selected' : ''}>Low</option>
+                  <option value="high" ${String(scanProfileRuntimeSummary()?.selected_mode ?? 'auto') === 'high' ? 'selected' : ''}>High</option>
+                </select>
+              </label>
+              <div class="scan-preflight" id="scan-profile-status" data-state="idle">${esc(scanProfileRuntimeLabel())}</div>
+              <div class="scan-preflight">Auto chooses a conservative or faster scan setup based on this Mac. Manual Low and High apply immediately to future scans and persist across restarts.</div>
+              <div class="buttons">
+                <button type="button" class="btn" id="scan-profile-save-btn">Save Scan Profile</button>
+              </div>
+            </div>
+          </section>` : ''}
           ${isDebugFlavor ? `<section class="library-card">
             <div class="scan-log-head"><strong>Fast Scan Server</strong></div>
             <div class="preferences-list">
@@ -7504,6 +7590,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       bindColumnPreference('pref-col-key', 'listShowKey');
       bindColumnPreference('pref-col-length', 'listShowLength');
       bindColumnPreference('pref-col-recent', 'listShowRecent');
+      document.getElementById('scan-profile-save-btn')?.addEventListener('click', () => {
+        void submitScanProfileSettings();
+      });
+      document.getElementById('scan-profile-mode')?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        void submitScanProfileSettings();
+      });
       document.getElementById('spotify-save-test-btn')?.addEventListener('click', () => {
         void submitSpotifyCredentials('save');
       });

@@ -7,6 +7,7 @@ import {
   googleOauthDiagnostics,
   applySpotifyCredentialsToEnv,
   effectiveSpotifyCredentials,
+  scanProfileRuntimeSummary,
   serverRuntimeSummary,
 } from '@/lib/runtime-settings';
 import { getClientLogPath } from '@/lib/app-log';
@@ -33,6 +34,7 @@ export async function GET() {
   if (googleOauth.credentials) applyGoogleOauthCredentialsToEnv(googleOauth.credentials);
   const googleOauthDiag = googleEnabled ? await googleOauthDiagnostics() : null;
   const server = await serverRuntimeSummary();
+  const scanProfile = await scanProfileRuntimeSummary();
 
   return NextResponse.json({
     ok: true,
@@ -51,6 +53,7 @@ export async function GET() {
       google_oauth: googleOauth.summary,
       google_oauth_diagnostics: googleOauthDiag,
       server,
+      scan_profile: scanProfile,
       client_log_path: getClientLogPath(),
       cwd: process.cwd(),
     },

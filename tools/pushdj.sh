@@ -99,12 +99,9 @@ mkdir -p "$dest"
 github_token=$(gh auth token)
 
 typeset -a expected_artifact_prefixes=(
-  "macos-debug-m1-profile-"
-  "macos-debug-m4-profile-"
-  "macos-free-prod-m1-profile-"
-  "macos-free-prod-m4-profile-"
-  "macos-pro-prod-m1-profile-"
-  "macos-pro-prod-m4-profile-"
+  "macos-debug-"
+  "macos-free-prod-"
+  "macos-pro-prod-"
 )
 typeset -A downloaded_artifacts=()
 typeset -A artifact_sizes=()

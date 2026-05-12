@@ -164,7 +164,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   build-macos:
-    name: Build macOS ${{ matrix.flavor }} ${{ matrix.scan_profile.name }} Release (${{ needs.prepare-release.outputs.tag }})
+    name: Build macOS ${{ matrix.flavor }} Release (${{ needs.prepare-release.outputs.tag }})
     needs: prepare-release
     if: "${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || (github.ref_type == 'branch' && github.ref_name == 'master') }}"
     runs-on: macos-15
@@ -175,29 +175,11 @@ jobs:
           - debug
           - free-prod
           - pro-prod
-        scan_profile:
-          - name: m1-profile
-            analysis_workers: '3'
-            scan_concurrency: '3'
-            artwork_workers: '2'
-            db_commit_batch_size: '20'
-            defer_artwork_enrichment: auto
-          - name: m4-profile
-            analysis_workers: '6'
-            scan_concurrency: '6'
-            artwork_workers: '3'
-            db_commit_batch_size: '40'
-            defer_artwork_enrichment: auto
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       USE_HARD_LINKS: 'false'
       ELECTRON_CACHE: ~/Library/Caches/electron
       ELECTRON_BUILDER_CACHE: ~/Library/Caches/electron-builder
-      DJ_ASSIST_ANALYSIS_WORKERS: ${{ matrix.scan_profile.analysis_workers }}
-      DJ_ASSIST_SCAN_CONCURRENCY: ${{ matrix.scan_profile.scan_concurrency }}
-      DJ_ASSIST_ARTWORK_WORKERS: ${{ matrix.scan_profile.artwork_workers }}
-      DJ_ASSIST_DB_COMMIT_BATCH_SIZE: ${{ matrix.scan_profile.db_commit_batch_size }}
-      DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT: ${{ matrix.scan_profile.defer_artwork_enrichment }}
     steps:
       - name: Checkout current ref
         uses: actions/checkout@v6
@@ -294,22 +276,14 @@ jobs:
           fi
           node scripts/prepare-app-icon.cjs
           npm run dist:mac:${{ matrix.flavor }}
-          profile_dir="dist-electron/${{ matrix.flavor }}-${{ matrix.scan_profile.name }}"
-          mkdir -p "$profile_dir"
-          while IFS= read -r asset; do
-            base="$(basename "$asset")"
-            ext=".${base##*.}"
-            stem="${base%$ext}"
-            cp "$asset" "$profile_dir/${stem}-${{ matrix.scan_profile.name }}${ext}"
-          done < <(find "dist-electron/${{ matrix.flavor }}" -maxdepth 1 \( -name '*.dmg' -o -name '*.zip' \))
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: macos-${{ matrix.flavor }}-${{ matrix.scan_profile.name }}-${{ needs.prepare-release.outputs.tag }}
+          name: macos-${{ matrix.flavor }}-${{ needs.prepare-release.outputs.tag }}
           path: |
-            dist-electron/${{ matrix.flavor }}-${{ matrix.scan_profile.name }}/*.dmg
-            dist-electron/${{ matrix.flavor }}-${{ matrix.scan_profile.name }}/*.zip
+            dist-electron/${{ matrix.flavor }}/*.dmg
+            dist-electron/${{ matrix.flavor }}/*.zip
 
   publish-release:
     name: Publish Release Assets (${{ needs.prepare-release.outputs.tag }})

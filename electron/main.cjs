@@ -245,6 +245,24 @@ function readManagedGoogleOauthSettings() {
   }
 }
 
+function normalizeScanProfileMode(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'low' || raw === 'high') return raw;
+  return 'auto';
+}
+
+function readManagedScanProfileSettings() {
+  try {
+    const raw = fs.readFileSync(managedSettingsPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return {
+      mode: normalizeScanProfileMode(parsed?.scanProfile?.mode),
+    };
+  } catch {
+    return { mode: 'auto' };
+  }
+}
+
 function resolveBundledPythonPath() {
   if (process.env.PYTHON_EXECUTABLE) return process.env.PYTHON_EXECUTABLE;
   const candidates = [
@@ -384,25 +402,47 @@ function applyAutoScanProfile() {
     return;
   }
 
-  const profile = detectScanProfile();
-  process.env.DJ_ASSIST_ANALYSIS_WORKERS = profile.settings.analysisWorkers;
-  process.env.DJ_ASSIST_SCAN_CONCURRENCY = profile.settings.scanConcurrency;
-  process.env.DJ_ASSIST_ARTWORK_WORKERS = profile.settings.artworkWorkers;
-  process.env.DJ_ASSIST_DB_COMMIT_BATCH_SIZE = profile.settings.dbCommitBatchSize;
-  process.env.DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT = profile.settings.deferArtworkEnrichment;
+  const selectedMode = readManagedScanProfileSettings().mode;
+  const detectedProfile = detectScanProfile();
+  const effectiveProfile = selectedMode === 'auto'
+    ? detectedProfile
+    : {
+        ...detectedProfile,
+        name: selectedMode,
+        settings: selectedMode === 'high'
+          ? {
+              analysisWorkers: '6',
+              scanConcurrency: '6',
+              artworkWorkers: '3',
+              dbCommitBatchSize: '40',
+              deferArtworkEnrichment: 'auto',
+            }
+          : {
+              analysisWorkers: '3',
+              scanConcurrency: '3',
+              artworkWorkers: '2',
+              dbCommitBatchSize: '20',
+              deferArtworkEnrichment: 'auto',
+            },
+      };
+  process.env.DJ_ASSIST_ANALYSIS_WORKERS = effectiveProfile.settings.analysisWorkers;
+  process.env.DJ_ASSIST_SCAN_CONCURRENCY = effectiveProfile.settings.scanConcurrency;
+  process.env.DJ_ASSIST_ARTWORK_WORKERS = effectiveProfile.settings.artworkWorkers;
+  process.env.DJ_ASSIST_DB_COMMIT_BATCH_SIZE = effectiveProfile.settings.dbCommitBatchSize;
+  process.env.DJ_ASSIST_DEFER_ARTWORK_ENRICHMENT = effectiveProfile.settings.deferArtworkEnrichment;
   appendMainLog(
     [
-      `Applied auto scan profile=${profile.name}`,
-      `machine=${profile.machine || 'unknown'}`,
-      `model=${profile.model || 'unknown'}`,
-      `perf_cores=${profile.perfCores || 0}`,
-      `total_cores=${profile.totalCores || 0}`,
-      `mem_gib=${profile.memGiB ? profile.memGiB.toFixed(1) : '0.0'}`,
-      `analysis_workers=${profile.settings.analysisWorkers}`,
-      `scan_concurrency=${profile.settings.scanConcurrency}`,
-      `artwork_workers=${profile.settings.artworkWorkers}`,
-      `db_commit_batch_size=${profile.settings.dbCommitBatchSize}`,
-      `defer_artwork_enrichment=${profile.settings.deferArtworkEnrichment}`,
+      `Applied scan profile selected=${selectedMode} effective=${effectiveProfile.name}`,
+      `machine=${effectiveProfile.machine || 'unknown'}`,
+      `model=${effectiveProfile.model || 'unknown'}`,
+      `perf_cores=${effectiveProfile.perfCores || 0}`,
+      `total_cores=${effectiveProfile.totalCores || 0}`,
+      `mem_gib=${effectiveProfile.memGiB ? effectiveProfile.memGiB.toFixed(1) : '0.0'}`,
+      `analysis_workers=${effectiveProfile.settings.analysisWorkers}`,
+      `scan_concurrency=${effectiveProfile.settings.scanConcurrency}`,
+      `artwork_workers=${effectiveProfile.settings.artworkWorkers}`,
+      `db_commit_batch_size=${effectiveProfile.settings.dbCommitBatchSize}`,
+      `defer_artwork_enrichment=${effectiveProfile.settings.deferArtworkEnrichment}`,
     ].join(' '),
   );
 }
