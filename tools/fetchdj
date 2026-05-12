@@ -1,0 +1,177 @@
+#!/usr/bin/env zsh
+
+set -euo pipefail
+
+DEST_DIR="${HOME}/Downloads/dj-assist"
+WORKFLOW_FILE="release.yml"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  fetchdj                 Download debug, free-prod, and pro-prod DMGs
+  fetchdj --debug         Download the debug DMG
+  fetchdj --free-prod     Download the free-prod DMG
+  fetchdj --pro-prod      Download the pro-prod DMG
+  fetchdj --help
+
+Options may be combined.
+Downloads are written to ~/Downloads/dj-assist.
+EOF
+}
+
+require_command() {
+  local name=$1
+  if ! command -v "$name" >/dev/null 2>&1; then
+    echo "Missing required command: $name" >&2
+    exit 1
+  fi
+}
+
+normalize_flavor() {
+  local raw=${1:l}
+  case "$raw" in
+    debug) echo "debug" ;;
+    free|free-prod|prod) echo "free-prod" ;;
+    pro|pro-prod) echo "pro-prod" ;;
+    *)
+      echo "Unsupported flavor: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+selected_flavors=()
+
+add_flavor() {
+  local flavor
+  flavor=$(normalize_flavor "$1")
+  local existing
+  for existing in "${selected_flavors[@]:-}"; do
+    [[ "$existing" == "$flavor" ]] && return 0
+  done
+  selected_flavors+=("$flavor")
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --debug)
+      add_flavor "debug"
+      ;;
+    --free-prod|--free|--prod)
+      add_flavor "free-prod"
+      ;;
+    --pro-prod|--pro)
+      add_flavor "pro-prod"
+      ;;
+    --all)
+      add_flavor "debug"
+      add_flavor "free-prod"
+      add_flavor "pro-prod"
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ ${#selected_flavors[@]} -eq 0 ]]; then
+  selected_flavors=("debug" "free-prod" "pro-prod")
+fi
+
+require_command gh
+require_command mktemp
+require_command mkdir
+require_command find
+require_command mv
+require_command rm
+require_command git
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [[ -z "$repo_root" ]]; then
+  echo "Run fetchdj from inside the dj-assist git repository." >&2
+  exit 1
+fi
+
+cd "$repo_root"
+
+if ! gh auth status >/dev/null 2>&1; then
+  echo "GitHub CLI is not authenticated. Run: gh auth login" >&2
+  exit 1
+fi
+
+repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+if [[ -z "$repo" ]]; then
+  echo "Could not determine the GitHub repository for this checkout." >&2
+  exit 1
+fi
+
+run_id=$(gh api "repos/${repo}/actions/workflows/${WORKFLOW_FILE}/runs?status=success&per_page=1" --jq '.workflow_runs[0].id')
+if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+  echo "No successful ${WORKFLOW_FILE} workflow run was found for ${repo}." >&2
+  exit 1
+fi
+
+run_number=$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.run_number')
+run_title=$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.display_title')
+run_created_at=$(gh api "repos/${repo}/actions/runs/${run_id}" --jq '.created_at')
+
+artifact_names=()
+artifact_lines=$(gh api "repos/${repo}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[].name')
+if [[ -z "$artifact_lines" ]]; then
+  echo "Workflow run ${run_id} has no downloadable artifacts." >&2
+  exit 1
+fi
+while IFS= read -r artifact_name; do
+  [[ -n "$artifact_name" ]] && artifact_names+=("$artifact_name")
+done <<< "$artifact_lines"
+
+find_artifact_name() {
+  local flavor=$1
+  local artifact_name
+  for artifact_name in "${artifact_names[@]}"; do
+    if [[ "$artifact_name" == macos-"${flavor}"-* ]]; then
+      echo "$artifact_name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+mkdir -p "$DEST_DIR"
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/fetchdj.XXXXXX")
+trap 'rm -rf "$tmp_dir"' EXIT
+
+echo "Using workflow run #${run_number}: ${run_title}"
+echo "Created at: ${run_created_at}"
+echo "Destination: ${DEST_DIR}"
+
+for flavor in "${selected_flavors[@]}"; do
+  artifact_name=$(find_artifact_name "$flavor") || {
+    echo "Could not find a macOS artifact for flavor ${flavor} in run #${run_number}." >&2
+    exit 1
+  }
+
+  flavor_dir="${tmp_dir}/${flavor}"
+  rm -rf "$flavor_dir"
+  mkdir -p "$flavor_dir"
+
+  echo "Downloading ${artifact_name}..."
+  gh run download "$run_id" -n "$artifact_name" -D "$flavor_dir" >/dev/null
+
+  dmg_path=$(find "$flavor_dir" -type f -name '*.dmg' -print -quit)
+  if [[ -z "$dmg_path" ]]; then
+    echo "Downloaded artifact ${artifact_name}, but no .dmg file was found." >&2
+    exit 1
+  fi
+
+  dest_path="${DEST_DIR}/$(basename "$dmg_path")"
+  mv -f "$dmg_path" "$dest_path"
+  echo "Saved ${dest_path}"
+done
