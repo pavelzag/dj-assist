@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { cpus } from 'node:os';
 import { bulkTrackAction, getTracksByIds } from '@/lib/db';
 import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
 import { applySpotifyCredentialsToEnv, effectiveSpotifyCredentials } from '@/lib/runtime-settings';
@@ -12,6 +13,7 @@ export const runtime = 'nodejs';
 const execFileAsync = promisify(execFile);
 const BULK_REANALYZE_ART_TIMEOUT_MS = 45000;
 const BULK_REANALYZE_BPM_TIMEOUT_MS = 45000;
+const BULK_REANALYZE_ART_CONCURRENCY = Math.max(1, Math.min(4, cpus().length || 1));
 
 function parseStderrEvents(stderr: string | null | undefined): Array<Record<string, unknown>> | string {
   const text = String(stderr || '').trim();
@@ -30,6 +32,28 @@ function parseStderrEvents(stderr: string | null | undefined): Array<Record<stri
     return { raw: line };
   });
   return events.length > 0 ? events : text;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
 }
 
 export async function POST(request: NextRequest) {
@@ -51,8 +75,7 @@ export async function POST(request: NextRequest) {
       applySpotifyCredentialsToEnv(spotify.credentials);
     }
     const python = await resolveWorkingPython();
-    const results: Array<Record<string, unknown>> = [];
-    for (const id of ids) {
+    const results = await mapWithConcurrency<number, Record<string, unknown>>(ids as number[], BULK_REANALYZE_ART_CONCURRENCY, async (id) => {
       try {
         const { stdout, stderr } = await execFileAsync(
           python,
@@ -70,7 +93,7 @@ export async function POST(request: NextRequest) {
         } catch {
           parsed = { ok: true, track_id: id, message: String(stdout || '').trim() };
         }
-        results.push({
+        return {
           id,
           ok: true,
           message: String(parsed.message ?? 'Artwork refresh complete.'),
@@ -78,10 +101,10 @@ export async function POST(request: NextRequest) {
             stdout: parsed,
             stderr: parseStderrEvents(stderr),
           },
-        });
+        };
       } catch (error) {
         const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
-        results.push({
+        return {
           id,
           ok: false,
           message: execError.message || 'Unable to refresh artwork.',
@@ -91,9 +114,9 @@ export async function POST(request: NextRequest) {
             stdout: String(execError?.stdout ?? '').trim(),
             stderr: parseStderrEvents(execError?.stderr),
           },
-        });
+        };
       }
-    }
+    });
     const successCount = results.filter((item) => item.ok).length;
     return NextResponse.json({
       ok: successCount > 0,
@@ -108,21 +131,17 @@ export async function POST(request: NextRequest) {
     const python = await resolveWorkingPython();
     const tracks = await getTracksByIds(ids);
     const trackById = new Map(tracks.map((track) => [Number(track.id), track]));
-    const results: Array<Record<string, unknown>> = [];
-
-    for (const id of ids) {
+    const results = await mapWithConcurrency<number, Record<string, unknown>>(ids as number[], BULK_REANALYZE_ART_CONCURRENCY, async (id: number) => {
       const track = trackById.get(id);
       if (!track) {
-        results.push({ id, ok: false, message: 'Track not found.' });
-        continue;
+        return { id, ok: false, message: 'Track not found.' };
       }
       try {
         let pathOverride = '';
         let googleDriveDownload: Record<string, unknown> | null = null;
         if (String(track.path ?? '').startsWith('gdrive:')) {
           if (!googleFeaturesEnabled()) {
-            results.push({ id, ok: false, message: 'Track not found.' });
-            continue;
+            return { id, ok: false, message: 'Track not found.' };
           }
           const fileId = String(track.path ?? '').slice('gdrive:'.length).trim();
           if (!fileId) throw new Error('Google Drive track is missing its file ID.');
@@ -159,7 +178,7 @@ export async function POST(request: NextRequest) {
         } catch {
           parsed = { ok: true, track_id: id, message: String(stdout || '').trim() };
         }
-        results.push({
+        return {
           id,
           ok: true,
           message: `BPM ${String(parsed.bpm ?? parsed.effective_bpm ?? '') || 'updated'}`,
@@ -168,10 +187,10 @@ export async function POST(request: NextRequest) {
             stderr: parseStderrEvents(stderr),
             googleDriveDownload,
           },
-        });
+        };
       } catch (error) {
         const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
-        results.push({
+        return {
           id,
           ok: false,
           message: execError.message || 'Unable to reanalyze BPM.',
@@ -181,9 +200,9 @@ export async function POST(request: NextRequest) {
             stdout: String(execError?.stdout ?? '').trim(),
             stderr: parseStderrEvents(execError?.stderr),
           },
-        });
+        };
       }
-    }
+    });
 
     const successCount = results.filter((item) => item.ok).length;
     return NextResponse.json({

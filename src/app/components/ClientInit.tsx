@@ -4807,6 +4807,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         showToast('No tracks to refresh art for.', 'info');
         return;
       }
+      if (isDebugFlavor) {
+        appendScanLog('Debug: bulk artwork analysis runs with bounded parallel workers.', 'info', {
+          category: 'reanalyze-art-bulk',
+          trackIds: ids,
+        });
+      }
       appendScanLog(`Fill Missing Art started for ${ids.length} ${label}.`, 'info', {
         category: 'reanalyze-art-bulk',
         trackIds: ids,
@@ -4984,6 +4990,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!ids.length) {
         showToast('No tracks to analyze BPM for.', 'info');
         return;
+      }
+      if (isDebugFlavor) {
+        appendScanLog('Debug: bulk BPM analysis runs with bounded parallel workers.', 'info', {
+          category: 'reanalyze-bpm-bulk',
+          trackIds: ids,
+        });
       }
       appendScanLog(`Bulk BPM analysis started for ${ids.length} ${label}.`, 'info', {
         category: 'reanalyze-bpm-bulk',
