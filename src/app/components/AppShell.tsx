@@ -31,6 +31,18 @@ export default function AppShell({
                   <div className="scan-progress-bar" id="scan-progress-bar" />
                 </div>
               </div>
+              <div className="google-drive-import-header-strip" id="google-drive-import-header-strip" hidden>
+                <div className="google-drive-import-header-copy">
+                  <strong id="google-drive-import-header-stage">Google Drive import</strong>
+                  <span id="google-drive-import-header-detail">Waiting for progress…</span>
+                </div>
+                <div className="google-drive-import-header-track">
+                  <div className="google-drive-import-header-bar" id="google-drive-import-header-bar" />
+                </div>
+                <div className="google-drive-import-header-meta">
+                  <span id="google-drive-import-header-count">--</span>
+                </div>
+              </div>
             </div>
             <div className="search-shortcut-hint">Use <strong>/</strong> to search.</div>
             <input id="search" className="header-search-input-hidden" placeholder="Search collection, artist, album, notes, or filters like bpm:128-132..." aria-label="Search collection" />

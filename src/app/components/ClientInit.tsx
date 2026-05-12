@@ -1324,6 +1324,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const scopeEl = document.getElementById('google-drive-import-stage-scope') as HTMLElement | null;
       const modeEl = document.getElementById('google-drive-import-stage-mode') as HTMLElement | null;
       const stageBadgeEl = document.getElementById('google-drive-import-stage-badge') as HTMLElement | null;
+      const headerStripEl = document.getElementById('google-drive-import-header-strip') as HTMLElement | null;
+      const headerStageEl = document.getElementById('google-drive-import-header-stage') as HTMLElement | null;
+      const headerDetailEl = document.getElementById('google-drive-import-header-detail') as HTMLElement | null;
+      const headerCountEl = document.getElementById('google-drive-import-header-count') as HTMLElement | null;
+      const headerBarEl = document.getElementById('google-drive-import-header-bar') as HTMLElement | null;
       const bannerEl = document.getElementById('google-drive-import-banner') as HTMLDetailsElement | null;
       const bannerLabelEl = document.getElementById('google-drive-import-banner-label') as HTMLElement | null;
       const bannerDetailEl = document.getElementById('google-drive-import-banner-detail') as HTMLElement | null;
@@ -1353,6 +1358,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         : googleDriveImportBusy
           ? 100
           : 0;
+      if (headerStripEl) headerStripEl.hidden = !googleDriveImportBusy;
+      if (headerStageEl) headerStageEl.textContent = googleDriveImportStageLabel;
+      if (headerDetailEl) headerDetailEl.textContent = googleDriveImportStageDetail;
+      if (headerCountEl) {
+        headerCountEl.textContent = googleDriveImportStageTotal > 0
+          ? `${googleDriveImportStageCurrent} / ${googleDriveImportStageTotal}`
+          : googleDriveImportBusy
+            ? 'Working…'
+            : '--';
+      }
+      if (headerBarEl) {
+        headerBarEl.style.width = `${percent}%`;
+        headerBarEl.dataset.indeterminate = googleDriveImportStageTotal > 0 ? 'false' : (googleDriveImportBusy ? 'true' : 'false');
+      }
       if (barEl) {
         barEl.style.width = `${percent}%`;
         barEl.dataset.indeterminate = googleDriveImportStageTotal > 0 ? 'false' : (googleDriveImportBusy ? 'true' : 'false');
