@@ -208,12 +208,23 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   background: rgba(255,255,255,0.02);
 }
 .scan-progress.compact {
-  min-width: 140px;
-  width: 140px;
-  flex: 0 0 140px;
+  min-width: min(280px, 100%);
+  width: min(300px, 100%);
+  flex: 0 1 300px;
+  grid-template-columns: auto minmax(96px, 1fr) auto;
+  align-items: center;
+  gap: 6px;
   padding: 0;
   border: none;
   background: transparent;
+}
+.scan-progress-source {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 .scan-progress.inline {
   min-width: 180px;
@@ -234,7 +245,7 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
   font-variant-numeric: tabular-nums;
 }
 .scan-progress-meta.compact {
-  min-width: 44px;
+  min-width: 40px;
   text-align: right;
 }
 .scan-progress-track {
@@ -1067,6 +1078,11 @@ main {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   min-width: 0;
+  align-items: start;
+  overflow: hidden;
+}
+.library-grid > * {
+  min-width: 0;
 }
 .library-card {
   display: grid;
@@ -1077,6 +1093,7 @@ main {
   background: rgba(255,255,255,0.02);
   min-width: 0;
   box-sizing: border-box;
+  overflow: hidden;
 }
 .library-span {
   grid-column: 1 / -1;
@@ -1094,6 +1111,11 @@ main {
 .preferences-list {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.preferences-list > * {
   min-width: 0;
 }
 .preference-row {
@@ -1163,6 +1185,8 @@ main {
   padding-top: 4px;
   border-top: 1px solid rgba(255,255,255,0.05);
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 .preference-columns strong {
   font-size: 11px;

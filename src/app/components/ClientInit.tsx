@@ -43,6 +43,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const quickFilterNewBtn = document.getElementById('quick-filter-new') as HTMLButtonElement | null;
     const scanDirectoryEl = document.getElementById('scan-directory') as HTMLInputElement;
     const scanStatusEl = document.getElementById('scan-status') as HTMLElement;
+    const scanProgressSourceEl = document.getElementById('scan-progress-source') as HTMLElement | null;
     const scanProgressMetaEl = document.getElementById('scan-progress-meta') as HTMLElement;
     const scanProgressBarEl = document.getElementById('scan-progress-bar') as HTMLElement;
     const scanProgressFileEl = document.getElementById('scan-progress-file') as HTMLElement;
@@ -287,6 +288,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportStatusState: 'idle' | 'saving' | 'success' | 'error' = 'idle';
     let googleDriveImportFailedCount = 0;
     let googleDriveImportMetadataActivityTimestamp = '';
+    let scanProgressSourceLabel = 'Local scan';
     let scanCancelInFlight = false;
     let serverAccountSession: Record<string, unknown> | null = null;
     let serverEntitlements = new Set<string>();
@@ -764,15 +766,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       if (event === 'started') {
         googleDriveImportFailedCount = 0;
+        const maxFiles = Number(context.maxFiles ?? 0);
         setGoogleDriveImportStageState({
           stage: 'discovering',
           label: 'Starting Google Drive import',
           detail: selectedGoogleDriveFolderLabel(),
           current: 0,
-          total: 0,
-          meta: 'Connecting to Google Drive and enumerating audio files',
+          total: maxFiles > 0 ? maxFiles : 0,
+          meta: maxFiles > 0
+            ? `Connecting to Google Drive and enumerating up to ${maxFiles} audio files`
+            : 'Connecting to Google Drive and enumerating audio files',
         });
-        setScanProgress(0, 0, selectedGoogleDriveFolderLabel());
+        setScanProgress(0, maxFiles > 0 ? maxFiles : 0, selectedGoogleDriveFolderLabel());
         return;
       }
 
@@ -1871,6 +1876,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function importCloudLibrary(provider: 'onedrive' | 'dropbox') {
       const label = cloudProviderLabel(provider);
       try {
+        setScanProgressSource(`${label} import`);
+        setScanStatus(`Importing ${label} metadata…`, 'running');
         const response = await fetch(`/api/cloud/${provider}/import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1888,6 +1895,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         ]);
       } catch (error) {
         showToast(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        setScanProgressSource('Local scan');
       }
     }
 
@@ -1975,15 +1984,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
+      setScanProgressSource('Google Drive import');
       selectedSourceIndicatorVisible = false;
       syncSelectedSourceIndicator();
+      const maxFiles = 2000;
       setGoogleDriveImportStageState({
         stage: 'discovering',
         label: 'Starting Google Drive import',
         detail: selectedGoogleDriveFolderLabel(),
         current: 0,
-        total: 0,
-        meta: 'Preparing the import pipeline',
+        total: maxFiles,
+        meta: `Preparing the import pipeline for up to ${maxFiles} audio files`,
       });
       googleDriveImportScopeLabel = selectedGoogleDriveFolderLabel();
       googleDriveImportFailedCount = 0;
@@ -1995,7 +2006,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       setGoogleDriveImportStatus('Fetching Google Drive metadata and sending it to the server…', 'saving');
       setScanStatus('Importing Google Drive metadata…', 'running');
-      setScanProgress(0, 0, selectedGoogleDriveFolderLabel());
+      setScanProgress(0, maxFiles, selectedGoogleDriveFolderLabel());
       appendScanLog(
         `Google Drive import started: scope=${selectedGoogleDriveFolderLabel()}`,
         'info',
@@ -2012,7 +2023,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            maxFiles: 2000,
+            maxFiles,
             folderIds: selectedGoogleDriveFolders.map((f) => f.id).filter(Boolean),
             folderNames: selectedGoogleDriveFolders.map((f) => f.name).filter(Boolean),
             folderId: selectedGoogleDriveFolders[0]?.id || undefined,
@@ -2117,6 +2128,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         );
       } finally {
         googleDriveImportBusy = false;
+        setScanProgressSource('Local scan');
         if (googleDriveImportProgressTimer) {
           window.setTimeout(() => {
             stopGoogleDriveImportProgressPolling();
@@ -3489,6 +3501,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       scanStatusEl.dataset.state = state;
       updateDesktopStatusBadge();
       syncAddMusicUi();
+    }
+
+    function setScanProgressSource(label: string) {
+      scanProgressSourceLabel = String(label ?? '').trim() || 'Local scan';
+      if (scanProgressSourceEl) scanProgressSourceEl.textContent = scanProgressSourceLabel;
     }
 
     function scanCompletionMessage(summary: Record<string, unknown> | null): string {
@@ -8503,6 +8520,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
 
       activeScanStatus = 'queued';
+      setScanProgressSource('Local scan');
       selectedSourceIndicatorVisible = false;
       syncSelectedSourceIndicator();
       syncAddMusicUi();
@@ -8518,6 +8536,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       preScanTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
       hasScanBaseline = tracks.length > 0;
       ensureBackgroundRefreshLoop();
+      setScanProgressSource('Local scan');
       setScanStatus('Scanning collection…', 'running');
       setScanProgress(0, 0, directory);
       showProgressToast('local-scan-progress', `Scanning collection · ${directory}`, 'info', false);
@@ -8657,8 +8676,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (ensureVisible) {
         requestAnimationFrame(() => {
           listEl.querySelector<HTMLElement>(`.row[data-id="${activeTrackId}"]`)?.scrollIntoView({ block: 'nearest' });
-        });
-      }
+      });
+    }
     }
 
     function preserveHighlightedTrack(trackId: number, options: { ensureVisible?: boolean; focusList?: boolean } = {}) {
@@ -9465,6 +9484,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     });
     setScanStatus('Idle');
+    setScanProgressSource('Local scan');
     setScanProgress(0, 0, 'No scan in progress');
     resetScanLog();
     updateDesktopStatusBadge();

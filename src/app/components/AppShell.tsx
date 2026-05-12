@@ -25,23 +25,12 @@ export default function AppShell({
               <span className="scan-status" id="scan-status">Idle</span>
               <button type="button" className="btn" id="quick-start-scan-btn">Start Scan</button>
               <button type="button" className="btn secondary" id="quick-analyze-all-artwork-btn">Analyze All Artwork</button>
-              <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
               <div className="scan-progress compact" id="scan-progress">
+                <span className="scan-progress-source" id="scan-progress-source">Local scan</span>
                 <div className="scan-progress-track">
                   <div className="scan-progress-bar" id="scan-progress-bar" />
                 </div>
-              </div>
-              <div className="google-drive-import-header-strip" id="google-drive-import-header-strip" hidden>
-                <div className="google-drive-import-header-copy">
-                  <strong id="google-drive-import-header-stage">Google Drive import</strong>
-                  <span id="google-drive-import-header-detail">Waiting for progress…</span>
-                </div>
-                <div className="google-drive-import-header-track">
-                  <div className="google-drive-import-header-bar" id="google-drive-import-header-bar" />
-                </div>
-                <div className="google-drive-import-header-meta">
-                  <span id="google-drive-import-header-count">--</span>
-                </div>
+                <span className="scan-progress-meta compact" id="scan-progress-meta">0 / 0</span>
               </div>
             </div>
             <div className="search-shortcut-hint">Use <strong>/</strong> to search.</div>
