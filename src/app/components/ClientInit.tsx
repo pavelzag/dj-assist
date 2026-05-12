@@ -713,6 +713,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       if (event === 'drive_page_loaded') {
         const buffered = Number(context.totalBuffered ?? 0);
+        const maxFiles = Number(context.maxFiles ?? 0);
         const page = Number(context.page ?? 1);
         const hasNext = Boolean(context.hasNextPage);
         setGoogleDriveImportStageState({
@@ -720,10 +721,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           label: 'Loading Google Drive file list',
           detail: `Page ${page}${hasNext ? ' loaded, more remaining' : ' loaded'}`,
           current: buffered,
-          total: hasNext ? 0 : buffered,
+          total: maxFiles > 0 ? maxFiles : (hasNext ? 0 : buffered),
           meta: `${buffered} audio files discovered so far`,
         });
-        setScanProgress(buffered, hasNext ? 0 : buffered, `Loading Google Drive pages · page ${page}`);
+        setScanProgress(buffered, maxFiles > 0 ? maxFiles : (hasNext ? 0 : buffered), `Loading Google Drive pages · page ${page}`);
         return;
       }
 

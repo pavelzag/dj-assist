@@ -483,6 +483,7 @@ export async function POST(request: NextRequest) {
             page: pagesFetched,
             fetchedThisPage: page.files.length,
             totalBuffered: localFiles.length,
+            maxFiles,
             hasNextPage: Boolean(nextPageToken),
           },
         );
