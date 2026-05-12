@@ -819,7 +819,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (!response.ok) return;
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         const entries = Array.isArray(payload.entries) ? payload.entries as Record<string, unknown>[] : [];
-        const latest = entries.find((entry) => String(entry.category ?? '') === 'google-drive-import');
+        const latest = entries
+          .filter((entry) => String(entry.category ?? '') === 'google-drive-import')
+          .sort((a, b) => Date.parse(String(b.timestamp ?? '')) - Date.parse(String(a.timestamp ?? '')))
+          [0];
         if (!latest) return;
         const signature = JSON.stringify([
           String(latest.timestamp ?? ''),
@@ -891,7 +894,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void pollGoogleDriveImportProgress();
       googleDriveImportProgressTimer = window.setInterval(() => {
         void pollGoogleDriveImportProgress();
-      }, 2500);
+      }, 1000);
     }
 
     function updateTapBpmUi() {
@@ -1319,6 +1322,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const countEl = document.getElementById('google-drive-import-stage-count') as HTMLElement | null;
       const scopeEl = document.getElementById('google-drive-import-stage-scope') as HTMLElement | null;
       const modeEl = document.getElementById('google-drive-import-stage-mode') as HTMLElement | null;
+      const stageBadgeEl = document.getElementById('google-drive-import-stage-badge') as HTMLElement | null;
       const bannerEl = document.getElementById('google-drive-import-banner') as HTMLDetailsElement | null;
       const bannerLabelEl = document.getElementById('google-drive-import-banner-label') as HTMLElement | null;
       const bannerDetailEl = document.getElementById('google-drive-import-banner-detail') as HTMLElement | null;
@@ -1342,6 +1346,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             ? 'Stage progress'
             : 'Waiting';
       }
+      if (stageBadgeEl) stageBadgeEl.textContent = googleDriveImportStageLabel;
       const percent = googleDriveImportStageTotal > 0
         ? Math.min(100, (googleDriveImportStageCurrent / Math.max(1, googleDriveImportStageTotal)) * 100)
         : googleDriveImportBusy
@@ -7272,6 +7277,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                   <span id="google-drive-import-stage-detail">${esc(googleDriveImportStageDetail)}</span>
                 </div>
                 <strong id="google-drive-import-stage-count">${googleDriveImportStageTotal > 0 ? esc(`${googleDriveImportStageCurrent} / ${googleDriveImportStageTotal}`) : (googleDriveImportBusy ? 'Working…' : '--')}</strong>
+              </div>
+              <div class="google-drive-import-stage-line">
+                <span>Current stage</span>
+                <strong id="google-drive-import-stage-badge">${esc(googleDriveImportStageLabel)}</strong>
               </div>
               <div class="google-drive-import-progress-track">
                 <div

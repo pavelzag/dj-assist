@@ -147,6 +147,10 @@ const SCAN_PROFILE_VALUES = {
   },
 } as const;
 
+const HIGH_PROFILE_MODELS = new Set([
+  'Mac16,10',
+]);
+
 function envBoolean(name: string): boolean | undefined {
   const raw = process.env[name]?.trim().toLowerCase();
   if (!raw) return undefined;
@@ -188,7 +192,11 @@ function detectAutomaticScanProfile(): Omit<ScanProfileRuntimeSummary, 'selected
   const memBytes = parsePositiveInt(readSysctlValue('hw.memsize'));
   const memoryGiB = memBytes > 0 ? memBytes / (1024 ** 3) : 0;
   const isAppleSilicon = currentMachine === 'arm64';
-  const detected_mode: 'low' | 'high' = isAppleSilicon && perfCores >= 6 && totalCores >= 8 && memoryGiB >= 16 ? 'high' : 'low';
+  const detected_mode: 'low' | 'high' = isAppleSilicon && (
+    HIGH_PROFILE_MODELS.has(model ?? '') || (perfCores >= 6 && totalCores >= 8 && memoryGiB >= 16)
+  )
+    ? 'high'
+    : 'low';
   return {
     detected_mode,
     machine: currentMachine,

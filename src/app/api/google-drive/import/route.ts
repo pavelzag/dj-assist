@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { homedir } from 'node:os';
+import os, { homedir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
@@ -284,64 +284,75 @@ async function reanalyzeImportedArtwork(input: {
   }
 
   const python = await resolveWorkingPython();
+  const concurrency = Math.max(2, Math.min(4, Math.floor((os.cpus().length || 4) / 2) || 2));
   let succeeded = 0;
   let failed = 0;
-  for (let index = 0; index < targets.length; index += 1) {
-    const track = targets[index];
-    try {
-      const { stdout, stderr } = await execFileAsync(
-        python,
-        ['-m', 'dj_assist.cli', 'reanalyze-art', String(track.id), '--force', '--json-output'],
-        {
-          cwd: process.cwd(),
-          env: {
-            ...process.env,
-            DJ_ASSIST_LIVE_SPOTIFY_DEBUG: '1',
-            DJ_ASSIST_FAIL_FAST_ON_SPOTIFY_429: '1',
-            DJ_ASSIST_LOCAL_APP_URL: `http://localhost:${input.port}`,
-          },
-          timeout: IMPORT_REANALYZE_ART_TIMEOUT_MS,
-          maxBuffer: 1024 * 1024,
-        },
-      );
-      let parsed: Record<string, unknown> = {};
+  let completed = 0;
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, targets.length) }, async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const track = targets[currentIndex];
+      if (!track) return;
       try {
-        parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
-      } catch {
-        parsed = { ok: true, message: String(stdout || '').trim() };
+        const { stdout, stderr } = await execFileAsync(
+          python,
+          ['-m', 'dj_assist.cli', 'reanalyze-art', String(track.id), '--force', '--json-output'],
+          {
+            cwd: process.cwd(),
+            env: {
+              ...process.env,
+              DJ_ASSIST_LIVE_SPOTIFY_DEBUG: '1',
+              DJ_ASSIST_FAIL_FAST_ON_SPOTIFY_429: '1',
+              DJ_ASSIST_LOCAL_APP_URL: `http://localhost:${input.port}`,
+            },
+            timeout: IMPORT_REANALYZE_ART_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024,
+          },
+        );
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = JSON.parse(stdout || '{}') as Record<string, unknown>;
+        } catch {
+          parsed = { ok: true, message: String(stdout || '').trim() };
+        }
+        succeeded += 1;
+        completed += 1;
+        await input.onProgress({
+          trackId: track.id,
+          title: String(track.title ?? '').trim() || `Track ${track.id}`,
+          index: completed,
+          total: targets.length,
+          ok: true,
+          message: String(parsed.message ?? 'Artwork refresh complete.'),
+          debug: {
+            stdout: parsed,
+            stderr: parseStderrEvents(stderr),
+          },
+        });
+      } catch (error) {
+        failed += 1;
+        completed += 1;
+        const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
+        await input.onProgress({
+          trackId: track.id,
+          title: String(track.title ?? '').trim() || `Track ${track.id}`,
+          index: completed,
+          total: targets.length,
+          ok: false,
+          message: execError.message || 'Unable to refresh artwork.',
+          debug: {
+            code: execError?.code ?? null,
+            signal: execError?.signal ?? null,
+            stdout: String(execError?.stdout ?? '').trim(),
+            stderr: parseStderrEvents(execError?.stderr),
+          },
+        });
       }
-      succeeded += 1;
-      await input.onProgress({
-        trackId: track.id,
-        title: String(track.title ?? '').trim() || `Track ${track.id}`,
-        index: index + 1,
-        total: targets.length,
-        ok: true,
-        message: String(parsed.message ?? 'Artwork refresh complete.'),
-        debug: {
-          stdout: parsed,
-          stderr: parseStderrEvents(stderr),
-        },
-      });
-    } catch (error) {
-      failed += 1;
-      const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
-      await input.onProgress({
-        trackId: track.id,
-        title: String(track.title ?? '').trim() || `Track ${track.id}`,
-        index: index + 1,
-        total: targets.length,
-        ok: false,
-        message: execError.message || 'Unable to refresh artwork.',
-        debug: {
-          code: execError?.code ?? null,
-          signal: execError?.signal ?? null,
-          stdout: String(execError?.stdout ?? '').trim(),
-          stderr: parseStderrEvents(execError?.stderr),
-        },
-      });
     }
-  }
+  });
+  await Promise.all(workers);
 
   return {
     attempted: targets.length,

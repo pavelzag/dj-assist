@@ -346,6 +346,10 @@ function parsePositiveInt(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+const HIGH_PROFILE_MODELS = new Set([
+  'Mac16,10',
+]);
+
 function scanEnvVarSet(name) {
   return String(process.env[name] ?? '').trim() !== '';
 }
@@ -359,7 +363,10 @@ function detectScanProfile() {
   const memGiB = memBytes > 0 ? memBytes / (1024 ** 3) : 0;
 
   const isAppleSilicon = machine === 'arm64';
-  const highProfile = isAppleSilicon && perfCores >= 6 && totalCores >= 8 && memGiB >= 16;
+  const highProfile = isAppleSilicon && (
+    HIGH_PROFILE_MODELS.has(model)
+    || (perfCores >= 6 && totalCores >= 8 && memGiB >= 16)
+  );
 
   return {
     name: highProfile ? 'high' : 'low',
