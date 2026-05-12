@@ -205,6 +205,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveFolderFilesBusy = false;
     let serverSettingsBusy = false;
     let activeSetId: number | null = null;
+    let setsLoaded = false;
     const playlistDropBindings = new WeakMap<HTMLElement, number>();
     const playlistHeaderClickSuppressionUntil = new Map<number, number>();
     const playlistPendingAdds = new Set<string>();
@@ -6103,12 +6104,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         addToSetBtn.addEventListener('click', async () => {
           const setId = parseInt(setSelect.value, 10);
           if (!setId) return;
-          await fetch(`/api/sets/${setId}/tracks`, {
+          const response = await fetch(`/api/sets/${setId}/tracks`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ track_id: track.id }),
           });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+            showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
+            return;
+          }
           addToSetBtn.textContent = '✓ Added';
+          showToast('Track added to playlist.', 'success');
+          if (currentPanel === 'sets') {
+            await renderSetsPanel();
+          }
           setTimeout(() => { addToSetBtn.textContent = '+ Add to playlist'; }, 1500);
         });
       }
@@ -6254,9 +6264,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         updateNowPlayingBar(localAudio);
         const resumeState = loadResumeState();
         let resumeApplied = false;
-        if (!isGoogleDriveTrack) {
-          localAudio.load();
-        }
         localAudio.addEventListener('loadedmetadata', () => {
           if (!resumeApplied && resumeState.time > 0) {
             localAudio.currentTime = Math.min(resumeState.time, (localAudio.duration || 0) - 0.25);
@@ -6609,6 +6616,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const res = await fetch('/api/sets', { cache: 'no-store' });
       const data = await res.json();
       sets = data.sets ?? [];
+      setsLoaded = true;
     }
 
     async function renderSetsPanel() {
@@ -7005,7 +7013,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           return;
         }
         input.value = '';
-        renderSetsPanel();
+        await renderSetsPanel();
+        if (activeTrackId != null) {
+          await loadTrackDetail(String(activeTrackId), false);
+        }
       };
       btn.addEventListener('click', create);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
@@ -8336,8 +8347,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             wasPlaying: Boolean(existingAudio && !existingAudio.paused && !existingAudio.ended),
           }
         : null;
-      if (!sets.length) {
-        void loadSets().catch(() => {});
+      if (!setsLoaded) {
+        try {
+          await loadSets();
+        } catch {
+          // Best effort only; the detail pane can still render without sets.
+        }
       }
       const params = new URLSearchParams({ intent: nextTracksIntent });
       let payload: Record<string, unknown>;
