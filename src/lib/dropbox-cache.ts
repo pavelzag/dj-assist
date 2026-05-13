@@ -3,7 +3,7 @@ import path from 'node:path';
 import { cloudCacheDirectory, extensionFromMimeType, normalizeCloudAudioFile, safeBasename, temporaryCloudDownloadPath, writeTempFileAndPromote } from '@/lib/cloud-cache';
 import { getDropboxAccessToken } from '@/lib/runtime-settings';
 
-async function fetchDropboxFileMetadata(fileId: string, accessToken: string) {
+async function fetchDropboxFileMetadata(fileId: string, accessToken: string, signal?: AbortSignal) {
   const response = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
     method: 'POST',
     headers: {
@@ -16,7 +16,7 @@ async function fetchDropboxFileMetadata(fileId: string, accessToken: string) {
       include_has_explicit_shared_members: false,
     }),
     cache: 'no-store',
-    signal: AbortSignal.timeout(30_000),
+    signal: signal ?? AbortSignal.timeout(30_000),
   });
   const raw = await response.text();
   let payload: Record<string, unknown> = {};
@@ -63,6 +63,7 @@ async function prepareDropboxAudioFile(input: {
 export async function ensureLocalDropboxTrackFile(
   fileId: string,
   knownMetadata?: { name?: string; mimeType?: string; size?: string | number | null },
+  signal?: AbortSignal,
 ): Promise<{
   localPath: string;
   cached: boolean;
@@ -79,7 +80,7 @@ export async function ensureLocalDropboxTrackFile(
       size: Number(knownMetadata.size ?? 0) || null,
       pathDisplay: null,
     }
-    : await fetchDropboxFileMetadata(fileId, accessToken);
+    : await fetchDropboxFileMetadata(fileId, accessToken, signal);
   const ext = path.extname(metadata.name) || extensionFromMimeType(metadata.mimeType);
   const baseName = path.basename(metadata.name, path.extname(metadata.name) || ext);
   const finalPath = path.join(cloudCacheDirectory('dropbox'), `${fileId}-${safeBasename(baseName)}${ext}`);
@@ -108,7 +109,7 @@ export async function ensureLocalDropboxTrackFile(
       'Dropbox-API-Arg': JSON.stringify({ path: fileId.startsWith('id:') ? fileId : `id:${fileId}` }),
     },
     cache: 'no-store',
-    signal: AbortSignal.timeout(5 * 60_000),
+    signal: signal ?? AbortSignal.timeout(5 * 60_000),
   });
   if (!response.ok || !response.body) {
     const detail = (await response.text()).slice(0, 300).trim();
@@ -134,4 +135,3 @@ export async function ensureLocalDropboxTrackFile(
     mimeType: preparedDownloadedFile.mimeType,
   };
 }
-

@@ -95,6 +95,7 @@ export async function collectFolderTree(input: {
   accessToken: string;
   rootFolderId: string;
   maxFolders?: number;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const maxFolders = Number.isFinite(input.maxFolders) && Number(input.maxFolders) > 0
     ? Math.trunc(Number(input.maxFolders))
@@ -140,7 +141,7 @@ export async function collectFolderTree(input: {
       if (maxFolders != null && all.size >= maxFolders) break;
       const batch = frontier.slice(i, i + GOOGLE_DRIVE_FOLDER_SCAN_CONCURRENCY);
       const batchChildren = await Promise.all(
-        batch.map((parentId) => fetchDirectSubfolderIds(parentId, input.accessToken)),
+        batch.map((parentId) => fetchDirectSubfolderIds(parentId, input.accessToken, input.signal)),
       );
 
       for (const children of batchChildren) {
@@ -195,7 +196,7 @@ export async function collectFolderTree(input: {
   return [...all];
 }
 
-async function fetchDirectSubfolderIds(parentId: string, accessToken: string): Promise<string[]> {
+async function fetchDirectSubfolderIds(parentId: string, accessToken: string, signal?: AbortSignal): Promise<string[]> {
   const ids: string[] = [];
   let pageToken: string | undefined;
 
@@ -214,7 +215,7 @@ async function fetchDirectSubfolderIds(parentId: string, accessToken: string): P
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',
-      signal: AbortSignal.timeout(30_000),
+      signal: signal ?? AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) break;
@@ -253,6 +254,7 @@ async function fetchAudioFilePage(input: {
   query: string;
   pageSize: number;
   pageToken?: string;
+  signal?: AbortSignal;
 }): Promise<{
   files: GoogleDriveAudioFile[];
   nextPageToken: string | null;
@@ -272,7 +274,7 @@ async function fetchAudioFilePage(input: {
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${input.accessToken}` },
     cache: 'no-store',
-    signal: AbortSignal.timeout(30_000),
+    signal: input.signal ?? AbortSignal.timeout(30_000),
   });
 
   const raw = await response.text();
@@ -318,6 +320,7 @@ export async function listGoogleDriveAudioFiles(input: {
   search?: string;
   limit: number;
   pageToken?: string;
+  signal?: AbortSignal;
 }) {
   const limit = Math.min(Math.max(Math.trunc(input.limit || 100), 1), 5000);
   const pageSize = Math.min(limit, 200);
@@ -335,6 +338,7 @@ export async function listGoogleDriveAudioFiles(input: {
       query,
       pageSize,
       pageToken: input.pageToken,
+      signal: input.signal,
     });
   }
 
@@ -385,6 +389,7 @@ export async function listGoogleDriveAudioFiles(input: {
           query,
           pageSize,
           pageToken: batchToken,
+          signal: input.signal,
         });
         files.push(...page.files);
         rawCount += page.rawCount;

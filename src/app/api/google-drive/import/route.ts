@@ -224,6 +224,7 @@ async function uploadTracksToServer(input: {
   clientId: string;
   userData: Record<string, unknown>;
   tracks: Track[];
+  signal?: AbortSignal;
 }) {
   if (!input.tracks.length) {
     return { status: 200, tracksReceived: 0, rawPreview: '{"tracks_received":0}' };
@@ -241,7 +242,9 @@ async function uploadTracksToServer(input: {
       tracks: input.tracks.map(serializeTrackForServer),
       usage_events: [],
     }),
-    signal: AbortSignal.timeout(GOOGLE_DRIVE_IMPORT_TIMEOUT_MS),
+    signal: input.signal
+      ? AbortSignal.any([input.signal, AbortSignal.timeout(GOOGLE_DRIVE_IMPORT_TIMEOUT_MS)])
+      : AbortSignal.timeout(GOOGLE_DRIVE_IMPORT_TIMEOUT_MS),
   });
   const raw = await response.text();
   let payload: Record<string, unknown> | null = null;
@@ -264,6 +267,7 @@ async function uploadTracksToServer(input: {
 async function reanalyzeImportedArtwork(input: {
   tracks: Track[];
   port: string;
+  signal?: AbortSignal;
   onProgress: (entry: {
     trackId: number;
     title: string;
@@ -290,10 +294,11 @@ async function reanalyzeImportedArtwork(input: {
   let completed = 0;
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(concurrency, targets.length) }, async () => {
-    while (true) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      const track = targets[currentIndex];
+      while (true) {
+        if (input.signal?.aborted) throw new Error('Import cancelled');
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        const track = targets[currentIndex];
       if (!track) return;
       try {
         const { stdout, stderr } = await execFileAsync(
@@ -309,6 +314,7 @@ async function reanalyzeImportedArtwork(input: {
             },
             timeout: IMPORT_REANALYZE_ART_TIMEOUT_MS,
             maxBuffer: 1024 * 1024,
+            signal: input.signal,
           },
         );
         let parsed: Record<string, unknown> = {};
@@ -332,6 +338,9 @@ async function reanalyzeImportedArtwork(input: {
           },
         });
       } catch (error) {
+        if (input.signal?.aborted || String((error as Error)?.message ?? '').toLowerCase().includes('cancelled')) {
+          throw error;
+        }
         failed += 1;
         completed += 1;
         const execError = error as Error & { stdout?: string; stderr?: string; signal?: string; code?: number };
@@ -366,6 +375,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unavailable in this app version.' }, { status: 404 });
   }
   try {
+    const requestSignal = request.signal;
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const maxFiles = Math.min(Math.max(Math.trunc(Number(body.maxFiles ?? 2000) || 2000), 1), 5000);
     const folderId = String(body.folderId ?? '').trim();
@@ -440,7 +450,8 @@ export async function POST(request: NextRequest) {
       if (folderIds.length > 0) {
         const merged = new Set<string>();
         for (const rootId of folderIds) {
-          const tree = await collectFolderTree({ accessToken, rootFolderId: rootId });
+          if (requestSignal.aborted) throw new Error('Import cancelled');
+          const tree = await collectFolderTree({ accessToken, rootFolderId: rootId, signal: requestSignal });
           tree.forEach((id) => merged.add(id));
         }
         allFolderIds = [...merged];
@@ -459,12 +470,14 @@ export async function POST(request: NextRequest) {
       let nextPageToken: string | null = null;
       let pagesFetched = 0;
       do {
+        if (requestSignal.aborted) throw new Error('Import cancelled');
         const page = await listGoogleDriveAudioFiles({
           accessToken,
           folderId: folderId || undefined,
           allFolderIds,
           limit: maxFiles - localFiles.length,
           pageToken: nextPageToken ?? undefined,
+          signal: requestSignal,
         });
         pagesFetched += 1;
         localFiles.push(...page.files);
@@ -539,6 +552,7 @@ export async function POST(request: NextRequest) {
       files: filteredLocalFiles,
       folderId: folderId || undefined,
       folderName: folderName || undefined,
+      signal: requestSignal,
     });
     logGoogleDriveImport('info', 'local_import_completed', {
       totalBuffered: filteredLocalFiles.length,
@@ -562,6 +576,7 @@ export async function POST(request: NextRequest) {
     let localAlbumArtReused = 0;
     const completedSet = new Set(activeCheckpoint.completedLocalMetadata);
     for (let index = 0; index < filteredLocalFiles.length; index += 1) {
+      if (requestSignal.aborted) throw new Error('Import cancelled');
       const file = filteredLocalFiles[index];
       const fileId = String(file.id ?? '').trim();
       if (!fileId) continue;
@@ -591,7 +606,8 @@ export async function POST(request: NextRequest) {
           name: file.name,
           mimeType: file.mimeType,
           size: file.size,
-        });
+        }, requestSignal);
+        if (requestSignal.aborted) throw new Error('Import cancelled');
         const metadata = await readLocalAudioMetadata(localFile.localPath, localFile.name);
         await updateGoogleDriveTrackLocalMetadata(fileId, {
           title: metadata.title,
@@ -638,6 +654,9 @@ export async function POST(request: NextRequest) {
           reusedAlbumArtSource: reusedArt.albumArtSource ?? null,
         });
       } catch (error) {
+        if (requestSignal.aborted || String((error as Error)?.message ?? '').toLowerCase().includes('cancelled')) {
+          throw error;
+        }
         localMetadataFailed += 1;
         const message = error instanceof Error ? error.message : String(error);
         logGoogleDriveImport('warn', 'local_metadata_failed', {
@@ -687,6 +706,7 @@ export async function POST(request: NextRequest) {
     const artworkRefresh = await reanalyzeImportedArtwork({
       tracks: syncedTracks,
       port: process.env.PORT ?? '3000',
+      signal: requestSignal,
       onProgress: async (entry) => {
         const level = entry.ok ? 'info' : 'warning';
         const context = {
@@ -727,6 +747,7 @@ export async function POST(request: NextRequest) {
       clientId,
       userData,
       tracks: syncedTracks,
+      signal: requestSignal,
     });
     logGoogleDriveImport('info', 'server_import_response', {
       status: uploadResult.status,
@@ -774,6 +795,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.toLowerCase();
+    if (request.signal.aborted || normalized.includes('cancelled')) {
+      return NextResponse.json({ error: 'Import cancelled' }, { status: 499 });
+    }
     logGoogleDriveImport('error', 'failed', {
       error: message,
     });

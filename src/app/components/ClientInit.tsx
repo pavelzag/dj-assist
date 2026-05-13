@@ -305,6 +305,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       deleteFiles?: boolean;
     } = null;
     let googleDriveImportProgressTimer: number | null = null;
+    let googleDriveImportAbortController: AbortController | null = null;
     let autoArtFetchTimer: ReturnType<typeof setTimeout> | null = null;
     let googleSignInPendingAt: number | null = null;
     let googleSignInPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -366,6 +367,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         uiSignature: '',
         metadataActivityTimestamp: '',
       },
+    };
+    const cloudImportAbortControllers: Record<CloudImportProvider, AbortController | null> = {
+      onedrive: null,
+      dropbox: null,
     };
     let scanProgressSourceLabel = 'Local scan';
     let scanCancelInFlight = false;
@@ -1378,10 +1383,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function addMusicStartLabel() {
+      if (scanCancelInFlight || isLocalScanActive() || googleDriveImportBusy || folderSyncBusy || activeCloudImportProvider != null) {
+        return 'Stop Scan';
+      }
       if (scanSourceMode === 'google_drive') return 'Import from Google Drive';
       if (scanSourceMode === 'onedrive') return 'Import from OneDrive';
       if (scanSourceMode === 'dropbox') return 'Import from Dropbox';
-      return activeScanStatus === 'queued' || activeScanStatus === 'running' ? 'Stop Scan' : 'Start Scan';
+      return 'Start Scan';
     }
 
     function isScanActionBusy() {
@@ -1390,6 +1398,67 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function isLocalScanActive() {
       return scanSourceMode === 'local' && (activeScanStatus === 'queued' || activeScanStatus === 'running');
+    }
+
+    function isAbortError(error: unknown) {
+      return Boolean(
+        error && typeof error === 'object'
+          && ('name' in error || 'code' in error)
+          && (
+            String((error as { name?: unknown }).name ?? '') === 'AbortError'
+            || String((error as { code?: unknown }).code ?? '') === 'ABORT_ERR'
+          ),
+      );
+    }
+
+    async function cancelActiveCloudImport(provider: CloudImportProvider) {
+      const controller = cloudImportAbortControllers[provider];
+      if (!controller) return;
+      controller.abort();
+      cloudImportAbortControllers[provider] = null;
+      if (activeCloudImportProvider === provider) {
+        activeCloudImportProvider = null;
+      }
+      stopCloudImportProgressPolling(provider);
+      setScanProgressSource('Local scan');
+      setScanStatus(`${cloudProviderLabel(provider)} import cancelled`, 'error');
+      setScanProgress(0, 0, 'Import cancelled');
+      showToast(`${cloudProviderLabel(provider)} import stopped.`, 'warning');
+      showProgressToast(cloudImportToastKey(provider), `${cloudProviderLabel(provider)} import stopped.`, 'warning', true);
+    }
+
+    async function cancelActiveScanOrImport() {
+      if (scanCancelInFlight) return;
+      if (isLocalScanActive()) {
+        await cancelActiveLocalScan();
+        return;
+      }
+      if (googleDriveImportBusy && googleDriveImportAbortController) {
+        googleDriveImportAbortController.abort();
+        googleDriveImportAbortController = null;
+        stopGoogleDriveImportProgressPolling();
+        googleDriveImportBusy = false;
+        setGoogleDriveImportStatus('Google Drive import cancelled.', 'error');
+        setGoogleDriveImportStageState({
+          stage: 'error',
+          label: 'Import cancelled',
+          detail: 'The Google Drive import was stopped.',
+          current: 0,
+          total: 0,
+          meta: 'The import stopped before completion',
+          busy: false,
+        });
+        setScanStatus('Google Drive import cancelled', 'error');
+        setScanProgress(0, 0, 'Import cancelled');
+        showToast('Google Drive import stopped.', 'warning');
+        showProgressToast('google-drive-import-progress', 'Google Drive import stopped.', 'warning', true);
+        syncAddMusicUi();
+        return;
+      }
+      if (activeCloudImportProvider != null) {
+        await cancelActiveCloudImport(activeCloudImportProvider);
+        return;
+      }
     }
 
     function isGoogleDriveTrackPath(path: string) {
@@ -1427,20 +1496,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function syncAddMusicUi() {
       const chooseLabel = 'Add Music';
       const scanBusy = isScanActionBusy();
+      const canCancelScan = isLocalScanActive() || googleDriveImportBusy || folderSyncBusy || activeCloudImportProvider != null;
       const syncTargets = collectSongsPaneSyncTargets(visibleTracksOrdered());
       const syncSummary = formatSyncTargetsSummary(syncTargets);
       const busyTitle = scanCancelInFlight
         ? 'Stopping the current scan...'
-        : scanSourceMode === 'google_drive'
-        ? 'An import is already running.'
+        : canCancelScan
+        ? 'A scan or import is already running.'
         : '';
       if (quickChooseFolderBtn) quickChooseFolderBtn.textContent = chooseLabel;
       if (quickStartScanBtn) {
         quickStartScanBtn.textContent = addMusicStartLabel();
-        quickStartScanBtn.disabled = scanBusy;
+        quickStartScanBtn.disabled = scanCancelInFlight || (scanBusy && !canCancelScan);
         quickStartScanBtn.title = scanCancelInFlight
           ? busyTitle
-          : (isLocalScanActive() ? 'Stop the current scan.' : '');
+          : canCancelScan
+            ? 'Stop the current scan or import.'
+            : '';
       }
       syncSelectedSourceIndicator();
       for (const id of ['empty-choose-folder-btn', 'list-empty-choose-folder-btn']) {
@@ -1451,10 +1523,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const button = document.getElementById(id) as HTMLButtonElement | null;
         if (button) {
           button.textContent = addMusicStartLabel();
-          button.disabled = scanBusy;
+          button.disabled = scanCancelInFlight || (scanBusy && !canCancelScan);
           button.title = scanCancelInFlight
             ? busyTitle
-          : (isLocalScanActive() ? 'Stop the current scan.' : '');
+            : canCancelScan
+              ? 'Stop the current scan or import.'
+              : '';
         }
       }
       if (syncFoldersBtn) {
@@ -2411,6 +2485,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const scopeLabel = folders.length
         ? folders.map((folder) => folder.name || folder.id).join(', ')
         : `All audio files in ${label}`;
+      const abortController = new AbortController();
+      cloudImportAbortControllers[provider] = abortController;
       try {
         activeCloudImportProvider = provider;
         setCloudImportStageState(provider, {
@@ -2441,9 +2517,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             folderIds,
             folderNames,
           }),
+          signal: abortController.signal,
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (!response.ok) {
+          if (isAbortError(payload)) {
+            throw new Error('Import cancelled');
+          }
           setCloudImportStageState(provider, {
             stage: 'error',
             label: `${label} import failed`,
@@ -2475,6 +2555,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           loadLibraryOverview(),
         ]);
       } catch (error) {
+        if (isAbortError(error) || String((error as Error)?.message ?? '').toLowerCase().includes('cancelled')) {
+          setCloudImportStageState(provider, {
+            stage: 'error',
+            label: 'Import cancelled',
+            detail: `The ${label} import was stopped.`,
+            current: 0,
+            total: 0,
+            meta: 'The import stopped before completion',
+            busy: false,
+          });
+          setCloudImportStatus(provider, `${label} import cancelled.`, 'error');
+          setScanStatus(`${label} import cancelled`, 'error');
+          showToast(`${label} import stopped.`, 'warning');
+          showProgressToast(cloudImportToastKey(provider), `${label} import stopped.`, 'warning', true);
+          return;
+        }
         setCloudImportStageState(provider, {
           stage: 'error',
           label: `${label} import failed`,
@@ -2488,6 +2584,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         setScanStatus(`${label} import failed`, 'error');
         showToast(error instanceof Error ? error.message : String(error), 'error');
       } finally {
+        if (cloudImportAbortControllers[provider] === abortController) {
+          cloudImportAbortControllers[provider] = null;
+        }
         if (cloudImportProgressTimers[provider]) {
           window.setTimeout(() => {
             stopCloudImportProgressPolling(provider);
@@ -2586,6 +2685,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
+      const abortController = new AbortController();
+      googleDriveImportAbortController = abortController;
       const folders = options.folders?.length
         ? options.folders.map((folder) => ({
           id: String(folder.id ?? '').trim(),
@@ -2640,6 +2741,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             folderId: folderIds[0] || undefined,
             folderName: folderNames[0] || undefined,
           }),
+          signal: abortController.signal,
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         appendScanLog(
@@ -2715,6 +2817,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         updateScanDirectoryDisplay();
         syncAddMusicUi();
       } catch (error) {
+        if (isAbortError(error)) {
+          setGoogleDriveImportStatus('Google Drive import cancelled.', 'error');
+          setGoogleDriveImportStageState({
+            stage: 'error',
+            label: 'Import cancelled',
+            detail: 'The Google Drive import was stopped.',
+            current: 0,
+            total: 0,
+            meta: 'The import stopped before completion',
+          });
+          setScanStatus('Google Drive import cancelled', 'error');
+          setScanProgress(0, 0, 'Import cancelled');
+          showToast('Google Drive import stopped.', 'warning');
+          showProgressToast('google-drive-import-progress', 'Google Drive import stopped.', 'warning', true);
+          return;
+        }
         setGoogleDriveImportStageState({
           stage: 'error',
           label: 'Import failed',
@@ -2738,6 +2856,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           { eventType: 'google_drive_import_exception' },
         );
       } finally {
+        if (googleDriveImportAbortController === abortController) {
+          googleDriveImportAbortController = null;
+        }
         googleDriveImportBusy = false;
         setScanProgressSource('Local scan');
         if (googleDriveImportProgressTimer) {
@@ -4485,10 +4606,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function updateDuplicateTrackIdsFromTracks(items: Record<string, unknown>[]) {
       const duplicateGroups = new Map<string, Record<string, unknown>[]>();
+      const normalizedTrackTitle = (track: Record<string, unknown>) => normalizeText(String(track.title ?? ''));
+      const normalizedTrackArtist = (track: Record<string, unknown>) => normalizeText(String(track.artist ?? ''));
+      const normalizedTrackDuration = (track: Record<string, unknown>) => {
+        const duration = Number(track.duration ?? 0);
+        if (!Number.isFinite(duration) || duration <= 0) return '';
+        return String(Math.round(duration / 2));
+      };
       for (const track of items) {
         const key = String(track.spotify_id ?? '').trim()
           || String(track.file_hash ?? '').trim()
-          || `${normalizeText(track.artist)}|${normalizeText(track.title)}|${Math.round(Number(track.duration ?? 0))}`;
+          || [
+            normalizedTrackArtist(track),
+            normalizedTrackTitle(track),
+            normalizedTrackDuration(track),
+          ].join('|');
         if (!key) continue;
         const bucket = duplicateGroups.get(key) ?? [];
         bucket.push(track);
@@ -5643,17 +5775,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (quitAppInFlight) return;
       quitAppInFlight = true;
       try {
-        if (activeScanStatus === 'queued' || activeScanStatus === 'running') {
-          try {
-            await fetch('/api/scan', { method: 'DELETE' });
-            activeScanStatus = 'cancelled';
-            stopStreamingScanJob();
-            setScanStatus('Scan cancelled', 'error');
-            appendScanLog('Scan cancelled because the app is quitting.', 'warning');
-          } catch {
-            // Best effort: continue quitting even if cancellation fails.
-          }
-        }
+        await cancelActiveScanOrImport();
         await adapter.confirmQuit();
       } finally {
         quitAppInFlight = false;
@@ -8979,6 +9101,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         event.preventDefault();
         void submitScanProfileSettings();
       });
+      document.getElementById('scan-profile-mode')?.addEventListener('change', () => {
+        void submitScanProfileSettings();
+      });
       document.getElementById('spotify-save-test-btn')?.addEventListener('click', () => {
         void submitSpotifyCredentials('save');
       });
@@ -9728,8 +9853,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     // ── Scanning ──────────────────────────────────────────────────────────────
     async function triggerScan() {
-      if (isLocalScanActive()) {
-        await cancelActiveLocalScan();
+      if (scanCancelInFlight || isLocalScanActive() || googleDriveImportBusy || folderSyncBusy || activeCloudImportProvider != null) {
+        await cancelActiveScanOrImport();
         return;
       }
       if (scanSourceMode === 'google_drive') {

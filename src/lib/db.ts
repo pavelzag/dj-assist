@@ -1288,6 +1288,7 @@ export async function importGoogleDriveTracks(input: {
   }>;
   folderId?: string;
   folderName?: string;
+  signal?: AbortSignal;
 }): Promise<{ imported: number; updated: number }> {
   const files = input.files.filter((file) => {
     const fileId = String(file.id ?? '').trim();
@@ -1301,6 +1302,9 @@ export async function importGoogleDriveTracks(input: {
   const folderName = String(input.folderName ?? '').trim();
   transaction(() => {
     for (const file of files) {
+      if (input.signal?.aborted) {
+        throw new Error('Import cancelled');
+      }
       const fileId = String(file.id ?? '').trim();
       const path = `gdrive:${fileId}`;
       const derivedTitle = String(file.name ?? '').replace(/\.[^.]+$/, '').trim() || String(file.name ?? '').trim() || fileId;
@@ -1372,6 +1376,7 @@ export async function importCloudTracks(input: {
   }>;
   folderId?: string;
   folderName?: string;
+  signal?: AbortSignal;
 }): Promise<{ imported: number; updated: number }> {
   const files = input.files.filter((file) => {
     const fileId = String(file.id ?? '').trim();
@@ -1388,6 +1393,9 @@ export async function importCloudTracks(input: {
   const pathPrefix = `${input.kind === 'google_drive' ? 'gdrive' : input.kind}`;
   transaction(() => {
     for (const file of files) {
+      if (input.signal?.aborted) {
+        throw new Error('Import cancelled');
+      }
       const fileId = String(file.id ?? '').trim();
       const path = cloudTrackPath(input.kind, fileId);
       const derivedTitle = String(file.name ?? '').replace(/\.[^.]+$/, '').trim() || String(file.name ?? '').trim() || fileId;

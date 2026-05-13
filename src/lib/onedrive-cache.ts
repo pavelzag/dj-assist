@@ -3,7 +3,7 @@ import path from 'node:path';
 import { cloudCacheDirectory, extensionFromMimeType, normalizeCloudAudioFile, safeBasename, temporaryCloudDownloadPath, writeTempFileAndPromote } from '@/lib/cloud-cache';
 import { getOneDriveAccessToken } from '@/lib/runtime-settings';
 
-async function fetchOneDriveFileMetadata(fileId: string, accessToken: string) {
+async function fetchOneDriveFileMetadata(fileId: string, accessToken: string, signal?: AbortSignal) {
   const url = new URL(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(fileId)}`);
   url.searchParams.set('$select', 'id,name,file,size,lastModifiedDateTime');
   const response = await fetch(url, {
@@ -12,7 +12,7 @@ async function fetchOneDriveFileMetadata(fileId: string, accessToken: string) {
       Accept: 'application/json',
     },
     cache: 'no-store',
-    signal: AbortSignal.timeout(30_000),
+    signal: signal ?? AbortSignal.timeout(30_000),
   });
   const raw = await response.text();
   let payload: Record<string, unknown> = {};
@@ -59,6 +59,7 @@ async function prepareOneDriveAudioFile(input: {
 export async function ensureLocalOneDriveTrackFile(
   fileId: string,
   knownMetadata?: { name?: string; mimeType?: string; size?: string | number | null },
+  signal?: AbortSignal,
 ): Promise<{
   localPath: string;
   cached: boolean;
@@ -74,7 +75,7 @@ export async function ensureLocalOneDriveTrackFile(
       modifiedTime: null,
       size: Number(knownMetadata.size ?? 0) || null,
     }
-    : await fetchOneDriveFileMetadata(fileId, accessToken);
+    : await fetchOneDriveFileMetadata(fileId, accessToken, signal);
   const ext = path.extname(metadata.name) || extensionFromMimeType(metadata.mimeType);
   const baseName = path.basename(metadata.name, path.extname(metadata.name) || ext);
   const finalPath = path.join(cloudCacheDirectory('onedrive'), `${fileId}-${safeBasename(baseName)}${ext}`);
@@ -100,7 +101,7 @@ export async function ensureLocalOneDriveTrackFile(
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: 'no-store',
-    signal: AbortSignal.timeout(5 * 60_000),
+    signal: signal ?? AbortSignal.timeout(5 * 60_000),
   });
   if (!response.ok || !response.body) {
     const detail = (await response.text()).slice(0, 300).trim();

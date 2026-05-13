@@ -18,6 +18,10 @@ export type OneDriveFolderEntry = {
 
 const ONEDRIVE_SCAN_CONCURRENCY = 8;
 
+function resolveAbortSignal(signal?: AbortSignal, timeoutMs = 30_000): AbortSignal {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+}
+
 function summarizeOneDriveEntry(item: Record<string, unknown>): Record<string, unknown> {
   return {
     id: String(item.id ?? '').trim() || null,
@@ -51,6 +55,7 @@ async function fetchOneDriveChildrenPage(input: {
   accessToken: string;
   parentId?: string;
   nextLink?: string | null;
+  signal?: AbortSignal;
 }): Promise<{
   items: Array<Record<string, unknown>>;
   nextLink: string | null;
@@ -71,7 +76,7 @@ async function fetchOneDriveChildrenPage(input: {
       Accept: 'application/json',
     },
     cache: 'no-store',
-    signal: AbortSignal.timeout(30_000),
+    signal: resolveAbortSignal(input.signal),
   });
   const raw = await response.text();
   let payload: Record<string, unknown> = {};
@@ -141,6 +146,7 @@ async function collectDescendants(input: {
   accessToken: string;
   rootFolderId?: string;
   limitFolders?: number;
+  signal?: AbortSignal;
 }): Promise<{
   folders: OneDriveFolderEntry[];
   files: OneDriveAudioFile[];
@@ -162,6 +168,7 @@ async function collectDescendants(input: {
           accessToken: input.accessToken,
           parentId: folderId === 'root' ? undefined : folderId,
           nextLink,
+          signal: input.signal,
         });
         allItems.push(...page.items);
         nextLink = page.nextLink;
@@ -200,6 +207,7 @@ export async function listOneDriveFolderChildren(input: {
   parentId?: string;
   search?: string;
   limit?: number;
+  signal?: AbortSignal;
 }): Promise<{
   folders: OneDriveFolderEntry[];
   files: OneDriveAudioFile[];
@@ -215,6 +223,7 @@ export async function listOneDriveFolderChildren(input: {
     const { folders, files } = await collectDescendants({
       accessToken: input.accessToken,
       rootFolderId: input.parentId || undefined,
+      signal: input.signal,
     });
     const filteredFolders = folders.filter((folder) => folder.name.toLowerCase().includes(search));
     const filteredFiles = files.filter((file) => file.name.toLowerCase().includes(search));
@@ -230,6 +239,7 @@ export async function listOneDriveFolderChildren(input: {
   const page = await fetchOneDriveChildrenPage({
     accessToken: input.accessToken,
     parentId: String(input.parentId ?? '').trim() || undefined,
+    signal: input.signal,
   });
   const folders = page.items.map(toFolderEntry).filter((item): item is OneDriveFolderEntry => Boolean(item));
   const files = page.items.map(toAudioFile).filter((item): item is OneDriveAudioFile => Boolean(item));
@@ -255,6 +265,7 @@ export async function listOneDriveAudioFiles(input: {
   search?: string;
   limit: number;
   pageToken?: string;
+  signal?: AbortSignal;
 }): Promise<{
   files: OneDriveAudioFile[];
   nextPageToken: string | null;
@@ -292,6 +303,7 @@ export async function listOneDriveAudioFiles(input: {
     const page = await fetchOneDriveChildrenPage({
       accessToken: input.accessToken,
       parentId: current === 'root' ? undefined : current,
+      signal: input.signal,
     });
     for (const item of page.items) {
       if (isFolderItem(item)) {

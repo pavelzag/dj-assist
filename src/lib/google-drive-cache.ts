@@ -108,7 +108,7 @@ async function prepareGoogleDriveAudioFile(input: {
   }
 }
 
-async function fetchGoogleDriveFileMetadata(fileId: string, accessToken: string) {
+async function fetchGoogleDriveFileMetadata(fileId: string, accessToken: string, signal?: AbortSignal) {
   const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
   url.searchParams.set('fields', 'id,name,mimeType,modifiedTime,md5Checksum,size');
   url.searchParams.set('supportsAllDrives', 'true');
@@ -116,7 +116,7 @@ async function fetchGoogleDriveFileMetadata(fileId: string, accessToken: string)
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: 'no-store',
-    signal: AbortSignal.timeout(30_000),
+    signal: signal ?? AbortSignal.timeout(30_000),
   });
 
   const raw = await response.text();
@@ -138,6 +138,7 @@ async function fetchGoogleDriveFileMetadata(fileId: string, accessToken: string)
 export async function ensureLocalGoogleDriveTrackFile(
   fileId: string,
   knownMetadata?: { name?: string; mimeType?: string; size?: string | number | null },
+  signal?: AbortSignal,
 ): Promise<{
   localPath: string;
   cached: boolean;
@@ -156,7 +157,7 @@ export async function ensureLocalGoogleDriveTrackFile(
         md5Checksum: null,
         size: Number(knownMetadata.size ?? 0) || null,
       }
-    : await fetchGoogleDriveFileMetadata(fileId, accessToken);
+    : await fetchGoogleDriveFileMetadata(fileId, accessToken, signal);
   const ext = path.extname(metadata.name) || extensionFromMimeType(metadata.mimeType);
   const baseName = path.basename(metadata.name, path.extname(metadata.name) || ext);
   const fileName = `${fileId}-${safeBasename(baseName)}${ext}`;
@@ -190,7 +191,7 @@ export async function ensureLocalGoogleDriveTrackFile(
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: 'no-store',
-    signal: AbortSignal.timeout(5 * 60_000),
+    signal: signal ?? AbortSignal.timeout(5 * 60_000),
   });
   if (!response.ok || !response.body) {
     const detail = (await response.text()).slice(0, 300).trim();

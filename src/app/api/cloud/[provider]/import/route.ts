@@ -61,6 +61,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
   }
 
   try {
+    const requestSignal = request.signal;
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const maxFiles = Math.min(Math.max(Math.trunc(Number(body.maxFiles ?? 2000) || 2000), 1), 5000);
     const folderId = String(body.folderId ?? '').trim();
@@ -137,9 +138,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
       authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
     });
+    if (requestSignal.aborted) throw new Error('Import cancelled');
     const filesResponse = provider === 'onedrive'
-      ? await listOneDriveAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles })
-      : await listDropboxAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles });
+      ? await listOneDriveAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles, signal: requestSignal })
+      : await listDropboxAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles, signal: requestSignal });
     const filteredFiles = filesResponse.files;
     if (provider === 'onedrive' || provider === 'dropbox') {
       logCloudImport(provider, 'info', `${provider}_listing_ready`, {
@@ -180,6 +182,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
         });
       }
     }
+    if (requestSignal.aborted) throw new Error('Import cancelled');
     logCloudImport(provider, 'info', 'started', {
       folderId: folderId || null,
       folderName: folderName || null,
@@ -193,6 +196,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       maxFiles,
       fileCount: filteredFiles.length,
     });
+    if (requestSignal.aborted) throw new Error('Import cancelled');
 
     const localImport = await importCloudTracks({
       kind: provider,
@@ -204,6 +208,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       })),
       folderId: folderId || undefined,
       folderName: folderName || undefined,
+      signal: requestSignal,
     });
     await logCloudProgress(provider, 'info', `Imported ${localImport.imported} new tracks and updated ${localImport.updated} existing tracks.`, {
       event: 'local_import_completed',
@@ -216,12 +221,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     let failed = 0;
     let reused = 0;
     for (let index = 0; index < filteredFiles.length; index += 1) {
+      if (requestSignal.aborted) throw new Error('Import cancelled');
       const file = filteredFiles[index];
       const filePath = cloudTrackPath(provider, file.id);
       try {
         const localFile = provider === 'onedrive'
-          ? await ensureLocalOneDriveTrackFile(file.id, file)
-          : await ensureLocalDropboxTrackFile(file.id, file);
+          ? await ensureLocalOneDriveTrackFile(file.id, file, requestSignal)
+          : await ensureLocalDropboxTrackFile(file.id, file, requestSignal);
+        if (requestSignal.aborted) throw new Error('Import cancelled');
         const metadata = await readLocalAudioMetadata(localFile.localPath, localFile.name);
         await updateCloudTrackLocalMetadata(provider, file.id, {
           title: metadata.title,
@@ -311,6 +318,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
         })),
         usage_events: [],
       }),
+      signal: requestSignal,
     });
     const raw = await uploadResponse.text();
     const payload = raw ? JSON.parse(raw) as Record<string, unknown> : {};
@@ -340,6 +348,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       tracks_received: Number(payload.tracks_received ?? 0),
     });
   } catch (error) {
+    if (request.signal.aborted || String((error as Error)?.message ?? '').toLowerCase().includes('cancelled')) {
+      return NextResponse.json({ error: 'Import cancelled' }, { status: 499 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },
       { status: 400 },

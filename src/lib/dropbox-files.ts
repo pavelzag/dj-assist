@@ -55,6 +55,10 @@ function logDropboxFilesEvent(event: string, context: Record<string, unknown>, l
   }).catch(() => {});
 }
 
+function resolveAbortSignal(signal?: AbortSignal, timeoutMs = 30_000): AbortSignal {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+}
+
 function summarizeDropboxEntries(entries: Array<Record<string, unknown>>) {
   const folders = entries.filter(isFolderEntry);
   const files = entries.filter(isFileEntry);
@@ -112,7 +116,7 @@ function normalizeDropboxFolderId(folderId: unknown): string {
   return raw.startsWith('id:') ? raw.slice(3) : raw;
 }
 
-async function dropboxApiPost<T>(accessToken: string, path: string, body: Record<string, unknown>): Promise<T> {
+async function dropboxApiPost<T>(accessToken: string, path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`https://api.dropboxapi.com/2/${path}`, {
     method: 'POST',
     headers: {
@@ -121,7 +125,7 @@ async function dropboxApiPost<T>(accessToken: string, path: string, body: Record
     },
     body: JSON.stringify(body),
     cache: 'no-store',
-    signal: AbortSignal.timeout(30_000),
+    signal: resolveAbortSignal(signal),
   });
   const raw = await response.text();
   if (!response.ok) {
@@ -141,6 +145,7 @@ async function listFolderPage(input: {
   path?: string;
   cursor?: string;
   recursive?: boolean;
+  signal?: AbortSignal;
 }): Promise<{
   entries: Array<Record<string, unknown>>;
   cursor: string | null;
@@ -156,7 +161,7 @@ async function listFolderPage(input: {
       entries: Array<Record<string, unknown>>;
       cursor: string;
       has_more: boolean;
-    }>(input.accessToken, 'files/list_folder/continue', { cursor: input.cursor })
+    }>(input.accessToken, 'files/list_folder/continue', { cursor: input.cursor }, input.signal)
       .then((payload) => ({
         entries: Array.isArray(payload.entries) ? payload.entries : [],
         cursor: String(payload.cursor ?? '').trim() || null,
@@ -181,7 +186,7 @@ async function listFolderPage(input: {
     include_media_info: true,
     include_non_downloadable_files: false,
     limit: 200,
-  });
+  }, input.signal);
   return {
     entries: Array.isArray(payload.entries) ? payload.entries : [],
     cursor: String(payload.cursor ?? '').trim() || null,
@@ -199,6 +204,7 @@ export async function listDropboxFolderChildren(input: {
   parentId?: string;
   search?: string;
   limit?: number;
+  signal?: AbortSignal;
 }): Promise<{
   folders: DropboxFolderEntry[];
   files: DropboxAudioFile[];
@@ -216,6 +222,7 @@ export async function listDropboxFolderChildren(input: {
       folderId: input.parentId,
       search,
       limit: input.limit ?? 1000,
+      signal: input.signal,
     });
     return {
       folders: [],
@@ -227,6 +234,7 @@ export async function listDropboxFolderChildren(input: {
     accessToken: input.accessToken,
     path: folderPathForId(input.parentId),
     recursive: false,
+    signal: input.signal,
   });
   const folders = page.entries.map(toFolderEntry).filter((item): item is DropboxFolderEntry => Boolean(item));
   const files = page.entries.map(toAudioFile).filter((item): item is DropboxAudioFile => Boolean(item));
@@ -251,6 +259,7 @@ export async function listDropboxAudioFiles(input: {
   search?: string;
   limit: number;
   pageToken?: string;
+  signal?: AbortSignal;
 }): Promise<{
   files: DropboxAudioFile[];
   nextPageToken: string | null;
@@ -283,6 +292,7 @@ export async function listDropboxAudioFiles(input: {
     path,
     recursive: true,
     cursor: input.pageToken || undefined,
+    signal: input.signal,
   });
   const parsedFiles = page.entries
     .map(toAudioFile)
@@ -321,11 +331,13 @@ export async function collectDropboxFolderTree(input: {
   accessToken: string;
   rootFolderId: string;
   maxFolders?: number;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const entries = await listDropboxAudioFiles({
     accessToken: input.accessToken,
     folderId: input.rootFolderId,
     limit: Number.POSITIVE_INFINITY,
+    signal: input.signal,
   });
   const folders: string[] = [String(input.rootFolderId ?? '').trim()].filter(Boolean);
   logDropboxFilesEvent('folder_tree_collected', {
