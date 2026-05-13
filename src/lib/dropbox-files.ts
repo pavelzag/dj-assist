@@ -96,7 +96,7 @@ function toAudioFile(entry: Record<string, unknown>): DropboxAudioFile | null {
 function toFolderEntry(entry: Record<string, unknown>): DropboxFolderEntry | null {
   if (!isFolderEntry(entry)) return null;
   const name = String(entry.name ?? '').trim();
-  const id = String(entry.id ?? '').trim();
+  const id = normalizeDropboxFolderId(entry.id);
   if (!name || !id) return null;
   return {
     id,
@@ -104,6 +104,12 @@ function toFolderEntry(entry: Record<string, unknown>): DropboxFolderEntry | nul
     pathLower: String(entry.path_lower ?? '').trim() || null,
     pathDisplay: String(entry.path_display ?? '').trim() || null,
   };
+}
+
+function normalizeDropboxFolderId(folderId: unknown): string {
+  const raw = String(folderId ?? '').trim();
+  if (!raw) return '';
+  return raw.startsWith('id:') ? raw.slice(3) : raw;
 }
 
 async function dropboxApiPost<T>(accessToken: string, path: string, body: Record<string, unknown>): Promise<T> {
@@ -184,7 +190,7 @@ async function listFolderPage(input: {
 }
 
 function folderPathForId(folderId: string | undefined): string {
-  const id = String(folderId ?? '').trim();
+  const id = normalizeDropboxFolderId(folderId);
   return id ? `id:${id}` : '';
 }
 
