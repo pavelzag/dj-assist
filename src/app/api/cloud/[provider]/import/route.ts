@@ -84,21 +84,59 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     if (provider === 'onedrive' || provider === 'dropbox') {
       const scopes = Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [];
       logCloudImport(provider, 'info', `${provider}_auth_ready`, {
+        provider,
         hasAccessToken: Boolean(accessToken),
         hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
         accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
         scopeCount: scopes.length,
         scopes,
+        authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
+        email: accessTokenResult.auth.email ?? null,
+        name: accessTokenResult.auth.name ?? null,
+        emailVerified: accessTokenResult.auth.emailVerified ?? null,
+        hasIdToken: Boolean(accessTokenResult.auth.idToken),
+        hasPicture: Boolean(accessTokenResult.auth.picture),
+        authUpdatedAt: accessTokenResult.auth.updatedAt ?? null,
+        tokenSummary: {
+          accessToken: Boolean(accessToken),
+          refreshToken: Boolean(accessTokenResult.auth.refreshToken),
+          expiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+        },
       });
       await logCloudProgress(provider, 'info', `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} auth resolved for import.`, {
         event: 'auth_ready',
+        provider,
         hasAccessToken: Boolean(accessToken),
         hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
         accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
         scopeCount: scopes.length,
         scopes,
+        authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
+        email: accessTokenResult.auth.email ?? null,
+        name: accessTokenResult.auth.name ?? null,
+        emailVerified: accessTokenResult.auth.emailVerified ?? null,
+        hasIdToken: Boolean(accessTokenResult.auth.idToken),
+        hasPicture: Boolean(accessTokenResult.auth.picture),
+        authUpdatedAt: accessTokenResult.auth.updatedAt ?? null,
+        tokenSummary: {
+          accessToken: Boolean(accessToken),
+          refreshToken: Boolean(accessTokenResult.auth.refreshToken),
+          expiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+        },
       });
     }
+    logCloudImport(provider, 'info', `${provider}_listing_request`, {
+      folderId: folderId || null,
+      folderName: folderName || null,
+      maxFiles,
+      requestedFolderIds: folderIds.length ? folderIds : null,
+      authScopes: Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [],
+      authSource: provider,
+      hasAccessToken: Boolean(accessToken),
+      hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
+      accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+      authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
+    });
     const filesResponse = provider === 'onedrive'
       ? await listOneDriveAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles })
       : await listDropboxAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles });
@@ -111,6 +149,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
         requestedFolderIds: folderIds.length ? folderIds : null,
         fileCount: filteredFiles.length,
         hasNextPage: Boolean(filesResponse.nextPageToken),
+        note: filteredFiles.length === 0
+          ? 'No audio files were returned by the provider listing step.'
+          : 'Audio files were returned by the provider listing step.',
       });
       await logCloudProgress(provider, 'info', `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} listing returned ${filteredFiles.length} audio files.`, {
         event: 'listing_ready',
@@ -120,6 +161,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
         requestedFolderIds: folderIds.length ? folderIds : null,
         fileCount: filteredFiles.length,
         hasNextPage: Boolean(filesResponse.nextPageToken),
+        note: filteredFiles.length === 0
+          ? 'No audio files were returned by the provider listing step.'
+          : 'Audio files were returned by the provider listing step.',
       });
       if (filteredFiles.length === 0) {
         logCloudImport(provider, 'warn', `${provider}_listing_empty`, {
@@ -127,6 +171,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
           folderName: folderName || null,
           maxFiles,
           requestedFolderIds: folderIds.length ? folderIds : null,
+          authScopes: Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [],
+          authSource: provider,
+          hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
           hint: provider === 'dropbox'
             ? 'Dropbox returned no audio files after filtering. Check whether the files are in a visible Dropbox scope, have supported audio extensions, or are inside the selected folder.'
             : 'OneDrive returned no audio files after filtering. Check whether the files are in a visible OneDrive scope, have supported audio extensions, or are inside the selected folder.',

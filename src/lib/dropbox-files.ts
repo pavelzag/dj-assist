@@ -254,6 +254,16 @@ export async function listDropboxAudioFiles(input: {
     .map((folderId) => folderPathForId(folderId))
     .filter(Boolean);
   const path = roots[0] ?? '';
+  logDropboxFilesEvent('list_audio_root_resolution', {
+    folderId: String(input.folderId ?? '').trim() || null,
+    allFolderIds: roots.length ? roots : null,
+    path,
+    rootCount: roots.length,
+    rootMode: roots.length ? 'selected-folder' : 'root',
+    search: search || null,
+    limit: input.limit,
+    pageToken: input.pageToken || null,
+  });
   logDropboxFilesEvent('list_audio_start', {
     folderId: String(input.folderId ?? '').trim() || null,
     allFolderIds: roots.length ? roots : null,
@@ -285,6 +295,15 @@ export async function listDropboxAudioFiles(input: {
     parsedAudioFileCount: parsedFiles.length,
     returnedFileCount: files.length,
     filteredOutBySearch: search ? parsedFiles.length - files.length : 0,
+    returnedSamples: files.slice(0, 10).map((file) => ({
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      pathLower: file.pathLower,
+      pathDisplay: file.pathDisplay,
+      modifiedTime: file.modifiedTime,
+      size: file.size,
+    })),
   });
   return {
     files,

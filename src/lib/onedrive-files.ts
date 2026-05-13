@@ -268,6 +268,15 @@ export async function listOneDriveAudioFiles(input: {
   const visited = new Set<string>();
   const frontier = [...foldersToScan];
 
+  logOneDriveFilesEvent('list_audio_root_resolution', {
+    folderId: String(input.folderId ?? '').trim() || null,
+    allFolderIds: rootIds.length ? rootIds : null,
+    rootCount: rootIds.length,
+    rootMode: rootIds.length ? 'selected-folder' : 'root',
+    search: search || null,
+    limit: input.limit,
+    pageToken: input.pageToken || null,
+  });
   logOneDriveFilesEvent('list_audio_start', {
     folderId: String(input.folderId ?? '').trim() || null,
     allFolderIds: rootIds.length ? rootIds : null,
@@ -296,6 +305,14 @@ export async function listOneDriveAudioFiles(input: {
       files.push(audio);
       if (files.length >= input.limit) break;
     }
+    logOneDriveFilesEvent('list_audio_batch_summary', {
+      folderId: String(input.folderId ?? '').trim() || null,
+      currentFolder: current,
+      visitedFolderCount: visited.size,
+      frontierCount: frontier.length,
+      returnedFileCount: files.length,
+      search: search || null,
+    });
   }
 
   logOneDriveFilesEvent('list_audio_completed', {
@@ -305,6 +322,14 @@ export async function listOneDriveAudioFiles(input: {
     limit: input.limit,
     returnedFileCount: files.length,
     visitedFolderCount: visited.size,
+    samples: files.slice(0, 10).map((file) => ({
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      modifiedTime: file.modifiedTime,
+      size: file.size,
+      parents: file.parents,
+    })),
   });
 
   return {

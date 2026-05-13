@@ -92,117 +92,67 @@ fi
 finish_step
 
 run_number=$(gh run view "$run_id" --json number --jq '.number')
-start_step "Streaming artifacts from workflow #$run_number"
+start_step "Downloading DMG assets from release #$run_number"
 
 dest="$HOME/Downloads/dj-assist/run-$run_number"
 mkdir -p "$dest"
 github_token=$(gh auth token)
 
-typeset -a expected_artifact_prefixes=(
-  "macos-debug-"
-  "macos-free-prod-"
-  "macos-pro-prod-"
-)
-typeset -A downloaded_artifacts=()
-typeset -A artifact_sizes=()
-total_expected_bytes=0
+release_tag=''
 downloaded_bytes=0
+total_expected_bytes=0
 
-download_artifact() {
-  local artifact_name=$1
-  local archive_url=$2
-  local artifact_size=${3:-0}
-  local artifact_dir="${dest}/${artifact_name}"
-  local archive_path="${artifact_dir}/${artifact_name}.zip"
-  local zip_file unzip_dir
+resolve_release_tag() {
+  local tag
+  tag=$(gh api "repos/:owner/:repo/releases" --paginate \
+    | jq -r --arg head_sha "$head_sha" '.[] | select(.target_commitish == $head_sha) | .tag_name' \
+    | head -n 1)
+  printf '%s' "$tag"
+}
 
-  rm -rf "$artifact_dir"
-  mkdir -p "$artifact_dir"
+download_release_asset() {
+  local asset_name=$1
+  local browser_download_url=$2
+  local asset_size=${3:-0}
+  local asset_dir="${dest}/${asset_name}"
+  local asset_path="${asset_dir}/${asset_name}"
+
+  rm -rf "$asset_dir"
+  mkdir -p "$asset_dir"
 
   printf 'Progress: %s / %s downloaded before this artifact\n' \
     "$(format_bytes "$downloaded_bytes")" \
     "$(format_bytes "$total_expected_bytes")"
   curl --fail --location \
     -H "Authorization: Bearer ${github_token}" \
-    -H "Accept: application/vnd.github+json" \
-    -o "$archive_path" \
-    "$archive_url"
+    -H "Accept: application/octet-stream" \
+    -o "$asset_path" \
+    "$browser_download_url"
 
-  while IFS= read -r zip_file; do
-    unzip_dir="${zip_file%.zip}"
-    rm -rf "$unzip_dir"
-    mkdir -p "$unzip_dir"
-    unzip -o "$zip_file" -d "$unzip_dir" >/dev/null
-    rm -f "$zip_file"
-  done < <(find "$artifact_dir" -type f -name '*.zip' -print)
-
-  downloaded_bytes=$(( downloaded_bytes + artifact_size ))
+  downloaded_bytes=$(( downloaded_bytes + asset_size ))
   printf 'Completed %s (%s). Overall: %s / %s\n' \
-    "$artifact_name" \
-    "$(format_bytes "$artifact_size")" \
+    "$asset_name" \
+    "$(format_bytes "$asset_size")" \
     "$(format_bytes "$downloaded_bytes")" \
     "$(format_bytes "$total_expected_bytes")"
 }
 
-all_expected_artifacts_downloaded() {
-  local prefix
-  for prefix in "${expected_artifact_prefixes[@]}"; do
-    [[ -n "${downloaded_artifacts[$prefix]:-}" ]] || return 1
-  done
-  return 0
-}
-
 run_finished=false
 run_conclusion=""
-post_completion_polls=0
-max_post_completion_polls=18
 
 for _ in {1..360}; do
-  artifact_json=$(gh api "repos/:owner/:repo/actions/runs/${run_id}/artifacts" --paginate || true)
-  if [[ -n "$artifact_json" ]]; then
-    while IFS=$'\t' read -r artifact_name archive_url artifact_size; do
-      [[ -n "$artifact_name" ]] || continue
-      for prefix in "${expected_artifact_prefixes[@]}"; do
-        if [[ "$artifact_name" == ${prefix}* && -z "${artifact_sizes[$prefix]:-}" ]]; then
-          artifact_sizes[$prefix]="$artifact_size"
-          total_expected_bytes=$(( total_expected_bytes + artifact_size ))
-        fi
-        if [[ "$artifact_name" == ${prefix}* && -z "${downloaded_artifacts[$prefix]:-}" ]]; then
-          printf 'Downloading %s\n' "$artifact_name"
-          download_artifact "$artifact_name" "$archive_url" "$artifact_size"
-          downloaded_artifacts[$prefix]="$artifact_name"
-          break
-        fi
-      done
-    done <<< "$(printf '%s' "$artifact_json" | jq -r '.artifacts[] | [.name, .archive_download_url, (.size_in_bytes // 0)] | @tsv')"
-  fi
-
-  if all_expected_artifacts_downloaded; then
-    break
-  fi
-
   run_status=$(gh run view "$run_id" --json status --jq '.status')
   if [[ "$run_status" == "completed" ]]; then
     run_finished=true
     run_conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion')
-    post_completion_polls=$(( post_completion_polls + 1 ))
-    if [[ "$post_completion_polls" -ge "$max_post_completion_polls" ]]; then
+    release_tag=$(resolve_release_tag)
+    if [[ -n "$release_tag" ]]; then
       break
     fi
   fi
 
   sleep 10
 done
-
-if ! all_expected_artifacts_downloaded; then
-  if [[ "$run_finished" == true ]]; then
-    GH_PAGER=cat gh run view "$run_id" --log
-    echo "Workflow #$run_number finished with conclusion '${run_conclusion}', but not all macOS artifacts were downloaded." >&2
-  else
-    echo "Timed out waiting for all macOS artifacts from workflow #$run_number." >&2
-  fi
-  exit 1
-fi
 
 if [[ "$run_finished" != true ]]; then
   run_status=$(gh run view "$run_id" --json status --jq '.status')
@@ -212,11 +162,42 @@ if [[ "$run_finished" != true ]]; then
   fi
 fi
 
-if [[ "$run_finished" == true && "$run_conclusion" != "success" ]]; then
-  GH_PAGER=cat gh run view "$run_id" --log
-  echo "Workflow #$run_number completed with conclusion '${run_conclusion}' after artifacts were downloaded." >&2
+if [[ "$run_finished" != true ]]; then
+  echo "Timed out waiting for workflow #$run_number to complete." >&2
   exit 1
 fi
+
+if [[ "$run_conclusion" != "success" ]]; then
+  GH_PAGER=cat gh run view "$run_id" --log
+  echo "Workflow #$run_number completed with conclusion '${run_conclusion}'." >&2
+  exit 1
+fi
+
+if [[ -z "$release_tag" ]]; then
+  release_tag=$(resolve_release_tag)
+fi
+
+if [[ -z "$release_tag" ]]; then
+  echo "Could not resolve the release tag for workflow #$run_number." >&2
+  exit 1
+fi
+
+asset_json=$(gh release view "$release_tag" --json assets --jq '.assets[] | select(.name | endswith(".dmg")) | [.name, .browser_download_url, (.size // 0)] | @tsv' || true)
+if [[ -z "$asset_json" ]]; then
+  echo "No DMG release assets were found for tag $release_tag." >&2
+  exit 1
+fi
+
+while IFS=$'\t' read -r asset_name browser_download_url asset_size; do
+  [[ -n "$asset_name" ]] || continue
+  total_expected_bytes=$(( total_expected_bytes + asset_size ))
+done <<< "$asset_json"
+
+while IFS=$'\t' read -r asset_name browser_download_url asset_size; do
+  [[ -n "$asset_name" ]] || continue
+  printf 'Downloading %s\n' "$asset_name"
+  download_release_asset "$asset_name" "$browser_download_url" "$asset_size"
+done <<< "$asset_json"
 
 echo "Artifacts downloaded to: $dest"
 finish_step

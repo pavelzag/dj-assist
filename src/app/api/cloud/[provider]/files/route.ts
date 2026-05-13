@@ -4,6 +4,8 @@ import { normalizeCloudSourceKind } from '@/lib/cloud-source';
 import { getOneDriveAccessToken, getDropboxAccessToken } from '@/lib/runtime-settings';
 import { listOneDriveAudioFiles } from '@/lib/onedrive-files';
 import { listDropboxAudioFiles } from '@/lib/dropbox-files';
+import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
+import { maskValue } from '@/lib/auth-log';
 
 export const runtime = 'nodejs';
 
@@ -25,9 +27,50 @@ export async function GET(
     const pageToken = String(searchParams.get('pageToken') ?? '').trim();
     const folderId = String(searchParams.get('folderId') ?? '').trim();
     const search = String(searchParams.get('search') ?? '').trim();
-    const accessToken = provider === 'onedrive'
-      ? (await getOneDriveAccessToken()).accessToken
-      : (await getDropboxAccessToken()).accessToken;
+    const accessTokenResult = provider === 'onedrive'
+      ? await getOneDriveAccessToken()
+      : await getDropboxAccessToken();
+    const accessToken = accessTokenResult.accessToken;
+    const scopes = Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [];
+    const authSummary = {
+      provider,
+      hasAccessToken: Boolean(accessToken),
+      hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
+      accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+      scopeCount: scopes.length,
+      scopes,
+      authIdMasked: maskValue(accessTokenResult.auth.id),
+      email: accessTokenResult.auth.email ?? null,
+      name: accessTokenResult.auth.name ?? null,
+      emailVerified: accessTokenResult.auth.emailVerified ?? null,
+      authUpdatedAt: accessTokenResult.auth.updatedAt ?? null,
+      folderId: folderId || null,
+      search: search || null,
+      limit,
+      pageToken: pageToken || null,
+    };
+    void logServerEvent({
+      level: 'info',
+      category: 'cloud-file-list',
+      message: `[cloud-file-list:${provider}] ${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        event: 'audio_files_request',
+        ...authSummary,
+      })}`,
+      context: {
+        event: 'audio_files_request',
+        ...authSummary,
+      },
+      alsoConsole: true,
+    }).catch(() => {});
+    await appendClientDiagnosticLog({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'renderer',
+      category: `cloud-file-list-${provider}`,
+      message: `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} file request queued.`,
+      context: authSummary,
+    }).catch(() => {});
     const payload = provider === 'onedrive'
       ? await listOneDriveAudioFiles({
         accessToken,
