@@ -1446,7 +1446,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           current: 0,
           total: 0,
           meta: 'The import stopped before completion',
-          busy: false,
         });
         setScanStatus('Google Drive import cancelled', 'error');
         setScanProgress(0, 0, 'Import cancelled');
