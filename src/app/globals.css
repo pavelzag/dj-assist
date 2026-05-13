@@ -1135,6 +1135,12 @@ main {
 .library-grid > * {
   min-width: 0;
 }
+.collection-tools {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
 .library-card {
   display: grid;
   gap: 10px;

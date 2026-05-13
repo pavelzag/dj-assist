@@ -40,7 +40,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const keyFilterEl = document.getElementById('key-filter') as HTMLInputElement;
     const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement | null;
     const showPendingGoogleDriveImportsEl = document.getElementById('show-pending-google-drive-imports') as HTMLInputElement | null;
-    const hideDuplicateCopiesEl = document.getElementById('hide-duplicate-copies') as HTMLInputElement | null;
+    let hideDuplicateCopiesEl = document.getElementById('hide-duplicate-copies') as HTMLInputElement | null;
     const hideUnknownArtistsEl = document.getElementById('hide-unknown-artists') as HTMLInputElement;
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement | null;
     const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
@@ -2350,6 +2350,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function cloudProviderConfigured(provider: 'onedrive' | 'dropbox') {
       const summary = cloudProviderRuntimeSummary(provider);
       return Boolean(summary?.configured);
+    }
+
+    function syncHideDuplicateCopiesControl() {
+      hideDuplicateCopiesEl = document.getElementById('hide-duplicate-copies') as HTMLInputElement | null;
+      if (hideDuplicateCopiesEl) hideDuplicateCopiesEl.checked = Boolean(preferences.hideDuplicateCopies);
     }
 
     async function startCloudSignIn(provider: 'onedrive' | 'dropbox') {
@@ -8493,7 +8498,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function renderLibraryPanel() {
       if (!libraryOverview) {
-        libraryPanel.innerHTML = '<div class="empty">Loading collection tools…</div>';
+        libraryPanel.innerHTML = `
+          <div class="collection-tools">
+            <label class="preference-row collection-toggle">
+              <input id="hide-duplicate-copies" type="checkbox" ${preferences.hideDuplicateCopies ? 'checked' : ''} />
+              <span>Hide duplicate copies</span>
+            </label>
+          </div>
+          <div class="empty">Loading collection tools…</div>
+        `;
+        syncHideDuplicateCopiesControl();
         return;
       }
 
@@ -8513,6 +8527,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const accountEntitlementChips = serverEntitlements.size
         ? [...serverEntitlements].sort().map((capability) => `<span class="chip subtle">${esc(formatCapabilityLabel(capability))}</span>`).join('')
         : '';
+      const collectionToolsMarkup = `
+        <div class="collection-tools">
+          <label class="preference-row collection-toggle">
+            <input id="hide-duplicate-copies" type="checkbox" ${preferences.hideDuplicateCopies ? 'checked' : ''} />
+            <span>Hide duplicate copies</span>
+          </label>
+        </div>
+      `;
       const googleDriveCardMarkup = hasProFeatures ? `
           <section class="library-card">
             <div class="scan-log-head"><strong>Google Drive Import</strong></div>
@@ -8699,6 +8721,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       libraryPanel.innerHTML = `
         <div class="library-grid">
+          ${collectionToolsMarkup}
           ${googleAuthUiEnabled ? `
             <section class="library-card">
               <div class="scan-log-head"><strong>Account Status</strong></div>
@@ -8845,6 +8868,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           </section>` : ''}
         </div>
       `;
+      syncHideDuplicateCopiesControl();
 
       libraryPanel.querySelectorAll('.smart-crate-btn[data-query]').forEach((button) => {
         button.addEventListener('click', () => {
@@ -10361,9 +10385,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderList(tracks);
       ensureActiveTrackSelection();
     });
-    hideDuplicateCopiesEl?.addEventListener('change', () => {
-      preferences.hideDuplicateCopies = hideDuplicateCopiesEl.checked;
+    libraryPanel.addEventListener('change', (event) => {
+      const target = event.target as HTMLInputElement | null;
+      if (!target || target.id !== 'hide-duplicate-copies') return;
+      preferences.hideDuplicateCopies = target.checked;
       savePreferences();
+      syncHideDuplicateCopiesControl();
       renderList(tracks);
       ensureActiveTrackSelection();
       if (selectedDetailTrackId != null) {
@@ -10411,7 +10438,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (savedDirectory) scanDirectoryEl.value = savedDirectory;
       updateScanDirectoryDisplay();
       syncAddMusicUi();
-      if (hideDuplicateCopiesEl) hideDuplicateCopiesEl.checked = preferences.hideDuplicateCopies;
+      syncHideDuplicateCopiesControl();
       const savedNewTrackIds = JSON.parse(localStorage.getItem(recentNewTrackIdsKey) || '[]');
       if (Array.isArray(savedNewTrackIds)) {
         recentNewTrackIds = new Set(savedNewTrackIds.map((value) => Number(value)).filter((id) => Number.isFinite(id)));
@@ -10421,7 +10448,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       updateScanDirectoryDisplay();
       syncAddMusicUi();
       preferences = { ...defaultPreferences };
-      if (hideDuplicateCopiesEl) hideDuplicateCopiesEl.checked = preferences.hideDuplicateCopies;
+      syncHideDuplicateCopiesControl();
       setListDensity(preferences.defaultListDensity);
     }
     document.getElementById('empty-choose-folder-btn')?.addEventListener('click', () => {
