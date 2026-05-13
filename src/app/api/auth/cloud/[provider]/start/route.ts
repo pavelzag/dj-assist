@@ -5,6 +5,7 @@ import {
   createLoopbackRedirectUri,
   createPkceChallenge,
 } from '@/lib/desktop-oauth';
+import { appendAuthLog, createAuthDiagnosticId, maskValue } from '@/lib/auth-log';
 import { normalizeCloudSourceKind, type CloudSourceKind } from '@/lib/cloud-source';
 import {
   applyDropboxOauthCredentialsToEnv,
@@ -43,6 +44,7 @@ export async function GET(
     return NextResponse.json({ error: `Unsupported cloud provider: ${rawProvider}` }, { status: 404 });
   }
 
+  const diagnosticId = createAuthDiagnosticId();
   const oauth = provider === 'onedrive'
     ? await effectiveOneDriveOauthCredentials()
     : await effectiveDropboxOauthCredentials();
@@ -52,6 +54,18 @@ export async function GET(
   const clientId = String(oauth.credentials?.clientId ?? '').trim();
   const clientSecret = String(oauth.credentials?.clientSecret ?? '').trim();
   if (!clientId) {
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'error',
+      event: `${provider}_oauth_not_configured`,
+      message: `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} sign-in is not configured.`,
+      context: {
+        provider,
+        oauth_source: oauth.summary.source,
+        configured: oauth.summary.configured,
+        missing: oauth.summary.missing,
+      },
+    });
     return NextResponse.json({ error: `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} sign-in is not configured.` }, { status: 400 });
   }
 
@@ -92,6 +106,26 @@ export async function GET(
   activeSession = session;
   redirectUri = session.redirectUri;
 
+  const scopes = provider === 'onedrive'
+    ? ['openid', 'profile', 'email', 'offline_access', 'User.Read', 'Files.Read']
+    : ['openid', 'profile', 'email', 'files.metadata.read', 'files.content.read'];
+  await appendAuthLog({
+    id: diagnosticId,
+    level: 'info',
+    event: `${provider}_oauth_start`,
+    message: `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} sign-in started.`,
+    context: {
+      provider,
+      client_id_masked: maskValue(clientId),
+      has_client_secret: Boolean(clientSecret),
+      redirect_uri: session.redirectUri,
+      scopes,
+      pkce: true,
+      oauth_source: oauth.summary.source,
+      configured: oauth.summary.configured,
+    },
+  });
+
   await savePendingCloudAuthSession(provider, {
     state: authState.state,
     verifier: authState.verifier,
@@ -111,6 +145,21 @@ export async function GET(
       state: authState.state,
       challenge,
     });
+
+  await appendAuthLog({
+    id: diagnosticId,
+    level: 'info',
+    event: `${provider}_oauth_authorize_url_ready`,
+    message: `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} authorize URL ready.`,
+    context: {
+      provider,
+      redirect_uri: session.redirectUri,
+      authorize_host: authUrl.host,
+      path: authUrl.pathname,
+      scopes,
+      token_access_type: provider === 'dropbox' ? 'offline' : undefined,
+    },
+  });
 
   return NextResponse.redirect(authUrl, { headers: { 'Cache-Control': 'no-store' } });
 }
@@ -132,18 +181,66 @@ async function handleLoopbackCallback(
     const code = requestUrl.searchParams.get('code') ?? '';
     const state = requestUrl.searchParams.get('state') ?? '';
     const error = requestUrl.searchParams.get('error') ?? '';
+    const diagnosticId = createAuthDiagnosticId();
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'info',
+      event: `${input.provider}_oauth_callback_received`,
+      message: `${input.provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} callback received.`,
+      context: {
+        provider: input.provider,
+        has_code: Boolean(code),
+        state_matches: state === input.authState.state,
+        error: error || null,
+        redirect_uri: input.redirectUri,
+      },
+    });
     if (error) {
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'error',
+        event: `${input.provider}_oauth_provider_error`,
+        message: `${input.provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} returned an OAuth error.`,
+        context: {
+          provider: input.provider,
+          error,
+          redirect_uri: input.redirectUri,
+        },
+      });
       await clearPendingCloudAuthSession(input.provider);
       sendHtml(res, `<h1>Sign-in cancelled</h1><p>${escapeHtml(error)}</p>`);
       return;
     }
     if (!code || state !== input.authState.state) {
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'error',
+        event: `${input.provider}_oauth_state_verification_failed`,
+        message: `${input.provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} OAuth state verification failed.`,
+        context: {
+          provider: input.provider,
+          has_code: Boolean(code),
+          state_matches: state === input.authState.state,
+          redirect_uri: input.redirectUri,
+        },
+      });
       await clearPendingCloudAuthSession(input.provider);
       sendHtml(res, '<h1>Sign-in failed</h1><p>OAuth state verification failed.</p>');
       return;
     }
 
     if (input.provider === 'onedrive') {
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'info',
+        event: 'onedrive_oauth_token_exchange_start',
+        message: 'Starting OneDrive token exchange.',
+        context: {
+          provider: input.provider,
+          redirect_uri: input.redirectUri,
+          has_client_secret: Boolean(input.clientSecret),
+        },
+      });
       const tokens = await exchangeOneDriveAuthCode({
         clientId: input.clientId,
         clientSecret: input.clientSecret,
@@ -151,7 +248,31 @@ async function handleLoopbackCallback(
         verifier: input.authState.verifier,
         redirectUri: input.redirectUri,
       });
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'info',
+        event: 'onedrive_oauth_token_exchange_done',
+        message: 'OneDrive token exchange completed.',
+        context: {
+          provider: input.provider,
+          has_refresh_token: Boolean(tokens.refreshToken),
+          has_id_token: Boolean(tokens.idToken),
+          expires_in: tokens.expiresIn ?? null,
+        },
+      });
       const profile = await fetchOneDriveProfile(String(tokens.accessToken ?? '').trim());
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'info',
+        event: 'onedrive_oauth_profile_loaded',
+        message: 'OneDrive profile loaded.',
+        context: {
+          provider: input.provider,
+          account_id: maskValue(profile.id),
+          email: profile.email ?? null,
+          name: profile.name ?? null,
+        },
+      });
       await saveOneDriveAuth({
         id: profile.id,
         email: profile.email,
@@ -163,6 +284,17 @@ async function handleLoopbackCallback(
         scopes: String(tokens.scope ?? '').split(/\s+/).map((scope) => scope.trim()).filter(Boolean),
       });
     } else {
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'info',
+        event: 'dropbox_oauth_token_exchange_start',
+        message: 'Starting Dropbox token exchange.',
+        context: {
+          provider: input.provider,
+          redirect_uri: input.redirectUri,
+          has_client_secret: Boolean(input.clientSecret),
+        },
+      });
       const tokens = await exchangeDropboxAuthCode({
         clientId: input.clientId,
         clientSecret: input.clientSecret,
@@ -170,7 +302,31 @@ async function handleLoopbackCallback(
         verifier: input.authState.verifier,
         redirectUri: input.redirectUri,
       });
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'info',
+        event: 'dropbox_oauth_token_exchange_done',
+        message: 'Dropbox token exchange completed.',
+        context: {
+          provider: input.provider,
+          has_refresh_token: Boolean(tokens.refreshToken),
+          has_id_token: Boolean(tokens.idToken),
+          expires_in: tokens.expiresIn ?? null,
+        },
+      });
       const profile = await fetchDropboxProfile(String(tokens.accessToken ?? '').trim());
+      await appendAuthLog({
+        id: diagnosticId,
+        level: 'info',
+        event: 'dropbox_oauth_profile_loaded',
+        message: 'Dropbox profile loaded.',
+        context: {
+          provider: input.provider,
+          account_id: maskValue(profile.id),
+          email: profile.email ?? null,
+          name: profile.name ?? null,
+        },
+      });
       await saveDropboxAuth({
         id: profile.id,
         email: profile.email,
@@ -183,8 +339,28 @@ async function handleLoopbackCallback(
       });
     }
     await clearPendingCloudAuthSession(input.provider);
+    await appendAuthLog({
+      id: diagnosticId,
+      level: 'info',
+      event: `${input.provider}_oauth_success`,
+      message: `${input.provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} sign-in completed.`,
+      context: {
+        provider: input.provider,
+      },
+    });
     sendHtml(res, '<h1>Connected</h1><p>You can return to DJ Assist.</p>');
   } catch (error) {
+    await appendAuthLog({
+      id: createAuthDiagnosticId(),
+      level: 'error',
+      event: `${input.provider}_oauth_failed`,
+      message: `${input.provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} sign-in failed.`,
+      context: {
+        provider: input.provider,
+        error: error instanceof Error ? error.message : String(error),
+        redirect_uri: input.redirectUri,
+      },
+    });
     await clearPendingCloudAuthSession(input.provider);
     sendHtml(res, `<h1>Sign-in failed</h1><p>${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`);
   }

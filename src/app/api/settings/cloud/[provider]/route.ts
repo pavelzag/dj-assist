@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { appendAuthLog, maskValue } from '@/lib/auth-log';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
 import {
   applyDropboxOauthCredentialsToEnv,
@@ -65,10 +66,34 @@ export async function POST(
     await saveOneDriveOauthSettings(credentials);
     applyOneDriveOauthCredentialsToEnv(credentials);
     const oauth = await effectiveOneDriveOauthCredentials();
+    await appendAuthLog({
+      level: 'info',
+      event: 'onedrive_oauth_settings_saved',
+      message: 'OneDrive OAuth settings saved.',
+      context: {
+        provider,
+        client_id_masked: maskValue(clientId),
+        has_client_secret: Boolean(clientSecret),
+        configured: oauth.summary.configured,
+        source: oauth.summary.source,
+      },
+    });
     return NextResponse.json({ ok: true, provider, oauth: oauth.summary });
   }
   await saveDropboxOauthSettings(credentials);
   applyDropboxOauthCredentialsToEnv(credentials);
   const oauth = await effectiveDropboxOauthCredentials();
+  await appendAuthLog({
+    level: 'info',
+    event: 'dropbox_oauth_settings_saved',
+    message: 'Dropbox OAuth settings saved.',
+    context: {
+      provider,
+      client_id_masked: maskValue(clientId),
+      has_client_secret: Boolean(clientSecret),
+      configured: oauth.summary.configured,
+      source: oauth.summary.source,
+    },
+  });
   return NextResponse.json({ ok: true, provider, oauth: oauth.summary });
 }

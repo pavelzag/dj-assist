@@ -21,6 +21,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     };
     type ScanSourceMode = 'local' | 'google_drive';
     type GoogleDriveImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
+    type CloudImportProvider = 'onedrive' | 'dropbox';
+    type CloudImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
     type ArtworkAnalysisState = 'idle' | 'running' | 'success' | 'error';
 
     // ── DOM refs ──────────────────────────────────────────────────────────────
@@ -288,6 +290,52 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportStatusState: 'idle' | 'saving' | 'success' | 'error' = 'idle';
     let googleDriveImportFailedCount = 0;
     let googleDriveImportMetadataActivityTimestamp = '';
+    const cloudImportState: Record<CloudImportProvider, {
+      stage: CloudImportStage;
+      label: string;
+      detail: string;
+      current: number;
+      total: number;
+      meta: string;
+      busy: boolean;
+      statusMessage: string;
+      statusState: 'idle' | 'saving' | 'success' | 'error';
+      scopeLabel: string;
+      toastSignature: string;
+      uiSignature: string;
+      metadataActivityTimestamp: string;
+    }> = {
+      onedrive: {
+        stage: 'idle',
+        label: 'Ready to import',
+        detail: 'Sign in and choose a OneDrive source.',
+        current: 0,
+        total: 0,
+        meta: 'No import running',
+        busy: false,
+        statusMessage: 'Ready to import.',
+        statusState: 'idle',
+        scopeLabel: 'All audio files in OneDrive',
+        toastSignature: '',
+        uiSignature: '',
+        metadataActivityTimestamp: '',
+      },
+      dropbox: {
+        stage: 'idle',
+        label: 'Ready to import',
+        detail: 'Sign in and choose a Dropbox source.',
+        current: 0,
+        total: 0,
+        meta: 'No import running',
+        busy: false,
+        statusMessage: 'Ready to import.',
+        statusState: 'idle',
+        scopeLabel: 'All audio files in Dropbox',
+        toastSignature: '',
+        uiSignature: '',
+        metadataActivityTimestamp: '',
+      },
+    };
     let scanProgressSourceLabel = 'Local scan';
     let scanCancelInFlight = false;
     let serverAccountSession: Record<string, unknown> | null = null;
@@ -314,6 +362,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let pendingDeleteSource: 'single' | 'bulk' = 'single';
     let lastDeleteShortcutAt = 0;
     const deleteShortcutDoubleTapMs = 500;
+    const cloudImportProgressTimers: Partial<Record<CloudImportProvider, number>> = {};
+    let activeCloudImportProvider: CloudImportProvider | null = null;
     let includeUnknownArtistsInNextTracks = false;
     let nextTracksIntent: 'safe' | 'up' | 'down' | 'same' = 'safe';
     const trackMultipliers: Record<number, number> = {};
@@ -645,6 +695,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (preferences.scanProgressToasts) return;
       removeToastByKey('local-scan-progress');
       removeToastByKey('google-drive-import-progress');
+      removeToastByKey('onedrive-import-progress');
+      removeToastByKey('dropbox-import-progress');
       removeToastByKey('artwork-analysis-progress');
     }
 
@@ -653,7 +705,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function showProgressToast(
-      toastKey: 'local-scan-progress' | 'google-drive-import-progress' | 'artwork-analysis-progress',
+      toastKey: 'local-scan-progress' | 'google-drive-import-progress' | 'onedrive-import-progress' | 'dropbox-import-progress' | 'artwork-analysis-progress',
       message: string,
       tone: 'info' | 'success' | 'warning' | 'error' = 'info',
       done = false,
@@ -1419,6 +1471,262 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
+    function cloudImportToastKey(provider: CloudImportProvider) {
+      return provider === 'onedrive' ? 'onedrive-import-progress' : 'dropbox-import-progress';
+    }
+
+    function setCloudImportStatus(provider: CloudImportProvider, message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const next = cloudImportState[provider];
+      next.statusMessage = message;
+      next.statusState = state;
+      const statusEl = document.getElementById(`${provider}-oauth-status`) as HTMLElement | null;
+      if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.dataset.state = state;
+      }
+      if (activeCloudImportProvider === provider || cloudImportProgressTimers[provider] != null) {
+        syncCloudImportProgressUi(provider);
+      }
+    }
+
+    function setCloudImportStageState(provider: CloudImportProvider, input: {
+      stage: CloudImportStage;
+      label: string;
+      detail: string;
+      current?: number;
+      total?: number;
+      meta?: string;
+      scopeLabel?: string;
+      busy?: boolean;
+    }) {
+      const state = cloudImportState[provider];
+      state.stage = input.stage;
+      state.label = input.label;
+      state.detail = input.detail;
+      state.current = Math.max(0, Number(input.current ?? state.current) || 0);
+      state.total = Math.max(0, Number(input.total ?? state.total) || 0);
+      state.meta = input.meta ?? state.meta;
+      state.scopeLabel = input.scopeLabel ?? state.scopeLabel;
+      state.busy = input.busy ?? (input.stage !== 'idle' && input.stage !== 'complete' && input.stage !== 'error');
+      syncCloudImportProgressUi(provider);
+    }
+
+    function resetCloudImportStageState(provider: CloudImportProvider) {
+      const state = cloudImportState[provider];
+      state.stage = 'idle';
+      state.label = 'Ready to import';
+      state.detail = provider === 'onedrive'
+        ? 'Sign in and choose a OneDrive source.'
+        : 'Sign in and choose a Dropbox source.';
+      state.current = 0;
+      state.total = 0;
+      state.meta = 'No import running';
+      state.busy = false;
+      state.scopeLabel = provider === 'onedrive' ? 'All audio files in OneDrive' : 'All audio files in Dropbox';
+      state.statusMessage = 'Ready to import.';
+      state.statusState = 'idle';
+      state.toastSignature = '';
+      state.uiSignature = '';
+      state.metadataActivityTimestamp = '';
+      syncCloudImportProgressUi(provider);
+    }
+
+    function syncCloudImportProgressUi(provider: CloudImportProvider) {
+      const state = cloudImportState[provider];
+      const active = activeCloudImportProvider === provider || cloudImportProgressTimers[provider] != null;
+      const progressCardEl = document.getElementById(`${provider}-import-progress-card`) as HTMLElement | null;
+      const labelEl = document.getElementById(`${provider}-import-stage-label`) as HTMLElement | null;
+      const detailEl = document.getElementById(`${provider}-import-stage-detail`) as HTMLElement | null;
+      const metaEl = document.getElementById(`${provider}-import-stage-meta`) as HTMLElement | null;
+      const barEl = document.getElementById(`${provider}-import-stage-bar`) as HTMLElement | null;
+      const countEl = document.getElementById(`${provider}-import-stage-count`) as HTMLElement | null;
+      const scopeEl = document.getElementById(`${provider}-import-stage-scope`) as HTMLElement | null;
+      const modeEl = document.getElementById(`${provider}-import-stage-mode`) as HTMLElement | null;
+      const stageBadgeEl = document.getElementById(`${provider}-import-stage-badge`) as HTMLElement | null;
+      const progress = state.total > 0
+        ? Math.min(100, (state.current / Math.max(1, state.total)) * 100)
+        : state.busy
+          ? 100
+          : 0;
+      if (progressCardEl) {
+        progressCardEl.dataset.state = state.stage;
+        progressCardEl.hidden = state.stage === 'idle' && !state.busy;
+      }
+      if (labelEl) labelEl.textContent = state.label;
+      if (detailEl) detailEl.textContent = state.detail;
+      if (metaEl) metaEl.textContent = state.meta;
+      if (scopeEl) scopeEl.textContent = state.scopeLabel;
+      if (modeEl) {
+        modeEl.textContent = state.total > 0
+          ? 'Measured progress'
+          : state.busy
+            ? 'Stage progress'
+            : 'Waiting';
+      }
+      if (stageBadgeEl) stageBadgeEl.textContent = state.label;
+      if (countEl) {
+        countEl.textContent = state.total > 0
+          ? `${state.current} / ${state.total}`
+          : state.busy
+            ? 'Working…'
+            : '--';
+      }
+      if (barEl) {
+        barEl.style.width = `${progress}%`;
+        barEl.dataset.indeterminate = state.total > 0 ? 'false' : (state.busy ? 'true' : 'false');
+      }
+      if (active && activeCloudImportProvider === provider) {
+        setScanProgressSource(`${cloudProviderLabel(provider)} import`);
+        setScanStatus(state.statusMessage, state.statusState === 'saving' ? 'running' : state.statusState);
+        setScanProgress(state.current, state.total, state.scopeLabel);
+      }
+    }
+
+    function isCloudImportToastEvent(provider: CloudImportProvider, event: string) {
+      if (provider === 'onedrive') {
+        return ['started', 'local_import_completed', 'progress', 'local_metadata_failed', 'completed'].includes(event);
+      }
+      return ['started', 'local_import_completed', 'progress', 'local_metadata_failed', 'completed'].includes(event);
+    }
+
+    async function pollCloudImportProgress(provider: CloudImportProvider) {
+      if (cloudImportProgressTimers[provider] == null) return;
+      try {
+        const response = await fetch('/api/logs/client?limit=120');
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        const entries = Array.isArray(payload.entries) ? payload.entries as Record<string, unknown>[] : [];
+        const category = `cloud-import-${provider}`;
+        const latest = entries
+          .filter((entry) => String(entry.category ?? '') === category)
+          .sort((a, b) => Date.parse(String(b.timestamp ?? '')) - Date.parse(String(a.timestamp ?? '')))
+          [0];
+        if (!latest) return;
+        const signature = JSON.stringify([
+          String(latest.timestamp ?? ''),
+          String(latest.level ?? 'info'),
+          String(latest.message ?? ''),
+        ]);
+        const state = cloudImportState[provider];
+        if (signature !== state.uiSignature) {
+          state.uiSignature = signature;
+          const context = latest.context && typeof latest.context === 'object'
+            ? latest.context as Record<string, unknown>
+            : {};
+          const event = String(context.event ?? '').trim();
+          const message = String(latest.message ?? `${cloudProviderLabel(provider)} import in progress.`);
+          const level = String(latest.level ?? 'info');
+          const statusState = level === 'error' ? 'error' : level === 'success' ? 'success' : 'saving';
+          const toastTone = level === 'error' ? 'error' : level === 'warning' ? 'warning' : level === 'success' ? 'success' : 'info';
+          setCloudImportStatus(provider, message, statusState);
+          if (event === 'started') {
+            const maxFiles = Number(context.maxFiles ?? 0);
+            const fileCount = Number(context.fileCount ?? 0);
+            setCloudImportStageState(provider, {
+              stage: 'discovering',
+              label: `Starting ${cloudProviderLabel(provider)} import`,
+              detail: String(context.folderName ?? context.folderId ?? 'All audio files'),
+              current: 0,
+              total: Math.max(maxFiles, fileCount),
+              meta: maxFiles > 0
+                ? `Connecting to ${cloudProviderLabel(provider)} and enumerating up to ${maxFiles} audio files`
+                : `Connecting to ${cloudProviderLabel(provider)} and enumerating audio files`,
+              scopeLabel: String(context.folderName ?? context.folderId ?? state.scopeLabel),
+              busy: true,
+            });
+          } else if (event === 'local_import_completed') {
+            setCloudImportStageState(provider, {
+              stage: 'importing',
+              label: `Saving ${cloudProviderLabel(provider)} entries locally`,
+              detail: `${Number(context.imported ?? 0)} added, ${Number(context.updated ?? 0)} updated`,
+              current: Number(context.total ?? 0),
+              total: Number(context.total ?? 0),
+              meta: `${Number(context.total ?? 0)} files prepared in the app database`,
+              busy: true,
+            });
+          } else if (event === 'progress') {
+            setCloudImportStageState(provider, {
+              stage: state.stage === 'importing' ? 'importing' : 'enriching',
+              label: state.stage === 'importing'
+                ? `Saving ${cloudProviderLabel(provider)} entries locally`
+                : `Reading embedded metadata`,
+              detail: `${Number(context.processed ?? 0)} of ${Number(context.total ?? 0)} files`,
+              current: Number(context.processed ?? 0),
+              total: Number(context.total ?? 0),
+              meta: `${Math.max(0, Number(context.total ?? 0) - Number(context.processed ?? 0))} remaining · Activity tab has details`,
+              busy: true,
+            });
+          } else if (event === 'local_metadata_failed') {
+            const processed = Number(context.processed ?? context.index ?? 0);
+            const total = Number(context.total ?? 0);
+            setCloudImportStageState(provider, {
+              stage: 'enriching',
+              label: 'Reading embedded metadata',
+              detail: `${processed} of ${total} files`,
+              current: processed,
+              total,
+              meta: `Embedded metadata failures are logged in Activity`,
+              busy: true,
+            });
+          } else if (event === 'completed') {
+            setCloudImportStageState(provider, {
+              stage: 'complete',
+              label: `${cloudProviderLabel(provider)} import complete`,
+              detail: `${Number(context.enriched ?? 0)} enriched, ${Number(context.failed ?? 0)} failed`,
+              current: Number(context.tracksReceived ?? context.imported ?? 0),
+              total: Number(context.tracksReceived ?? context.imported ?? 0),
+              meta: 'Import pipeline finished',
+              busy: false,
+            });
+          }
+          if (preferences.scanProgressToasts && signature !== state.toastSignature && isCloudImportToastEvent(provider, event)) {
+            state.toastSignature = signature;
+            showProgressToast(cloudImportToastKey(provider), message, toastTone, toastTone === 'success');
+          }
+        }
+      } catch {
+        // Ignore progress polling failures.
+      }
+    }
+
+    function stopCloudImportProgressPolling(provider: CloudImportProvider) {
+      const timer = cloudImportProgressTimers[provider];
+      if (timer) {
+        window.clearInterval(timer);
+        delete cloudImportProgressTimers[provider];
+      }
+      if (activeCloudImportProvider === provider) {
+        activeCloudImportProvider = null;
+      }
+      resetCloudImportStageState(provider);
+      setScanProgressSource('Local scan');
+      setScanStatus('Idle');
+      setScanProgress(0, 0, 'No scan in progress');
+      removeToastByKey(cloudImportToastKey(provider));
+    }
+
+    function startCloudImportProgressPolling(provider: CloudImportProvider) {
+      const state = cloudImportState[provider];
+      const otherProvider: CloudImportProvider = provider === 'onedrive' ? 'dropbox' : 'onedrive';
+      if (cloudImportProgressTimers[otherProvider] != null) {
+        stopCloudImportProgressPolling(otherProvider);
+      }
+      const timer = cloudImportProgressTimers[provider];
+      if (timer) {
+        window.clearInterval(timer);
+        delete cloudImportProgressTimers[provider];
+      }
+      removeToastByKey(cloudImportToastKey(provider));
+      if (preferences.scanProgressToasts) {
+        showProgressToast(cloudImportToastKey(provider), `${cloudProviderLabel(provider)} import started · ${state.scopeLabel}`, 'info', false);
+      }
+      activeCloudImportProvider = provider;
+      cloudImportProgressTimers[provider] = window.setInterval(() => {
+        void pollCloudImportProgress(provider);
+      }, 1000);
+      void pollCloudImportProgress(provider);
+    }
+
     function setGoogleDriveFolderStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
       const statusEl = document.getElementById('google-drive-folder-status') as HTMLElement | null;
       if (!statusEl) return;
@@ -1803,42 +2111,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return `Sign in to connect ${cloudProviderLabel(provider)}.`;
     }
 
-    async function submitCloudOauthCredentials(provider: 'onedrive' | 'dropbox') {
-      const label = cloudProviderLabel(provider);
-      const clientIdInput = document.getElementById(`${provider}-client-id`) as HTMLInputElement | null;
-      const clientSecretInput = document.getElementById(`${provider}-client-secret`) as HTMLInputElement | null;
-      const saveBtn = document.getElementById(`${provider}-oauth-save-btn`) as HTMLButtonElement | null;
-      if (saveBtn) {
-        saveBtn.disabled = true;
-        saveBtn.textContent = 'Saving…';
-      }
-      try {
-        const response = await fetch(`/api/settings/cloud/${provider}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            clientId: clientIdInput?.value.trim() ?? '',
-            clientSecret: clientSecretInput?.value.trim() ?? '',
-          }),
-        });
-        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-        if (!response.ok) {
-          showToast(String(payload.error ?? `Could not save ${label} settings.`), 'error');
-          return;
-        }
-        await loadRuntimeHealth();
-        renderLibraryPanel();
-        showToast(`${label} OAuth settings updated.`, 'success');
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : String(error), 'error');
-      } finally {
-        if (saveBtn) {
-          saveBtn.disabled = false;
-          saveBtn.textContent = `Save ${label}`;
-        }
-      }
-    }
-
     async function startCloudSignIn(provider: 'onedrive' | 'dropbox') {
       const label = cloudProviderLabel(provider);
       try {
@@ -1875,9 +2147,27 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function importCloudLibrary(provider: 'onedrive' | 'dropbox') {
       const label = cloudProviderLabel(provider);
+      const button = document.getElementById(`${provider}-import-btn`) as HTMLButtonElement | null;
       try {
+        activeCloudImportProvider = provider;
+        setCloudImportStageState(provider, {
+          stage: 'discovering',
+          label: `Starting ${label} import`,
+          detail: 'Preparing the import pipeline',
+          current: 0,
+          total: 2000,
+          meta: `Preparing the import pipeline for up to 2000 audio files`,
+          scopeLabel: `All audio files in ${label}`,
+          busy: true,
+        });
+        setCloudImportStatus(provider, `Importing ${label} metadata…`, 'saving');
         setScanProgressSource(`${label} import`);
         setScanStatus(`Importing ${label} metadata…`, 'running');
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Importing…';
+        }
+        startCloudImportProgressPolling(provider);
         const response = await fetch(`/api/cloud/${provider}/import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1885,18 +2175,61 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (!response.ok) {
+          setCloudImportStageState(provider, {
+            stage: 'error',
+            label: `${label} import failed`,
+            detail: String(payload.error ?? `Could not import from ${label}.`),
+            current: 0,
+            total: 0,
+            meta: 'Review the error and try again',
+            busy: false,
+          });
+          setCloudImportStatus(provider, String(payload.error ?? `Could not import from ${label}.`), 'error');
+          setScanStatus(`${label} import failed`, 'error');
           showToast(String(payload.error ?? `Could not import from ${label}.`), 'error');
           return;
         }
+        setCloudImportStageState(provider, {
+          stage: 'complete',
+          label: `${label} import complete`,
+          detail: `${Number(payload.local_tracks_imported ?? 0)} added, ${Number(payload.local_tracks_updated ?? 0)} updated locally`,
+          current: Number(payload.drive_files_scanned ?? 0),
+          total: Number(payload.drive_files_scanned ?? 0),
+          meta: `${Number(payload.tracks_received ?? 0)} tracks sent to the server`,
+          busy: false,
+        });
+        setCloudImportStatus(provider, `${label} import complete.`, 'success');
+        setScanStatus(`${label} import complete`, 'success');
         showToast(`${label} import complete.`, 'success');
         await Promise.all([
           loadTracks(searchEl.value.trim()),
           loadLibraryOverview(),
         ]);
       } catch (error) {
+        setCloudImportStageState(provider, {
+          stage: 'error',
+          label: `${label} import failed`,
+          detail: error instanceof Error ? error.message : String(error),
+          current: 0,
+          total: 0,
+          meta: 'Review the error and try again',
+          busy: false,
+        });
+        setCloudImportStatus(provider, error instanceof Error ? error.message : String(error), 'error');
+        setScanStatus(`${label} import failed`, 'error');
         showToast(error instanceof Error ? error.message : String(error), 'error');
       } finally {
-        setScanProgressSource('Local scan');
+        if (cloudImportProgressTimers[provider]) {
+          window.setTimeout(() => {
+            stopCloudImportProgressPolling(provider);
+          }, 3000);
+        } else {
+          stopCloudImportProgressPolling(provider);
+        }
+        if (button) {
+          button.disabled = false;
+          button.textContent = `Import ${label}`;
+        }
       }
     }
 
@@ -7466,20 +7799,47 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const clientId = String(summary?.client_id_masked ?? '');
         const hasSecret = Boolean(summary?.has_secret);
         const configured = Boolean(summary?.configured);
+        const state = cloudImportState[provider];
+        const percent = state.total > 0
+          ? Math.min(100, (state.current / Math.max(1, state.total)) * 100)
+          : state.busy
+            ? 100
+            : 0;
         return `
           <section class="library-card">
             <div class="scan-log-head"><strong>${esc(label)} Import</strong></div>
             <div class="scan-preflight">${esc(label)} can be used as a cloud import source in pro builds.</div>
             <div class="scan-preflight" id="${provider}-oauth-status">${esc(cloudProviderStatusLabel(provider))}</div>
             <div class="scan-preflight">${configured ? `Configured${clientId ? ` · ${clientId}` : ''}${hasSecret ? ' · secret saved' : ''}` : 'Not configured yet.'}</div>
+            <div class="google-drive-import-progress-card cloud-import-progress-card" id="${provider}-import-progress-card" data-state="${esc(state.stage)}"${state.stage === 'idle' && !state.busy ? ' hidden' : ''}>
+              <div class="google-drive-import-progress-head cloud-import-progress-head">
+                <div>
+                  <strong id="${provider}-import-stage-label">${esc(state.label)}</strong>
+                  <span id="${provider}-import-stage-detail">${esc(state.detail)}</span>
+                </div>
+                <strong id="${provider}-import-stage-count">${state.total > 0 ? esc(`${state.current} / ${state.total}`) : (state.busy ? 'Working…' : '--')}</strong>
+              </div>
+              <div class="google-drive-import-stage-line cloud-import-stage-line">
+                <span>Current stage</span>
+                <strong id="${provider}-import-stage-badge">${esc(state.label)}</strong>
+              </div>
+              <div class="google-drive-import-progress-track cloud-import-progress-track">
+                <div
+                  class="google-drive-import-progress-bar cloud-import-progress-bar ${state.total > 0 ? '' : (state.busy ? 'indeterminate' : '')}"
+                  id="${provider}-import-stage-bar"
+                  data-indeterminate="${state.total > 0 ? 'false' : (state.busy ? 'true' : 'false')}"
+                  style="width:${state.total > 0 ? `${percent}%` : (state.busy ? '100%' : '0%')}"
+                ></div>
+              </div>
+              <div class="google-drive-import-progress-meta cloud-import-progress-meta">
+                <span id="${provider}-import-stage-meta">${esc(state.meta)}</span>
+                <span id="${provider}-import-stage-mode">${state.total > 0 ? 'Measured progress' : (state.busy ? 'Stage progress' : 'Waiting')}</span>
+                <span id="${provider}-import-stage-scope">${esc(state.scopeLabel)}</span>
+              </div>
+            </div>
             <div class="buttons">
               <button type="button" class="btn secondary" id="${provider}-oauth-start-btn">${configured ? `Sign in with ${label}` : `Sign in with ${label}`}</button>
-              <button type="button" class="btn secondary" id="${provider}-oauth-save-btn">${configured ? `Save ${label}` : `Save ${label}`}</button>
               <button type="button" class="btn" id="${provider}-import-btn" ${configured ? '' : 'disabled'}>Import ${label}</button>
-            </div>
-            <div class="metadata-grid cloud-oauth-grid">
-              <label><span>${label} Client ID</span><input id="${provider}-client-id" placeholder="${label} Client ID" /></label>
-              <label><span>${label} Client Secret</span><input id="${provider}-client-secret" type="password" placeholder="${label} Client Secret" /></label>
             </div>
           </section>
         `;
@@ -7976,22 +8336,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
         void signInWithGoogle();
-      });
-      document.getElementById('onedrive-oauth-save-btn')?.addEventListener('click', () => {
-        void submitCloudOauthCredentials('onedrive');
-      });
-      document.getElementById('dropbox-oauth-save-btn')?.addEventListener('click', () => {
-        void submitCloudOauthCredentials('dropbox');
-      });
-      document.getElementById('onedrive-client-id')?.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        void submitCloudOauthCredentials('onedrive');
-      });
-      document.getElementById('dropbox-client-id')?.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        void submitCloudOauthCredentials('dropbox');
       });
       document.getElementById('onedrive-oauth-start-btn')?.addEventListener('click', () => {
         void startCloudSignIn('onedrive');

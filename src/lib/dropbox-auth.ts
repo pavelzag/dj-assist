@@ -7,7 +7,6 @@ export const DROPBOX_SCOPES = [
   'openid',
   'profile',
   'email',
-  'offline_access',
   'files.metadata.read',
   'files.content.read',
 ];

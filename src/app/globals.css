@@ -1089,6 +1089,9 @@ main {
   align-items: start;
   overflow: visible;
 }
+.details-pane #panel-library .library-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
 .library-grid > * {
   min-width: 0;
 }
@@ -1102,6 +1105,10 @@ main {
   min-width: 0;
   box-sizing: border-box;
   overflow: hidden;
+}
+.library-card > * {
+  min-width: 0;
+  max-width: 100%;
 }
 .library-span {
   grid-column: 1 / -1;
