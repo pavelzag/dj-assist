@@ -144,6 +144,13 @@ release_tag=''
 
 resolve_release_tag() {
   local tag
+  tag=$(gh release list --limit 10 --json tagName,isDraft,isPrerelease,createdAt \
+    | jq -r '.[] | select(.isDraft != true) | .tagName' \
+    | head -n 1)
+  if [[ -n "$tag" ]]; then
+    printf '%s' "$tag"
+    return
+  fi
   tag=$(gh api "repos/:owner/:repo/releases" --paginate \
     | jq -r --arg head_sha "$head_sha" '.[] | select(.target_commitish == $head_sha) | .tag_name' \
     | head -n 1)
