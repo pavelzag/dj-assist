@@ -77,13 +77,62 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       return NextResponse.json({ error: 'Server URL is not configured.' }, { status: 400 });
     }
 
-    const accessToken = provider === 'onedrive'
-      ? (await getOneDriveAccessToken()).accessToken
-      : (await getDropboxAccessToken()).accessToken;
+    const accessTokenResult = provider === 'onedrive'
+      ? await getOneDriveAccessToken()
+      : await getDropboxAccessToken();
+    const accessToken = accessTokenResult.accessToken;
+    if (provider === 'onedrive' || provider === 'dropbox') {
+      const scopes = Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [];
+      logCloudImport(provider, 'info', `${provider}_auth_ready`, {
+        hasAccessToken: Boolean(accessToken),
+        hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
+        accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+        scopeCount: scopes.length,
+        scopes,
+      });
+      await logCloudProgress(provider, 'info', `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} auth resolved for import.`, {
+        event: 'auth_ready',
+        hasAccessToken: Boolean(accessToken),
+        hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
+        accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+        scopeCount: scopes.length,
+        scopes,
+      });
+    }
     const filesResponse = provider === 'onedrive'
       ? await listOneDriveAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles })
       : await listDropboxAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles });
     const filteredFiles = filesResponse.files;
+    if (provider === 'onedrive' || provider === 'dropbox') {
+      logCloudImport(provider, 'info', `${provider}_listing_ready`, {
+        folderId: folderId || null,
+        folderName: folderName || null,
+        maxFiles,
+        requestedFolderIds: folderIds.length ? folderIds : null,
+        fileCount: filteredFiles.length,
+        hasNextPage: Boolean(filesResponse.nextPageToken),
+      });
+      await logCloudProgress(provider, 'info', `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} listing returned ${filteredFiles.length} audio files.`, {
+        event: 'listing_ready',
+        folderId: folderId || null,
+        folderName: folderName || null,
+        maxFiles,
+        requestedFolderIds: folderIds.length ? folderIds : null,
+        fileCount: filteredFiles.length,
+        hasNextPage: Boolean(filesResponse.nextPageToken),
+      });
+      if (filteredFiles.length === 0) {
+        logCloudImport(provider, 'warn', `${provider}_listing_empty`, {
+          folderId: folderId || null,
+          folderName: folderName || null,
+          maxFiles,
+          requestedFolderIds: folderIds.length ? folderIds : null,
+          hint: provider === 'dropbox'
+            ? 'Dropbox returned no audio files after filtering. Check whether the files are in a visible Dropbox scope, have supported audio extensions, or are inside the selected folder.'
+            : 'OneDrive returned no audio files after filtering. Check whether the files are in a visible OneDrive scope, have supported audio extensions, or are inside the selected folder.',
+        });
+      }
+    }
     logCloudImport(provider, 'info', 'started', {
       folderId: folderId || null,
       folderName: folderName || null,

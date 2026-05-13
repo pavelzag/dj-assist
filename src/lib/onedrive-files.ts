@@ -18,6 +18,35 @@ export type OneDriveFolderEntry = {
 
 const ONEDRIVE_SCAN_CONCURRENCY = 8;
 
+function summarizeOneDriveEntry(item: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: String(item.id ?? '').trim() || null,
+    name: String(item.name ?? '').trim() || null,
+    hasFolder: Boolean(item.folder && typeof item.folder === 'object'),
+    hasFile: Boolean(item.file && typeof item.file === 'object'),
+    mimeType: String((item.file as Record<string, unknown> | undefined)?.mimeType ?? '').trim() || null,
+    size: item.size == null ? null : String(item.size),
+    parents: normalizeParents(item),
+  };
+}
+
+function logOneDriveFilesEvent(event: string, context: Record<string, unknown>, level: 'info' | 'warn' | 'error' = 'info') {
+  void logServerEvent({
+    level: level === 'warn' ? 'warning' : level,
+    message: `[onedrive-files] ${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event,
+      ...context,
+    })}`,
+    category: 'onedrive-files',
+    context: {
+      event,
+      ...context,
+    },
+    alsoConsole: level !== 'info',
+  }).catch(() => {});
+}
+
 async function fetchOneDriveChildrenPage(input: {
   accessToken: string;
   parentId?: string;
@@ -52,6 +81,11 @@ async function fetchOneDriveChildrenPage(input: {
     payload = raw ? { error: raw } : {};
   }
   if (!response.ok) {
+    logOneDriveFilesEvent('api_error', {
+      url: url.toString(),
+      status: response.status,
+      error: String((payload.error ?? raw) || 'Could not list OneDrive files.'),
+    }, 'error');
     throw new Error(String((payload.error ?? raw) || 'Could not list OneDrive files.'));
   }
   const items = Array.isArray(payload.value) ? payload.value as Array<Record<string, unknown>> : [];
@@ -172,6 +206,11 @@ export async function listOneDriveFolderChildren(input: {
   truncated: boolean;
 }> {
   const search = String(input.search ?? '').trim().toLowerCase();
+  logOneDriveFilesEvent('list_children_start', {
+    parentId: String(input.parentId ?? '').trim() || null,
+    search: search || null,
+    limit: Number.isFinite(Number(input.limit)) ? Math.trunc(Number(input.limit)) : null,
+  });
   if (search) {
     const { folders, files } = await collectDescendants({
       accessToken: input.accessToken,
@@ -179,6 +218,12 @@ export async function listOneDriveFolderChildren(input: {
     });
     const filteredFolders = folders.filter((folder) => folder.name.toLowerCase().includes(search));
     const filteredFiles = files.filter((file) => file.name.toLowerCase().includes(search));
+    logOneDriveFilesEvent('list_children_search_summary', {
+      parentId: String(input.parentId ?? '').trim() || null,
+      search,
+      folderCount: filteredFolders.length,
+      audioFileCount: filteredFiles.length,
+    });
     return { folders: filteredFolders, files: filteredFiles, truncated: false };
   }
 
@@ -188,6 +233,14 @@ export async function listOneDriveFolderChildren(input: {
   });
   const folders = page.items.map(toFolderEntry).filter((item): item is OneDriveFolderEntry => Boolean(item));
   const files = page.items.map(toAudioFile).filter((item): item is OneDriveAudioFile => Boolean(item));
+  logOneDriveFilesEvent('list_children_page_summary', {
+    parentId: String(input.parentId ?? '').trim() || null,
+    entryCount: page.items.length,
+    folderCount: folders.length,
+    audioFileCount: files.length,
+    sampleEntries: page.items.slice(0, 5).map(summarizeOneDriveEntry),
+    truncated: Boolean(page.nextLink),
+  });
   return {
     folders: folders.slice(0, input.limit ?? folders.length),
     files: files.slice(0, input.limit ?? files.length),
@@ -215,6 +268,14 @@ export async function listOneDriveAudioFiles(input: {
   const visited = new Set<string>();
   const frontier = [...foldersToScan];
 
+  logOneDriveFilesEvent('list_audio_start', {
+    folderId: String(input.folderId ?? '').trim() || null,
+    allFolderIds: rootIds.length ? rootIds : null,
+    search: search || null,
+    limit: input.limit,
+    pageToken: input.pageToken || null,
+  });
+
   while (frontier.length && files.length < input.limit) {
     const current = frontier.shift();
     if (!current || visited.has(current)) continue;
@@ -236,6 +297,15 @@ export async function listOneDriveAudioFiles(input: {
       if (files.length >= input.limit) break;
     }
   }
+
+  logOneDriveFilesEvent('list_audio_completed', {
+    folderId: String(input.folderId ?? '').trim() || null,
+    allFolderIds: rootIds.length ? rootIds : null,
+    search: search || null,
+    limit: input.limit,
+    returnedFileCount: files.length,
+    visitedFolderCount: visited.size,
+  });
 
   return {
     files,

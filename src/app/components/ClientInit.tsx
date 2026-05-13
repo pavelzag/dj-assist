@@ -19,7 +19,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       skipped: number;
       errors: number;
     };
-    type ScanSourceMode = 'local' | 'google_drive';
+    type ScanSourceMode = 'local' | 'google_drive' | CloudImportProvider;
     type GoogleDriveImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
     type CloudImportProvider = 'onedrive' | 'dropbox';
     type CloudImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
@@ -94,6 +94,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const tapBpmModal = document.getElementById('tap-bpm-modal') as HTMLElement | null;
     const googleAuthUpsellModal = document.getElementById('google-auth-upsell-modal') as HTMLElement | null;
     const googleDriveFolderModal = document.getElementById('google-drive-folder-modal') as HTMLElement | null;
+    const cloudFolderModal = document.getElementById('cloud-folder-modal') as HTMLElement | null;
     const addMusicSourceModal = document.getElementById('add-music-source-modal') as HTMLElement | null;
     const googleAuthMainBtn = document.getElementById('google-auth-main-btn') as HTMLButtonElement | null;
     const googleAuthMainLabel = document.getElementById('google-auth-main-label') as HTMLElement | null;
@@ -101,6 +102,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const closeTapBpmBtn = document.getElementById('close-tap-bpm') as HTMLButtonElement | null;
     const closeGoogleAuthUpsellBtn = document.getElementById('close-google-auth-upsell') as HTMLButtonElement | null;
     const closeGoogleDriveFolderModalBtn = document.getElementById('close-google-drive-folder-modal') as HTMLButtonElement | null;
+    const closeCloudFolderModalBtn = document.getElementById('close-cloud-folder-modal') as HTMLButtonElement | null;
     const closeAddMusicSourceModalBtn = document.getElementById('close-add-music-source-modal') as HTMLButtonElement | null;
     const tapBpmTrackLabelEl = document.getElementById('tap-bpm-track-label') as HTMLElement | null;
     const tapBpmValueEl = document.getElementById('tap-bpm-value') as HTMLElement | null;
@@ -141,6 +143,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const recentNewTrackIdsKey = 'dj-assist-recent-new-track-ids';
     const googleAuthUpsellDismissedKey = 'dj-assist-google-auth-upsell-dismissed';
     const gdriveFavoritesKey = 'dj-assist-gdrive-favorites';
+    const cloudFolderBrowserStateKey = 'dj-assist-cloud-folder-browser-state';
     const activityScanLogCollapsedKey = 'dj-assist-activity-scan-log-collapsed';
     const frontendLogCollapsedKey = 'dj-assist-frontend-log-collapsed';
     type Preferences = {
@@ -239,6 +242,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let gdriveDragSelectAction: 'add' | 'remove' = 'add';
     const gdriveDragProcessedIds = new Set<string>();
     let gdriveDragGestureRowId: string | null = null;
+    let cloudFolderBrowserProvider: CloudImportProvider | null = null;
+    let cloudFolderTrail: Array<{ id: string; name: string }> = [];
+    let cloudFolderFiles: Record<string, unknown>[] = [];
+    let cloudFolders: Record<string, unknown>[] = [];
+    let cloudFolderSearchQuery = '';
+    let cloudFolderSearchRequestSeq = 0;
+    let cloudFoldersBusy = false;
+    let cloudFolderFilesBusy = false;
+    let selectedCloudImportFolders: Record<CloudImportProvider, Array<{ id: string; name: string }>> = {
+      onedrive: [],
+      dropbox: [],
+    };
+    let savedCloudFolderBrowserState: Record<CloudImportProvider, Array<{ id: string; name: string }>> = {
+      onedrive: [],
+      dropbox: [],
+    };
     let googleDriveFolderTrail: Array<{ id: string; name: string }> = [];
     let pendingScanLogEntries: Array<{
       message: string;
@@ -1180,7 +1199,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       const actionLabel = addMusicStartLabel();
       const renderSelectedSourceIndicator = (
-        sourceKind: 'local' | 'google_drive',
+        sourceKind: 'local' | 'google_drive' | 'onedrive' | 'dropbox',
         sourceName: string,
         sourceLabel: string,
         message: string,
@@ -1210,6 +1229,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         );
         return;
       }
+      if (scanSourceMode === 'onedrive' || scanSourceMode === 'dropbox') {
+        const selected = selectedCloudImportFolders[scanSourceMode][0] ?? null;
+        renderSelectedSourceIndicator(
+          scanSourceMode,
+          cloudProviderLabel(scanSourceMode),
+          selected?.name || `All audio files in ${cloudProviderLabel(scanSourceMode)}`,
+          `Press ${actionLabel} to add tracks.`,
+        );
+        return;
+      }
       const label = localSourceLabel();
       if (!label) {
         selectedSourceIndicatorEl.hidden = true;
@@ -1228,15 +1257,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function addMusicStartLabel() {
       if (scanSourceMode === 'google_drive') return 'Import from Google Drive';
+      if (scanSourceMode === 'onedrive') return 'Import from OneDrive';
+      if (scanSourceMode === 'dropbox') return 'Import from Dropbox';
       return activeScanStatus === 'queued' || activeScanStatus === 'running' ? 'Stop Scan' : 'Start Scan';
     }
 
     function isScanActionBusy() {
-      return googleDriveImportBusy || scanCancelInFlight;
+      return googleDriveImportBusy || scanCancelInFlight || activeCloudImportProvider != null;
     }
 
     function isLocalScanActive() {
-      return scanSourceMode !== 'google_drive' && (activeScanStatus === 'queued' || activeScanStatus === 'running');
+      return scanSourceMode === 'local' && (activeScanStatus === 'queued' || activeScanStatus === 'running');
     }
 
     function isGoogleDriveTrackPath(path: string) {
@@ -1320,12 +1351,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (button) {
           button.dataset.locked = configured ? 'false' : 'true';
           button.title = configured
-            ? `Import from ${cloudProviderLabel(provider)}`
+            ? `Browse ${cloudProviderLabel(provider)} folders`
             : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
         }
         if (copy) {
           copy.textContent = configured
-            ? `Sign in and import audio from ${cloudProviderLabel(provider)}.`
+            ? `Browse a folder and import audio from ${cloudProviderLabel(provider)}.`
             : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
         }
       }
@@ -2168,9 +2199,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
-    async function importCloudLibrary(provider: 'onedrive' | 'dropbox') {
+    async function importCloudLibrary(provider: CloudImportProvider, options: { folderId?: string | null; folderName?: string | null } = {}) {
       const label = cloudProviderLabel(provider);
       const button = document.getElementById(`${provider}-import-btn`) as HTMLButtonElement | null;
+      const selectedFolderId = String(options.folderId ?? selectedCloudImportFolders[provider][0]?.id ?? '').trim();
+      const selectedFolderName = String(options.folderName ?? selectedCloudImportFolders[provider][0]?.name ?? '').trim();
       try {
         activeCloudImportProvider = provider;
         setCloudImportStageState(provider, {
@@ -2180,7 +2213,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           current: 0,
           total: 2000,
           meta: `Preparing the import pipeline for up to 2000 audio files`,
-          scopeLabel: `All audio files in ${label}`,
+          scopeLabel: selectedFolderName || `All audio files in ${label}`,
           busy: true,
         });
         setCloudImportStatus(provider, `Importing ${label} metadata…`, 'saving');
@@ -2194,7 +2227,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const response = await fetch(`/api/cloud/${provider}/import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ maxFiles: 2000 }),
+          body: JSON.stringify({
+            maxFiles: 2000,
+            folderId: selectedFolderId || null,
+            folderName: selectedFolderName || null,
+          }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
         if (!response.ok) {
@@ -2983,6 +3020,432 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       });
     }
 
+    function cloudFolderBrowserScopeLabel(provider: CloudImportProvider) {
+      const selected = selectedCloudImportFolders[provider][0] ?? null;
+      return selected?.name || `All audio files in ${cloudProviderLabel(provider)}`;
+    }
+
+    function currentCloudFolder() {
+      return cloudFolderTrail[cloudFolderTrail.length - 1] ?? null;
+    }
+
+    function cloudFolderBrowserPathLabel(provider: CloudImportProvider) {
+      if (!cloudFolderTrail.length) return `${cloudProviderLabel(provider)} root`;
+      return `${cloudProviderLabel(provider)} / ${cloudFolderTrail.map((item) => item.name).join(' / ')}`;
+    }
+
+    function formatCloudFolderItemMeta(file: Record<string, unknown>) {
+      const size = formatDriveFileSize(file.size);
+      const modified = formatDriveModifiedTime(file.modifiedTime);
+      return [size !== '--' ? size : '', modified !== '--' ? modified : ''].filter(Boolean).join(' · ') || 'Audio file';
+    }
+
+    function cloudSearchMatches(value: string, query: string) {
+      const needle = query.trim().toLowerCase();
+      if (!needle) return true;
+      return String(value ?? '').toLowerCase().includes(needle);
+    }
+
+    function loadCloudFolderBrowserState() {
+      try {
+        const raw = localStorage.getItem(cloudFolderBrowserStateKey);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        for (const provider of ['onedrive', 'dropbox'] as const) {
+          const trail = Array.isArray(parsed?.[provider])
+            ? (parsed[provider] as unknown[])
+              .map((entry) => {
+                if (!entry || typeof entry !== 'object') return null;
+                const item = entry as Record<string, unknown>;
+                const id = String(item.id ?? '').trim();
+                const name = String(item.name ?? '').trim();
+                return id ? { id, name: name || 'Untitled folder' } : null;
+              })
+              .filter((item): item is { id: string; name: string } => Boolean(item))
+            : [];
+          savedCloudFolderBrowserState[provider] = trail;
+        }
+      } catch {
+        savedCloudFolderBrowserState = { onedrive: [], dropbox: [] };
+      }
+    }
+
+    function saveCloudFolderBrowserState() {
+      try {
+        localStorage.setItem(cloudFolderBrowserStateKey, JSON.stringify(savedCloudFolderBrowserState));
+      } catch {
+        // ignore localStorage failures
+      }
+    }
+
+    function persistCloudFolderBrowserTrail(provider: CloudImportProvider, trail: Array<{ id: string; name: string }>) {
+      savedCloudFolderBrowserState[provider] = trail.map((item) => ({
+        id: String(item.id ?? '').trim(),
+        name: String(item.name ?? '').trim() || 'Untitled folder',
+      })).filter((item) => Boolean(item.id));
+      saveCloudFolderBrowserState();
+    }
+
+    function setCloudFolderStatus(message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
+      const statusEl = document.getElementById('cloud-folder-status') as HTMLElement | null;
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.state = state;
+    }
+
+    function renderCloudFolderBrowser() {
+      const listEl = document.getElementById('cloud-folder-list') as HTMLElement | null;
+      const sidebarEl = document.getElementById('cloud-folder-sidebar') as HTMLElement | null;
+      const pathEl = document.getElementById('cloud-folder-path') as HTMLElement | null;
+      const searchEl = document.getElementById('cloud-folder-search') as HTMLInputElement | null;
+      const backBtn = document.getElementById('cloud-folder-back-btn') as HTMLButtonElement | null;
+      const useCurrentBtn = document.getElementById('cloud-folder-use-current-btn') as HTMLButtonElement | null;
+      const refreshBtn = document.getElementById('cloud-folder-refresh-btn') as HTMLButtonElement | null;
+      const provider = cloudFolderBrowserProvider;
+      const searchQuery = cloudFolderSearchQuery.trim();
+      if (!provider) return;
+      if (pathEl) pathEl.textContent = searchQuery
+        ? `Search results for "${searchQuery}"`
+        : cloudFolderBrowserPathLabel(provider);
+      if (searchEl && searchEl.value !== cloudFolderSearchQuery) {
+        searchEl.value = cloudFolderSearchQuery;
+      }
+      if (backBtn) backBtn.disabled = cloudFoldersBusy || cloudFolderTrail.length === 0;
+      if (useCurrentBtn) {
+        useCurrentBtn.disabled = cloudFoldersBusy;
+        useCurrentBtn.textContent = cloudFolderTrail.length
+          ? `Import "${cloudFolderTrail[cloudFolderTrail.length - 1]?.name ?? cloudProviderLabel(provider)}"`
+          : `Import ${cloudProviderLabel(provider)} root`;
+      }
+      if (refreshBtn) {
+        refreshBtn.disabled = cloudFoldersBusy;
+      }
+      if (!listEl || !sidebarEl) return;
+      sidebarEl.innerHTML = `
+        <button type="button" class="google-drive-sidebar-item ${cloudFolderTrail.length === 0 ? 'active' : ''}" data-cloud-root="true">
+          <span class="google-drive-sidebar-item-title">${esc(cloudProviderLabel(provider))}</span>
+          <span class="google-drive-sidebar-item-meta">Root folder</span>
+        </button>
+        ${cloudFolderTrail.map((folder, index) => `
+          <button type="button" class="google-drive-sidebar-item ${index === cloudFolderTrail.length - 1 ? 'active' : ''}" data-cloud-jump-id="${esc(folder.id)}" data-cloud-jump-name="${esc(folder.name)}" data-cloud-jump-depth="${index}">
+            <span class="google-drive-sidebar-item-title">${esc(folder.name)}</span>
+            <span class="google-drive-sidebar-item-meta">${index === 0 ? 'Inside root' : `Level ${index + 1}`}</span>
+          </button>
+        `).join('')}
+      `;
+      sidebarEl.querySelector('[data-cloud-root="true"]')?.addEventListener('click', () => {
+        void loadCloudFolderBrowser({
+          provider,
+          parentId: '',
+          trail: [],
+        });
+      });
+      sidebarEl.querySelectorAll('[data-cloud-jump-id]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const element = button as HTMLElement;
+          const folderId = String(element.dataset.cloudJumpId ?? '').trim();
+          const folderName = String(element.dataset.cloudJumpName ?? '').trim() || 'Untitled folder';
+          const depth = Number(element.dataset.cloudJumpDepth ?? '-1');
+          if (!folderId) return;
+          const trail = depth >= 0
+            ? cloudFolderTrail.slice(0, depth + 1)
+            : [{ id: folderId, name: folderName }];
+          void loadCloudFolderBrowser({
+            provider,
+            parentId: folderId,
+            trail,
+          });
+        });
+      });
+      if (cloudFoldersBusy || cloudFolderFilesBusy) {
+        listEl.innerHTML = searchQuery
+          ? `<div class="empty">Searching ${esc(cloudProviderLabel(provider))} for “${esc(searchQuery)}”…</div>`
+          : `<div class="empty">Loading ${esc(cloudProviderLabel(provider))} folder contents…</div>`;
+        return;
+      }
+      const filteredFolders = cloudFolders.filter((folder) => cloudSearchMatches(String(folder.name ?? 'Untitled folder'), searchQuery));
+      const filteredFiles = cloudFolderFiles.filter((file) => {
+        const name = String(file.name ?? 'Untitled');
+        const mimeType = String(file.mimeType ?? '');
+        return cloudSearchMatches(name, searchQuery) || cloudSearchMatches(mimeType, searchQuery);
+      });
+      const folderMarkup = filteredFolders.map((folder) => {
+        const fid = String(folder.id ?? '');
+        const fname = String(folder.name ?? 'Untitled folder');
+        return `
+          <div
+            class="google-drive-browser-row folder"
+            role="button"
+            tabindex="0"
+            data-cloud-folder-id="${esc(fid)}"
+            data-cloud-folder-name="${esc(fname)}"
+            data-cloud-open-folder="true"
+            title="Click to browse"
+          >
+            <span class="google-drive-browser-row-icon" aria-hidden="true">📁</span>
+            <span class="google-drive-browser-row-copy">
+              <strong>${esc(fname)}</strong>
+              <span>Click to browse this folder</span>
+            </span>
+            <span class="google-drive-browser-row-trailing" aria-hidden="true">›</span>
+          </div>
+        `;
+      }).join('');
+      const fileMarkup = filteredFiles.map((file) => `
+        <div class="google-drive-browser-row file">
+          <span class="google-drive-browser-row-icon audio" aria-hidden="true">♪</span>
+          <span class="google-drive-browser-row-copy">
+            <strong>${esc(String(file.name ?? 'Untitled'))}</strong>
+            <span>${esc(formatCloudFolderItemMeta(file))}</span>
+          </span>
+        </div>
+      `).join('');
+      listEl.innerHTML = folderMarkup || fileMarkup
+        ? `${folderMarkup}${fileMarkup}`
+        : `<div class="empty">${searchQuery ? `No ${esc(cloudProviderLabel(provider))} folders or audio files match “${esc(searchQuery)}”.` : 'No folders or audio files found here.'}</div>`;
+      listEl.querySelectorAll('[data-cloud-open-folder="true"]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const element = button as HTMLElement;
+          const folderId = String(element.dataset.cloudFolderId ?? '').trim();
+          const folderName = String(element.dataset.cloudFolderName ?? 'Untitled folder').trim() || 'Untitled folder';
+          if (!folderId) return;
+          const wasSearching = Boolean(cloudFolderSearchQuery.trim());
+          if (wasSearching) {
+            cloudFolderSearchQuery = '';
+          }
+          void loadCloudFolderBrowser({
+            provider,
+            parentId: folderId,
+            trail: wasSearching
+              ? [{ id: folderId, name: folderName }]
+              : [...cloudFolderTrail, { id: folderId, name: folderName }],
+          });
+        });
+        button.addEventListener('keydown', (event) => {
+          const keyboardEvent = event as KeyboardEvent;
+          if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
+          keyboardEvent.preventDefault();
+          const element = button as HTMLElement;
+          const folderId = String(element.dataset.cloudFolderId ?? '').trim();
+          const folderName = String(element.dataset.cloudFolderName ?? 'Untitled folder').trim() || 'Untitled folder';
+          if (!folderId) return;
+          const wasSearching = Boolean(cloudFolderSearchQuery.trim());
+          if (wasSearching) {
+            cloudFolderSearchQuery = '';
+          }
+          void loadCloudFolderBrowser({
+            provider,
+            parentId: folderId,
+            trail: wasSearching
+              ? [{ id: folderId, name: folderName }]
+              : [...cloudFolderTrail, { id: folderId, name: folderName }],
+          });
+        });
+      });
+      if (searchEl) {
+        searchEl.placeholder = cloudFoldersBusy || cloudFolderFilesBusy
+          ? `Searching ${cloudProviderLabel(provider)}…`
+          : 'Search folders or files';
+      }
+    }
+
+    async function loadCloudFolderBrowser(options: {
+      provider: CloudImportProvider;
+      parentId?: string;
+      trail?: Array<{ id: string; name: string }>;
+      search?: string;
+    }) {
+      const provider = options.provider;
+      const search = String(options.search ?? cloudFolderSearchQuery).trim();
+      const requestSeq = ++cloudFolderSearchRequestSeq;
+      cloudFolderBrowserProvider = provider;
+      cloudFoldersBusy = true;
+      cloudFolderFilesBusy = true;
+      cloudFolderSearchQuery = search;
+      cloudFolderTrail = options.trail ?? [];
+      cloudFolderFiles = [];
+      renderCloudFolderBrowser();
+      setCloudFolderStatus(
+        search
+          ? `Searching ${cloudProviderLabel(provider)} for "${search}"…`
+          : `Loading ${cloudProviderLabel(provider)} folders with read-only access…`,
+        'saving',
+      );
+      appendScanLog(
+        search
+          ? `${cloudProviderLabel(provider)} search loading: query=${search}`
+          : `${cloudProviderLabel(provider)} folders loading: parent=${String(options.parentId ?? '').trim() || 'root'}`,
+        'info',
+        {
+          category: `${provider}-folders`,
+          provider,
+          parentId: String(options.parentId ?? '').trim() || null,
+          search: search || null,
+          trail: cloudFolderTrail,
+        },
+        { eventType: `${provider}_folders_loading` },
+      );
+      try {
+        const parentId = String(options.parentId ?? '').trim();
+        const query = new URLSearchParams();
+        if (search) {
+          query.set('search', search);
+        } else if (parentId) {
+          query.set('parentId', parentId);
+        }
+        const foldersPromise = fetch(`/api/cloud/${provider}/folders${query.toString() ? `?${query.toString()}` : ''}`);
+        const filesPromise = search
+          ? (() => {
+            const filesQuery = new URLSearchParams();
+            filesQuery.set('search', search);
+            filesQuery.set('limit', '100');
+            return fetch(`/api/cloud/${provider}/files?${filesQuery.toString()}`);
+          })()
+          : parentId
+          ? (() => {
+            const filesQuery = new URLSearchParams();
+            filesQuery.set('folderId', parentId);
+            filesQuery.set('limit', '100');
+            return fetch(`/api/cloud/${provider}/files?${filesQuery.toString()}`);
+          })()
+          : Promise.resolve(null);
+        const [foldersResponse, filesResponse] = await Promise.all([foldersPromise, filesPromise]);
+        const foldersPayload = await foldersResponse.json().catch(() => ({})) as Record<string, unknown>;
+        const filesPayload = filesResponse
+          ? await filesResponse.json().catch(() => ({})) as Record<string, unknown>
+          : {};
+        if (requestSeq !== cloudFolderSearchRequestSeq) return;
+        if (!foldersResponse.ok) {
+          setCloudFolderStatus(
+            String(foldersPayload.error ?? `Could not load ${cloudProviderLabel(provider)} folders.`),
+            'error',
+          );
+          cloudFolders = [];
+          cloudFolderFiles = [];
+          appendScanLog(
+            `${cloudProviderLabel(provider)} folders failed: ${String(foldersPayload.error ?? 'Could not load folders.')}`,
+            'error',
+            {
+              category: `${provider}-folders`,
+              provider,
+              status: foldersResponse.status,
+              payload: foldersPayload,
+              search: search || null,
+            },
+            { eventType: `${provider}_folders_failed` },
+          );
+          return;
+        }
+        if (filesResponse && !filesResponse.ok) {
+          setCloudFolderStatus(
+            String(filesPayload.error ?? `Could not load ${cloudProviderLabel(provider)} files.`),
+            'error',
+          );
+          cloudFolders = Array.isArray(foldersPayload.folders) ? foldersPayload.folders as Record<string, unknown>[] : [];
+          cloudFolderFiles = [];
+          appendScanLog(
+            `${cloudProviderLabel(provider)} files failed: ${String(filesPayload.error ?? 'Could not load files.')}`,
+            'error',
+            {
+              category: `${provider}-files`,
+              provider,
+              parentId: parentId || null,
+              status: filesResponse.status,
+              payload: filesPayload,
+              search: search || null,
+            },
+            { eventType: `${provider}_files_failed` },
+          );
+          return;
+        }
+        cloudFolders = Array.isArray(foldersPayload.folders) ? foldersPayload.folders as Record<string, unknown>[] : [];
+        cloudFolderFiles = filesResponse && Array.isArray(filesPayload.files) ? filesPayload.files as Record<string, unknown>[] : [];
+        setCloudFolderStatus(
+          search
+            ? `Showing ${cloudFolders.length} folders and ${cloudFolderFiles.length} audio files matching "${search}".`
+            : `Showing ${cloudFolders.length} folders and ${cloudFolderFiles.length} audio files. ${cloudProviderLabel(provider)} only uses read access.`,
+          'success',
+        );
+        appendScanLog(
+          search
+            ? `${cloudProviderLabel(provider)} search loaded: folders=${cloudFolders.length} files=${cloudFolderFiles.length} query=${search}`
+            : `${cloudProviderLabel(provider)} folders loaded: folders=${cloudFolders.length} files=${cloudFolderFiles.length} parent=${parentId || 'root'}`,
+          'success',
+          {
+            category: `${provider}-folders`,
+            provider,
+            parentId: parentId || null,
+            count: cloudFolders.length,
+            fileCount: cloudFolderFiles.length,
+            search: search || null,
+          },
+          { eventType: `${provider}_folders_loaded` },
+        );
+      } catch (error) {
+        if (requestSeq !== cloudFolderSearchRequestSeq) return;
+        cloudFolders = [];
+        cloudFolderFiles = [];
+        setCloudFolderStatus(error instanceof Error ? error.message : String(error), 'error');
+        appendScanLog(
+          search
+            ? `${cloudProviderLabel(provider)} search exception: ${error instanceof Error ? error.message : String(error)}`
+            : `${cloudProviderLabel(provider)} folders exception: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+          {
+            category: `${provider}-folders`,
+            provider,
+            parentId: String(options.parentId ?? '').trim() || null,
+            search: search || null,
+          },
+          { eventType: `${provider}_folders_exception` },
+        );
+      } finally {
+        if (requestSeq !== cloudFolderSearchRequestSeq) return;
+        cloudFoldersBusy = false;
+        cloudFolderFilesBusy = false;
+        if (cloudFolderBrowserProvider) {
+          persistCloudFolderBrowserTrail(cloudFolderBrowserProvider, cloudFolderTrail);
+        }
+        renderCloudFolderBrowser();
+      }
+    }
+
+    async function openCloudFolderModal(provider: CloudImportProvider) {
+      if (!cloudProviderConfigured(provider)) {
+        showToast(`${cloudProviderLabel(provider)} is not configured yet.`, 'warning');
+        void startCloudSignIn(provider);
+        return;
+      }
+      cloudFolderBrowserProvider = provider;
+      cloudFolderSearchQuery = '';
+      cloudFolderTrail = savedCloudFolderBrowserState[provider]?.length
+        ? [...savedCloudFolderBrowserState[provider]]
+        : [];
+      openModal(cloudFolderModal);
+      await loadCloudFolderBrowser({
+        provider,
+        parentId: cloudFolderTrail[cloudFolderTrail.length - 1]?.id ?? '',
+        trail: [...cloudFolderTrail],
+      });
+    }
+
+    async function importCloudFolderFromBrowser() {
+      const provider = cloudFolderBrowserProvider;
+      if (!provider) return;
+      const current = currentCloudFolder();
+      selectedCloudImportFolders[provider] = current ? [{ id: current.id, name: current.name }] : [];
+      persistCloudFolderBrowserTrail(provider, cloudFolderTrail);
+      scanSourceMode = provider;
+      selectedSourceIndicatorVisible = true;
+      updateScanDirectoryDisplay();
+      syncAddMusicUi();
+      closeModal(cloudFolderModal);
+      await importCloudLibrary(provider, {
+        folderId: current?.id || null,
+        folderName: current?.name || null,
+      });
+    }
+
     function formatDriveFileSize(value: unknown): string {
       const bytes = Number(value);
       if (!Number.isFinite(bytes) || bytes <= 0) return '--';
@@ -3162,6 +3625,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         syncSelectedSourceIndicator();
         return;
       }
+      if (scanSourceMode === 'onedrive' || scanSourceMode === 'dropbox') {
+        const selected = selectedCloudImportFolders[scanSourceMode][0] ?? null;
+        renderDismissibleSelectedSource(`${cloudProviderLabel(scanSourceMode)} source: ${selected?.name || `All audio files in ${cloudProviderLabel(scanSourceMode)}`}`);
+        syncSelectedSourceIndicator();
+        return;
+      }
       const directory = scanDirectoryEl?.value.trim() ?? '';
       if (!directory) {
         dismissedSelectedSourceLabel = '';
@@ -3192,6 +3661,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       syncAddMusicUi();
       updateScanDirectoryDisplay();
       await openGoogleDriveFolderModal();
+    }
+
+    async function chooseCloudMusicSource(provider: CloudImportProvider) {
+      scanSourceMode = provider;
+      selectedSourceIndicatorVisible = true;
+      closeModal(addMusicSourceModal);
+      syncAddMusicUi();
+      updateScanDirectoryDisplay();
+      await openCloudFolderModal(provider);
     }
 
     function setListDensity(density: string) {
@@ -7870,7 +8348,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
             <div class="buttons">
               <button type="button" class="btn secondary" id="${provider}-oauth-start-btn">${configured ? `Sign in with ${label}` : `Sign in with ${label}`}</button>
-              <button type="button" class="btn" id="${provider}-import-btn" ${configured ? '' : 'disabled'}>Import ${label}</button>
+              <button type="button" class="btn" id="${provider}-import-btn" ${configured ? '' : 'disabled'}>Browse ${label} Folder</button>
             </div>
           </section>
         `;
@@ -8292,6 +8770,51 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           trail: nextTrail,
         });
       });
+      document.getElementById('cloud-folder-search')?.addEventListener('input', (event) => {
+        const provider = cloudFolderBrowserProvider;
+        if (!provider) return;
+        cloudFolderSearchQuery = String((event.currentTarget as HTMLInputElement | null)?.value ?? '');
+        const search = cloudFolderSearchQuery.trim();
+        const currentFolder = currentCloudFolder();
+        if (search) {
+          void loadCloudFolderBrowser({
+            provider,
+            search,
+            trail: cloudFolderTrail,
+          });
+          return;
+        }
+        void loadCloudFolderBrowser({
+          provider,
+          parentId: currentFolder?.id ?? '',
+          trail: cloudFolderTrail,
+        });
+      });
+      document.getElementById('cloud-folder-back-btn')?.addEventListener('click', () => {
+        const provider = cloudFolderBrowserProvider;
+        if (!provider || !cloudFolderTrail.length) return;
+        const nextTrail = cloudFolderTrail.slice(0, -1);
+        const parentId = nextTrail[nextTrail.length - 1]?.id ?? '';
+        void loadCloudFolderBrowser({
+          provider,
+          parentId,
+          trail: nextTrail,
+        });
+      });
+      document.getElementById('cloud-folder-refresh-btn')?.addEventListener('click', () => {
+        const provider = cloudFolderBrowserProvider;
+        if (!provider) return;
+        const current = currentCloudFolder();
+        void loadCloudFolderBrowser({
+          provider,
+          parentId: current?.id ?? '',
+          trail: cloudFolderTrail,
+          search: cloudFolderSearchQuery.trim() || undefined,
+        });
+      });
+      document.getElementById('cloud-folder-use-current-btn')?.addEventListener('click', () => {
+        void importCloudFolderFromBrowser();
+      });
       // Shift+drag selection on the folder list
       const gdriveFolderListEl = document.getElementById('google-drive-folder-list');
       gdriveFolderListEl?.addEventListener('mousedown', (e) => {
@@ -8369,16 +8892,16 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         void signInWithGoogle();
       });
       document.getElementById('onedrive-oauth-start-btn')?.addEventListener('click', () => {
-        void startCloudSignIn('onedrive');
+        void chooseCloudMusicSource('onedrive');
       });
       document.getElementById('dropbox-oauth-start-btn')?.addEventListener('click', () => {
-        void startCloudSignIn('dropbox');
+        void chooseCloudMusicSource('dropbox');
       });
       document.getElementById('onedrive-import-btn')?.addEventListener('click', () => {
-        void importCloudLibrary('onedrive');
+        void chooseCloudMusicSource('onedrive');
       });
       document.getElementById('dropbox-import-btn')?.addEventListener('click', () => {
-        void importCloudLibrary('dropbox');
+        void chooseCloudMusicSource('dropbox');
       });
       document.getElementById('account-status-google-btn')?.addEventListener('click', () => {
         openGoogleAuthModal();
@@ -9520,14 +10043,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
 
     // ── Boot ──────────────────────────────────────────────────────────────────
-    try {
-      preferences = parsePreferences(localStorage.getItem(preferencesKey));
       try {
-        const savedFavs = localStorage.getItem(gdriveFavoritesKey);
-        if (savedFavs) favoritedGoogleDriveFolders = JSON.parse(savedFavs) as Array<{ id: string; name: string }>;
-      } catch { /* ignore */ }
-      const savedDirectory = localStorage.getItem(scanDirectoryKey);
-      if (savedDirectory) scanDirectoryEl.value = savedDirectory;
+        preferences = parsePreferences(localStorage.getItem(preferencesKey));
+        try {
+          const savedFavs = localStorage.getItem(gdriveFavoritesKey);
+          if (savedFavs) favoritedGoogleDriveFolders = JSON.parse(savedFavs) as Array<{ id: string; name: string }>;
+        } catch { /* ignore */ }
+        loadCloudFolderBrowserState();
+        const savedDirectory = localStorage.getItem(scanDirectoryKey);
+        if (savedDirectory) scanDirectoryEl.value = savedDirectory;
       updateScanDirectoryDisplay();
       syncAddMusicUi();
       const savedNewTrackIds = JSON.parse(localStorage.getItem(recentNewTrackIdsKey) || '[]');
@@ -9591,6 +10115,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     closeGoogleDriveFolderModalBtn?.addEventListener('click', () => {
       closeModal(googleDriveFolderModal);
     });
+    closeCloudFolderModalBtn?.addEventListener('click', () => {
+      closeModal(cloudFolderModal);
+    });
     closeAddMusicSourceModalBtn?.addEventListener('click', () => {
       closeModal(addMusicSourceModal);
     });
@@ -9606,20 +10133,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       void chooseGoogleDriveMusicSource();
     });
     document.getElementById('add-music-source-onedrive-btn')?.addEventListener('click', () => {
-      if (!cloudProviderConfigured('onedrive')) {
-        showToast('OneDrive is not configured yet.', 'warning');
-        void startCloudSignIn('onedrive');
-        return;
-      }
-      void importCloudLibrary('onedrive');
+      void chooseCloudMusicSource('onedrive');
     });
     document.getElementById('add-music-source-dropbox-btn')?.addEventListener('click', () => {
-      if (!cloudProviderConfigured('dropbox')) {
-        showToast('Dropbox is not configured yet.', 'warning');
-        void startCloudSignIn('dropbox');
-        return;
-      }
-      void importCloudLibrary('dropbox');
+      void chooseCloudMusicSource('dropbox');
     });
     commandPaletteModal?.addEventListener('click', (event) => {
       if (event.target === commandPaletteModal) closeModal(commandPaletteModal);
@@ -9652,6 +10169,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     googleDriveFolderModal?.addEventListener('click', (event) => {
       if (event.target === googleDriveFolderModal) closeModal(googleDriveFolderModal);
+    });
+    cloudFolderModal?.addEventListener('click', (event) => {
+      if (event.target === cloudFolderModal) closeModal(cloudFolderModal);
     });
     addMusicSourceModal?.addEventListener('click', (event) => {
       if (event.target === addMusicSourceModal) closeModal(addMusicSourceModal);

@@ -27,6 +27,56 @@ function isFileEntry(entry: Record<string, unknown>): boolean {
   return String(entry['.tag'] ?? '').trim() === 'file';
 }
 
+function summarizeDropboxEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  return {
+    tag: String(entry['.tag'] ?? '').trim() || null,
+    id: String(entry.id ?? '').trim() || null,
+    name: String(entry.name ?? '').trim() || null,
+    mimeType: String(entry.mime_type ?? '').trim() || null,
+    pathLower: String(entry.path_lower ?? '').trim() || null,
+    size: entry.size == null ? null : String(entry.size),
+  };
+}
+
+function logDropboxFilesEvent(event: string, context: Record<string, unknown>, level: 'info' | 'warn' | 'error' = 'info') {
+  void logServerEvent({
+    level: level === 'warn' ? 'warning' : level,
+    message: `[dropbox-files] ${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event,
+      ...context,
+    })}`,
+    category: 'dropbox-files',
+    context: {
+      event,
+      ...context,
+    },
+    alsoConsole: level !== 'info',
+  }).catch(() => {});
+}
+
+function summarizeDropboxEntries(entries: Array<Record<string, unknown>>) {
+  const folders = entries.filter(isFolderEntry);
+  const files = entries.filter(isFileEntry);
+  const audioFiles = files.map(toAudioFile).filter((item): item is DropboxAudioFile => Boolean(item));
+  const skippedFiles = files.filter((entry) => !toAudioFile(entry));
+  return {
+    entryCount: entries.length,
+    folderCount: folders.length,
+    fileCount: files.length,
+    audioFileCount: audioFiles.length,
+    skippedFileCount: skippedFiles.length,
+    sampleEntries: entries.slice(0, 5).map(summarizeDropboxEntry),
+    sampleAudioFiles: audioFiles.slice(0, 5).map((file) => ({
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      pathLower: file.pathLower,
+      modifiedTime: file.modifiedTime,
+    })),
+  };
+}
+
 function toAudioFile(entry: Record<string, unknown>): DropboxAudioFile | null {
   if (!isFileEntry(entry)) return null;
   const name = String(entry.name ?? '').trim();
@@ -70,6 +120,11 @@ async function dropboxApiPost<T>(accessToken: string, path: string, body: Record
   const raw = await response.text();
   if (!response.ok) {
     const payload = JSON.parse(raw || '{}') as Record<string, unknown>;
+    logDropboxFilesEvent('api_error', {
+      path,
+      status: response.status,
+      error_summary: String(payload.error_summary ?? payload.error ?? raw ?? `Dropbox API ${path} failed.`),
+    }, 'error');
     throw new Error(String(payload.error_summary ?? payload.error ?? raw ?? `Dropbox API ${path} failed.`));
   }
   return raw ? JSON.parse(raw) as T : {} as T;
@@ -85,8 +140,13 @@ async function listFolderPage(input: {
   cursor: string | null;
   hasMore: boolean;
 }> {
+  logDropboxFilesEvent('list_folder_request', {
+    path: String(input.path ?? '').trim() || '',
+    cursor: input.cursor ?? null,
+    recursive: Boolean(input.recursive),
+  });
   if (input.cursor) {
-    return dropboxApiPost<{
+    const payload = await dropboxApiPost<{
       entries: Array<Record<string, unknown>>;
       cursor: string;
       has_more: boolean;
@@ -96,6 +156,13 @@ async function listFolderPage(input: {
         cursor: String(payload.cursor ?? '').trim() || null,
         hasMore: Boolean(payload.has_more),
       }));
+    logDropboxFilesEvent('list_folder_page', {
+      path: String(input.path ?? '').trim() || '',
+      cursor: input.cursor ?? null,
+      hasMore: payload.hasMore,
+      ...summarizeDropboxEntries(payload.entries),
+    });
+    return payload;
   }
   const payload = await dropboxApiPost<{
     entries: Array<Record<string, unknown>>;
@@ -132,6 +199,11 @@ export async function listDropboxFolderChildren(input: {
   truncated: boolean;
 }> {
   const search = String(input.search ?? '').trim().toLowerCase();
+  logDropboxFilesEvent('list_children_start', {
+    parentId: String(input.parentId ?? '').trim() || null,
+    search: search || null,
+    limit: Number.isFinite(Number(input.limit)) ? Math.trunc(Number(input.limit)) : null,
+  });
   if (search) {
     const all = await listDropboxAudioFiles({
       accessToken: input.accessToken,
@@ -150,9 +222,18 @@ export async function listDropboxFolderChildren(input: {
     path: folderPathForId(input.parentId),
     recursive: false,
   });
+  const folders = page.entries.map(toFolderEntry).filter((item): item is DropboxFolderEntry => Boolean(item));
+  const files = page.entries.map(toAudioFile).filter((item): item is DropboxAudioFile => Boolean(item));
+  logDropboxFilesEvent('list_children_page_summary', {
+    parentId: String(input.parentId ?? '').trim() || null,
+    ...summarizeDropboxEntries(page.entries),
+    parsedFolderCount: folders.length,
+    parsedAudioFileCount: files.length,
+    truncated: page.hasMore,
+  });
   return {
-    folders: page.entries.map(toFolderEntry).filter((item): item is DropboxFolderEntry => Boolean(item)),
-    files: page.entries.map(toAudioFile).filter((item): item is DropboxAudioFile => Boolean(item)),
+    folders,
+    files,
     truncated: page.hasMore,
   };
 }
@@ -173,17 +254,38 @@ export async function listDropboxAudioFiles(input: {
     .map((folderId) => folderPathForId(folderId))
     .filter(Boolean);
   const path = roots[0] ?? '';
+  logDropboxFilesEvent('list_audio_start', {
+    folderId: String(input.folderId ?? '').trim() || null,
+    allFolderIds: roots.length ? roots : null,
+    search: search || null,
+    limit: input.limit,
+    pageToken: input.pageToken || null,
+    path,
+  });
   const page = await listFolderPage({
     accessToken: input.accessToken,
     path,
     recursive: true,
     cursor: input.pageToken || undefined,
   });
-  const files = page.entries
+  const parsedFiles = page.entries
     .map(toAudioFile)
     .filter((item): item is DropboxAudioFile => Boolean(item))
-    .filter((item) => !search || item.name.toLowerCase().includes(search))
-    .slice(0, input.limit);
+    .filter((item) => !search || item.name.toLowerCase().includes(search));
+  const files = parsedFiles.slice(0, input.limit);
+  logDropboxFilesEvent('list_audio_page_summary', {
+    folderId: String(input.folderId ?? '').trim() || null,
+    allFolderIds: roots.length ? roots : null,
+    path,
+    search: search || null,
+    limit: input.limit,
+    cursor: page.cursor,
+    hasMore: page.hasMore,
+    ...summarizeDropboxEntries(page.entries),
+    parsedAudioFileCount: parsedFiles.length,
+    returnedFileCount: files.length,
+    filteredOutBySearch: search ? parsedFiles.length - files.length : 0,
+  });
   return {
     files,
     nextPageToken: page.hasMore ? page.cursor : null,
@@ -201,17 +303,10 @@ export async function collectDropboxFolderTree(input: {
     limit: Number.POSITIVE_INFINITY,
   });
   const folders: string[] = [String(input.rootFolderId ?? '').trim()].filter(Boolean);
-  void logServerEvent({
-    level: 'info',
-    message: `[dropbox-files] ${JSON.stringify({
-      timestamp: new Date().toISOString(),
-      event: 'folder_tree_collected',
-      rootFolderId: input.rootFolderId,
-      fileCount: entries.files.length,
-    })}`,
-    category: 'dropbox-files',
-    context: { rootFolderId: input.rootFolderId, fileCount: entries.files.length },
-    alsoConsole: true,
-  }).catch(() => {});
+  logDropboxFilesEvent('folder_tree_collected', {
+    rootFolderId: input.rootFolderId,
+    fileCount: entries.files.length,
+    collectedFolderCount: folders.length,
+  });
   return folders;
 }

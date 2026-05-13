@@ -391,6 +391,45 @@ export default async function AppShell({
         </div>
       ) : null}
 
+      {hasProFeatures ? (
+        <div className="modal" id="cloud-folder-modal" aria-hidden="true">
+          <div className="modal-card google-drive-folder-card">
+            <div className="modal-head">
+              <h3 id="cloud-folder-modal-title">Choose Cloud Folder</h3>
+              <button className="close" id="close-cloud-folder-modal" type="button">&times;</button>
+            </div>
+            <div className="google-drive-browser">
+              <div className="google-drive-browser-head">
+                <div className="scan-preflight" id="cloud-folder-status">Browse a connected cloud folder.</div>
+                <div className="google-drive-folder-breadcrumb" id="cloud-folder-path">Current folder: Root</div>
+                <input
+                  className="google-drive-folder-search"
+                  id="cloud-folder-search"
+                  type="search"
+                  placeholder="Search folders or files"
+                  aria-label="Search cloud folders or files"
+                />
+              </div>
+              <div className="google-drive-browser-shell">
+                <aside className="google-drive-sidebar" id="cloud-folder-sidebar">
+                  <div className="empty">Loading locations…</div>
+                </aside>
+                <section className="google-drive-browser-main">
+                  <div className="google-drive-browser-toolbar">
+                    <button className="btn secondary" id="cloud-folder-back-btn" type="button">Back</button>
+                    <button className="btn" id="cloud-folder-use-current-btn" type="button">Import This Folder</button>
+                    <button className="btn secondary" id="cloud-folder-refresh-btn" type="button">Refresh</button>
+                  </div>
+                  <div className="google-drive-folder-list" id="cloud-folder-list">
+                    <div className="empty">Loading cloud folders…</div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="modal" id="add-music-source-modal" aria-hidden="true">
         <div className="modal-card add-music-source-card">
           <div className="modal-head">
