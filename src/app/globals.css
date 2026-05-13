@@ -986,6 +986,20 @@ main {
 .songs-pane > .sorts {
   flex: 0 0 auto;
 }
+.songs-pane-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 16px 10px;
+}
+.songs-pane-controls .songs-pane-toggle {
+  width: auto;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
 .songs-pane > .list {
   flex: 1 1 auto;
 }

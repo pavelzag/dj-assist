@@ -34,6 +34,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const keyFilterEl = document.getElementById('key-filter') as HTMLInputElement;
     const showOnlyNoBpmEl = document.getElementById('show-only-no-bpm') as HTMLInputElement | null;
     const showPendingGoogleDriveImportsEl = document.getElementById('show-pending-google-drive-imports') as HTMLInputElement | null;
+    const hideDuplicateCopiesEl = document.getElementById('hide-duplicate-copies') as HTMLInputElement | null;
     const hideUnknownArtistsEl = document.getElementById('hide-unknown-artists') as HTMLInputElement;
     const hiddenCountBadge = document.getElementById('hidden-count-badge') as HTMLElement | null;
     const desktopStatusBadge = document.getElementById('desktop-status-badge') as HTMLElement;
@@ -152,6 +153,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       defaultListDensity: 'comfortable' | 'compact';
       collapseScanLog: boolean;
       scanProgressToasts: boolean;
+      hideDuplicateCopies: boolean;
       listShowAlbum: boolean;
       listShowBitrate: boolean;
       listShowTags: boolean;
@@ -166,6 +168,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       defaultListDensity: 'comfortable',
       collapseScanLog: true,
       scanProgressToasts: isDebugFlavor,
+      hideDuplicateCopies: false,
       listShowAlbum: true,
       listShowBitrate: true,
       listShowTags: true,
@@ -286,6 +289,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let currentRenderedList: Record<string, unknown>[] = [];
     let frozenTrackIdsDuringScan: number[] | null = null;
     let duplicateTrackIds = new Set<number>();
+    let duplicateRepresentativeTrackIds = new Set<number>();
     let lastUndoAction: null | {
       kind: 'delete' | 'bulk-edit';
       label: string;
@@ -436,6 +440,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           defaultListDensity: parsed.defaultListDensity === 'compact' ? 'compact' : 'comfortable',
           collapseScanLog: parsed.collapseScanLog !== false,
           scanProgressToasts: parsed.scanProgressToasts === undefined ? defaultPreferences.scanProgressToasts : parsed.scanProgressToasts !== false,
+          hideDuplicateCopies: parsed.hideDuplicateCopies === true,
           listShowAlbum: parsed.listShowAlbum !== false,
           listShowBitrate: parsed.listShowBitrate !== false,
           listShowTags: parsed.listShowTags !== false,
@@ -4111,7 +4116,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         .filter((track) => matchesMainPaneFilters(track))
         .filter((track) => matchesBrowseScope(track))
         .filter((track) => matchesQuickFilter(track))
-        .filter((track) => showOnlyNoBpmEl?.checked ? !hasBpm(track) : true);
+        .filter((track) => showOnlyNoBpmEl?.checked ? !hasBpm(track) : true)
+        .filter((track) => {
+          if (!hideDuplicateCopiesEl?.checked) return true;
+          const trackId = Number(track.id);
+          if (!Number.isFinite(trackId)) return true;
+          if (!duplicateTrackIds.has(trackId)) return true;
+          return duplicateRepresentativeTrackIds.has(trackId);
+        });
       return filtered.sort(compareTracks);
     }
 
@@ -4259,20 +4271,41 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function updateDuplicateTrackIdsFromTracks(items: Record<string, unknown>[]) {
-      const duplicateGroups = new Map<string, number[]>();
+      const duplicateGroups = new Map<string, Record<string, unknown>[]>();
       for (const track of items) {
         const key = String(track.spotify_id ?? '').trim()
           || String(track.file_hash ?? '').trim()
           || `${normalizeText(track.artist)}|${normalizeText(track.title)}|${Math.round(Number(track.duration ?? 0))}`;
         if (!key) continue;
         const bucket = duplicateGroups.get(key) ?? [];
-        bucket.push(Number(track.id));
+        bucket.push(track);
         duplicateGroups.set(key, bucket);
       }
+      const sourcePriority = (track: Record<string, unknown>) => {
+        const path = String(track.path ?? '').trim().toLowerCase();
+        if (!path) return 0;
+        if (path.startsWith('gdrive:')) return 1;
+        if (path.startsWith('onedrive:')) return 2;
+        if (path.startsWith('dropbox:')) return 3;
+        return 0;
+      };
       duplicateTrackIds = new Set(
         [...duplicateGroups.values()]
           .filter((bucket) => bucket.length > 1)
-          .flatMap((bucket) => bucket.filter((id) => Number.isFinite(id))),
+          .flatMap((bucket) => bucket.map((track) => Number(track.id)).filter((id) => Number.isFinite(id))),
+      );
+      duplicateRepresentativeTrackIds = new Set(
+        [...duplicateGroups.values()]
+          .filter((bucket) => bucket.length > 1)
+          .map((bucket) => [...bucket].sort((a, b) => {
+            const sourceDelta = sourcePriority(a) - sourcePriority(b);
+            if (sourceDelta !== 0) return sourceDelta;
+            const titleDelta = normalizeText(String(a.title ?? '')).localeCompare(normalizeText(String(b.title ?? '')));
+            if (titleDelta !== 0) return titleDelta;
+            return Number(a.id) - Number(b.id);
+          })[0])
+          .map((track) => Number(track.id))
+          .filter((id) => Number.isFinite(id)),
       );
     }
 
@@ -6652,7 +6685,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const previousScrollTop = listEl.scrollTop;
       if (hiddenCountBadge) hiddenCountBadge.textContent = `Shown: ${sorted.length}`;
       if (statusbar) {
-        statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${duplicateTrackIds.size ? ` | Duplicates: <strong>${duplicateTrackIds.size}</strong>` : ''}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
+        const duplicateLabel = hideDuplicateCopiesEl?.checked && duplicateTrackIds.size
+          ? ` | Duplicates: <strong>${duplicateTrackIds.size}</strong> · Hidden copies filtered`
+          : duplicateTrackIds.size
+            ? ` | Duplicates: <strong>${duplicateTrackIds.size}</strong>`
+            : '';
+        statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${duplicateLabel}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
       }
       if (!items.length) {
         listIsVirtualized = false;
@@ -6702,6 +6740,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           keyFilterEl.value = '';
           if (showOnlyNoBpmEl) showOnlyNoBpmEl.checked = false;
           if (showPendingGoogleDriveImportsEl) showPendingGoogleDriveImportsEl.checked = false;
+          if (hideDuplicateCopiesEl) {
+            hideDuplicateCopiesEl.checked = false;
+            preferences.hideDuplicateCopies = false;
+            savePreferences();
+          }
           hideUnknownArtistsEl.checked = false;
           activeQuickFilter = '';
           renderQuickFilters();
@@ -10014,6 +10057,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       renderList(tracks);
       ensureActiveTrackSelection();
     });
+    hideDuplicateCopiesEl?.addEventListener('change', () => {
+      preferences.hideDuplicateCopies = hideDuplicateCopiesEl.checked;
+      savePreferences();
+      renderList(tracks);
+      ensureActiveTrackSelection();
+      if (selectedDetailTrackId != null) {
+        void refreshSelectedTrackRecommendations({ resetPage: true });
+      }
+    });
     hideUnknownArtistsEl.addEventListener('change', () => {
       renderList(tracks);
       ensureActiveTrackSelection();
@@ -10055,6 +10107,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         if (savedDirectory) scanDirectoryEl.value = savedDirectory;
       updateScanDirectoryDisplay();
       syncAddMusicUi();
+      if (hideDuplicateCopiesEl) hideDuplicateCopiesEl.checked = preferences.hideDuplicateCopies;
       const savedNewTrackIds = JSON.parse(localStorage.getItem(recentNewTrackIdsKey) || '[]');
       if (Array.isArray(savedNewTrackIds)) {
         recentNewTrackIds = new Set(savedNewTrackIds.map((value) => Number(value)).filter((id) => Number.isFinite(id)));
@@ -10064,6 +10117,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       updateScanDirectoryDisplay();
       syncAddMusicUi();
       preferences = { ...defaultPreferences };
+      if (hideDuplicateCopiesEl) hideDuplicateCopiesEl.checked = preferences.hideDuplicateCopies;
       setListDensity(preferences.defaultListDensity);
     }
     document.getElementById('empty-choose-folder-btn')?.addEventListener('click', () => {

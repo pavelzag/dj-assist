@@ -2,9 +2,55 @@
 
 set -euo pipefail
 
-TOTAL_STEPS=8
+TOTAL_STEPS=7
 CURRENT_STEP=0
 SCRIPT_STARTED_AT=$SECONDS
+DOWNLOAD_ASSETS=false
+DOWNLOAD_ROOT="$HOME/Downloads/dj-assist"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d|--d|--download)
+      DOWNLOAD_ASSETS=true
+      shift
+      if [[ $# -gt 0 && "${1#-}" != "$1" ]]; then
+        DOWNLOAD_ROOT=$1
+        shift
+      fi
+      ;;
+    --dest|--download-dir|--download-root)
+      option_name=$1
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Missing value for ${option_name}" >&2
+        exit 1
+      fi
+      DOWNLOAD_ROOT=$1
+      shift
+      ;;
+    --no-download)
+      DOWNLOAD_ASSETS=false
+      shift
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: pushdj [--download [DEST]] [--dest DEST] [--no-download]
+
+Default behavior: wait for the release workflow and print the DMG release URLs.
+Use --download (or --d) to fetch the DMG assets locally.
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$DOWNLOAD_ASSETS" == true ]]; then
+  TOTAL_STEPS=8
+fi
 
 format_elapsed() {
   local total_seconds=$1
@@ -92,15 +138,9 @@ fi
 finish_step
 
 run_number=$(gh run view "$run_id" --json number --jq '.number')
-start_step "Downloading DMG assets from release #$run_number"
-
-dest="$HOME/Downloads/dj-assist/run-$run_number"
-mkdir -p "$dest"
-github_token=$(gh auth token)
+start_step "Resolving DMG release assets from release #$run_number"
 
 release_tag=''
-downloaded_bytes=0
-total_expected_bytes=0
 
 resolve_release_tag() {
   local tag
@@ -108,33 +148,6 @@ resolve_release_tag() {
     | jq -r --arg head_sha "$head_sha" '.[] | select(.target_commitish == $head_sha) | .tag_name' \
     | head -n 1)
   printf '%s' "$tag"
-}
-
-download_release_asset() {
-  local asset_name=$1
-  local browser_download_url=$2
-  local asset_size=${3:-0}
-  local asset_dir="${dest}/${asset_name}"
-  local asset_path="${asset_dir}/${asset_name}"
-
-  rm -rf "$asset_dir"
-  mkdir -p "$asset_dir"
-
-  printf 'Progress: %s / %s downloaded before this artifact\n' \
-    "$(format_bytes "$downloaded_bytes")" \
-    "$(format_bytes "$total_expected_bytes")"
-  curl --fail --location \
-    -H "Authorization: Bearer ${github_token}" \
-    -H "Accept: application/octet-stream" \
-    -o "$asset_path" \
-    "$browser_download_url"
-
-  downloaded_bytes=$(( downloaded_bytes + asset_size ))
-  printf 'Completed %s (%s). Overall: %s / %s\n' \
-    "$asset_name" \
-    "$(format_bytes "$asset_size")" \
-    "$(format_bytes "$downloaded_bytes")" \
-    "$(format_bytes "$total_expected_bytes")"
 }
 
 run_finished=false
@@ -187,6 +200,52 @@ if [[ -z "$asset_json" ]]; then
   echo "No DMG release assets were found for tag $release_tag." >&2
   exit 1
 fi
+
+finish_step
+
+if [[ "$DOWNLOAD_ASSETS" != true ]]; then
+  echo "DMG release assets for tag $release_tag:"
+  while IFS=$'\t' read -r asset_name browser_download_url asset_size; do
+    [[ -n "$asset_name" ]] || continue
+    printf '%s\n' "$browser_download_url"
+  done <<< "$asset_json"
+  printf '\nRelease helper finished in %s\n' "$(format_elapsed $(( SECONDS - SCRIPT_STARTED_AT )))"
+  exit 0
+fi
+
+start_step "Downloading DMG assets"
+dest="$DOWNLOAD_ROOT/run-$run_number"
+mkdir -p "$dest"
+github_token=$(gh auth token)
+downloaded_bytes=0
+total_expected_bytes=0
+
+download_release_asset() {
+  local asset_name=$1
+  local browser_download_url=$2
+  local asset_size=${3:-0}
+  local asset_dir="${dest}/${asset_name}"
+  local asset_path="${asset_dir}/${asset_name}"
+
+  rm -rf "$asset_dir"
+  mkdir -p "$asset_dir"
+
+  printf 'Progress: %s / %s downloaded before this artifact\n' \
+    "$(format_bytes "$downloaded_bytes")" \
+    "$(format_bytes "$total_expected_bytes")"
+  curl --fail --location \
+    -H "Authorization: Bearer ${github_token}" \
+    -H "Accept: application/octet-stream" \
+    -o "$asset_path" \
+    "$browser_download_url"
+
+  downloaded_bytes=$(( downloaded_bytes + asset_size ))
+  printf 'Completed %s (%s). Overall: %s / %s\n' \
+    "$asset_name" \
+    "$(format_bytes "$asset_size")" \
+    "$(format_bytes "$downloaded_bytes")" \
+    "$(format_bytes "$total_expected_bytes")"
+}
 
 while IFS=$'\t' read -r asset_name browser_download_url asset_size; do
   [[ -n "$asset_name" ]] || continue

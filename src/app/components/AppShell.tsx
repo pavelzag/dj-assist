@@ -93,6 +93,12 @@ export default async function AppShell({
             <button type="button" data-sort="duration-asc" id="sort-dur">Dur ▲</button>
             <button type="button" data-sort="album-asc" id="sort-album">Album ▲</button>
           </div>
+          <div className="songs-pane-controls">
+            <label className="preference-row songs-pane-toggle">
+              <input id="hide-duplicate-copies" type="checkbox" />
+              <span>Hide duplicate copies</span>
+            </label>
+          </div>
           <div className="list" id="track-list" />
           <div className="songs-fetch-indicator" id="songs-fetch-indicator" hidden>
             <span className="songs-fetch-dots" aria-hidden="true">
