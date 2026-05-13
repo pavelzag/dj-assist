@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import packageJson from '../../../package.json';
 import { appFlavor as resolveAppFlavor } from '@/lib/app-flavor';
+import { serverRuntimeSummary } from '@/lib/runtime-settings';
 
-export default function AppShell({
+export default async function AppShell({
   clientInit,
 }: {
   clientInit: ReactNode;
@@ -11,6 +12,9 @@ export default function AppShell({
   const appFlavor = resolveAppFlavor();
   const isDebugFlavor = appFlavor === 'debug';
   const hasProFeatures = appFlavor !== 'free-prod';
+  const runtime = await serverRuntimeSummary();
+  const hasOneDriveImport = hasProFeatures && Boolean(runtime.onedriveOauth?.configured);
+  const hasDropboxImport = hasProFeatures && Boolean(runtime.dropboxOauth?.configured);
   return (
     <>
       <header data-platform="electron">
@@ -418,7 +422,31 @@ export default function AppShell({
                   </span>
                 </button>
               ) : null}
+              {hasOneDriveImport ? (
+                <button className="add-music-source-option" id="add-music-source-onedrive-btn" type="button">
+                  <span className="add-music-source-option-icon" aria-hidden="true">1</span>
+                  <span className="add-music-source-option-copy">
+                    <strong>OneDrive</strong>
+                    <span>Sign in and import audio from OneDrive.</span>
+                  </span>
+                </button>
+              ) : null}
+              {hasDropboxImport ? (
+                <button className="add-music-source-option" id="add-music-source-dropbox-btn" type="button">
+                  <span className="add-music-source-option-icon" aria-hidden="true">D</span>
+                  <span className="add-music-source-option-copy">
+                    <strong>Dropbox</strong>
+                    <span>Sign in and import audio from Dropbox.</span>
+                  </span>
+                </button>
+              ) : null}
             </div>
+            {hasProFeatures ? (
+              <div className="scan-preflight subtle add-music-source-status">
+                <span>{hasOneDriveImport ? 'OneDrive ready' : 'OneDrive not configured'}</span>
+                <span>{hasDropboxImport ? 'Dropbox ready' : 'Dropbox not configured'}</span>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

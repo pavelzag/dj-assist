@@ -373,6 +373,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const detailModeByTrackId: Record<number, 'overview' | 'match' | 'related'> = {};
     const setSuggestionPageBySetId: Record<number, number> = {};
     const selectedTrackIds = new Set<number>();
+    let selectionFlashTrackId: number | null = null;
+    let selectionFlashTimer: ReturnType<typeof setTimeout> | null = null;
     let preferences: Preferences = { ...defaultPreferences };
 
     // ── Utilities ─────────────────────────────────────────────────────────────
@@ -1311,6 +1313,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           ? 'Browse a Drive folder and import its audio metadata with read-only access.'
           : googleDriveFeatureStatusLabel();
       }
+      for (const provider of ['onedrive', 'dropbox'] as const) {
+        const button = document.getElementById(`add-music-source-${provider}-btn`) as HTMLButtonElement | null;
+        const copy = button?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
+        const configured = cloudProviderConfigured(provider);
+        if (button) {
+          button.dataset.locked = configured ? 'false' : 'true';
+          button.title = configured
+            ? `Import from ${cloudProviderLabel(provider)}`
+            : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
+        }
+        if (copy) {
+          copy.textContent = configured
+            ? `Sign in and import audio from ${cloudProviderLabel(provider)}.`
+            : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
+        }
+      }
       syncSongsFetchIndicator();
     }
 
@@ -2109,6 +2127,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!summary) return `Sign in to connect ${cloudProviderLabel(provider)}.`;
       if (summary.configured) return `${cloudProviderLabel(provider)} OAuth configured.`;
       return `Sign in to connect ${cloudProviderLabel(provider)}.`;
+    }
+
+    function cloudProviderConfigured(provider: 'onedrive' | 'dropbox') {
+      const summary = cloudProviderRuntimeSummary(provider);
+      return Boolean(summary?.configured);
     }
 
     async function startCloudSignIn(provider: 'onedrive' | 'dropbox') {
@@ -6079,6 +6102,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const signature = buildTrackRowSignature(track);
       row.dataset.id = String(track.id);
       row.classList.toggle('active', Number(track.id) === activeTrackId);
+      row.classList.toggle('flash', Number(track.id) === selectionFlashTrackId);
       if (row.dataset.signature === signature) return;
       row.dataset.signature = signature;
       row.innerHTML = trackRowMarkup(track);
@@ -6087,7 +6111,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function createTrackRowElement(track: Record<string, unknown>): HTMLElement {
       const row = document.createElement('div');
-      row.className = `row ${Number(track.id) === activeTrackId ? 'active' : ''}`;
+      row.className = `row ${Number(track.id) === activeTrackId ? 'active' : ''} ${Number(track.id) === selectionFlashTrackId ? 'flash' : ''}`;
       row.draggable = true;
       updateTrackRowElement(row, track);
       return row;
@@ -7440,7 +7464,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           return true;
         }
         tracksDiv.innerHTML = tracks.map((t: Record<string, unknown>) => `
-          <div class="set-track-row" data-set-id="${setId}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}">
+          <div class="set-track-row" data-set-id="${setId}" data-track-id="${esc(String(t.id ?? ''))}" data-entry-id="${esc(String(t.client_entry_id ?? ''))}">
             <div>
               <strong><button type="button" class="nav-link inline" data-nav-kind="artist" data-nav-value="${esc(t.artist ?? 'Unknown')}">${esc(t.artist ?? 'Unknown')}</button> - ${esc(t.title ?? 'Untitled')}</strong>
               <span>${albumNameFor(t) ? `<button type="button" class="nav-link inline subtle" data-nav-kind="album" data-nav-value="${esc(albumNameFor(t))}" data-nav-artist="${esc(t.artist ?? '')}">${esc(albumNameFor(t))}</button> · ` : ''}${t.bpm ? displayBpm(t.bpm, t.id as number) + ' BPM' : '--'} · ${esc(t.key ?? '--')}</span>
@@ -7450,6 +7474,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         `).join('') + `<div class="set-drop-zone" data-set-id="${setId}">Drop tracks here to add</div><div class="set-suggestions" id="set-suggestions-${setId}"><div class="scan-log-entry info">Loading intelligent suggestions…</div></div>`;
         bindSetDropZone(setItem, setId);
         bindLibraryNavLinks(tracksDiv);
+        tracksDiv.querySelectorAll<HTMLElement>('.set-track-row[data-set-id]').forEach((row) => {
+          row.addEventListener('click', (event) => {
+            if ((event.target as HTMLElement | null)?.closest('.remove-track-btn, [data-nav-kind]')) return;
+            document.querySelector('[data-panel="track"]')?.dispatchEvent(new MouseEvent('click'));
+            void selectTrack(String((row as HTMLElement).dataset.trackId ?? ''), true, true, 0, { flash: true });
+          });
+        });
         tracksDiv.querySelectorAll('.remove-track-btn').forEach((btn) => {
           btn.addEventListener('click', async () => {
             const sid = parseInt((btn as HTMLElement).dataset.setId!, 10);
@@ -9008,10 +9039,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
-    function applyTrackSelection(id: string, ensureVisible = false) {
+    function applyTrackSelection(id: string, ensureVisible = false, flash = false) {
       if (autoArtFetchTimer) { clearTimeout(autoArtFetchTimer); autoArtFetchTimer = null; }
+      if (selectionFlashTimer) {
+        clearTimeout(selectionFlashTimer);
+        selectionFlashTimer = null;
+      }
       activeTrackId = Number(id);
       nowPlayingTrackId = activeTrackId;
+      selectionFlashTrackId = flash ? activeTrackId : null;
       try { sessionStorage.setItem(activeTrackKey, String(activeTrackId)); } catch { /* ignore */ }
       if (currentPanel !== 'track') {
         openPanel('track');
@@ -9020,8 +9056,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (ensureVisible) {
         requestAnimationFrame(() => {
           listEl.querySelector<HTMLElement>(`.row[data-id="${activeTrackId}"]`)?.scrollIntoView({ block: 'nearest' });
-      });
-    }
+        });
+      }
+      if (flash) {
+        selectionFlashTimer = setTimeout(() => {
+          selectionFlashTimer = null;
+          selectionFlashTrackId = null;
+          renderList(tracks);
+        }, 850);
+      }
     }
 
     function preserveHighlightedTrack(trackId: number, options: { ensureVisible?: boolean; focusList?: boolean } = {}) {
@@ -9150,8 +9193,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }, delayMs);
     }
 
-    async function selectTrack(id: string, autoPlay = false, ensureVisible = false, detailDelayMs = 0) {
-      applyTrackSelection(id, ensureVisible);
+    async function selectTrack(id: string, autoPlay = false, ensureVisible = false, detailDelayMs = 0, options?: { flash?: boolean }) {
+      applyTrackSelection(id, ensureVisible, Boolean(options?.flash));
       scheduleTrackDetailLoad(id, autoPlay, detailDelayMs);
     }
 
@@ -9561,6 +9604,22 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return;
       }
       void chooseGoogleDriveMusicSource();
+    });
+    document.getElementById('add-music-source-onedrive-btn')?.addEventListener('click', () => {
+      if (!cloudProviderConfigured('onedrive')) {
+        showToast('OneDrive is not configured yet.', 'warning');
+        void startCloudSignIn('onedrive');
+        return;
+      }
+      void importCloudLibrary('onedrive');
+    });
+    document.getElementById('add-music-source-dropbox-btn')?.addEventListener('click', () => {
+      if (!cloudProviderConfigured('dropbox')) {
+        showToast('Dropbox is not configured yet.', 'warning');
+        void startCloudSignIn('dropbox');
+        return;
+      }
+      void importCloudLibrary('dropbox');
     });
     commandPaletteModal?.addEventListener('click', (event) => {
       if (event.target === commandPaletteModal) closeModal(commandPaletteModal);
