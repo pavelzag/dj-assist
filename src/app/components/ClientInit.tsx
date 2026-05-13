@@ -24,6 +24,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     type CloudImportProvider = 'onedrive' | 'dropbox';
     type CloudImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
     type ArtworkAnalysisState = 'idle' | 'running' | 'success' | 'error';
+    type SyncFolderTarget = {
+      kind: 'local' | 'google_drive' | 'onedrive' | 'dropbox';
+      folderId?: string | null;
+      folderName?: string | null;
+      directory?: string | null;
+    };
 
     // ── DOM refs ──────────────────────────────────────────────────────────────
     const listEl = document.getElementById('track-list') as HTMLElement;
@@ -44,6 +50,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const listDensityEl = document.getElementById('list-density') as HTMLSelectElement | null;
     const quickFilterBarEl = document.getElementById('quick-filter-bar') as HTMLElement | null;
     const quickFilterNewBtn = document.getElementById('quick-filter-new') as HTMLButtonElement | null;
+    const syncFoldersBtn = document.getElementById('sync-folders-btn') as HTMLButtonElement | null;
     const scanDirectoryEl = document.getElementById('scan-directory') as HTMLInputElement;
     const scanStatusEl = document.getElementById('scan-status') as HTMLElement;
     const scanProgressSourceEl = document.getElementById('scan-progress-source') as HTMLElement | null;
@@ -205,6 +212,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let googleDriveImportBusy = false;
     let googleDriveFilesBusy = false;
     let googleDriveFilesLoaded = false;
+    let folderSyncBusy = false;
     let artworkAnalysisState: ArtworkAnalysisState = 'idle';
     let artworkAnalysisCurrent = 0;
     let artworkAnalysisTotal = 0;
@@ -1194,6 +1202,115 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return directory.split(/[\\/]/).filter(Boolean).pop() ?? directory;
     }
 
+    function parentDirectoryFromPath(filePath: string) {
+      const normalized = String(filePath ?? '').trim().replace(/[\\/]+$/, '');
+      if (!normalized) return null;
+      const lastSlash = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+      if (lastSlash <= 0) return null;
+      return normalized.slice(0, lastSlash);
+    }
+
+    function trackTags(track: Record<string, unknown>) {
+      return Array.isArray(track.custom_tags)
+        ? (track.custom_tags as unknown[]).map((value) => String(value).trim()).filter(Boolean)
+        : [];
+    }
+
+    function extractTagValues(track: Record<string, unknown>, prefix: string) {
+      return trackTags(track)
+        .filter((tag) => tag.startsWith(prefix))
+        .map((tag) => tag.slice(prefix.length).trim())
+        .filter(Boolean);
+    }
+
+    function collectSongsPaneSyncTargets(items: Record<string, unknown>[]) {
+      const localFolders = new Map<string, SyncFolderTarget>();
+      const cloudFolders = new Map<SyncFolderTarget['kind'], Map<string, SyncFolderTarget>>();
+      for (const kind of ['google_drive', 'onedrive', 'dropbox'] as const) {
+        cloudFolders.set(kind, new Map<string, SyncFolderTarget>());
+      }
+
+      for (const track of items) {
+        const path = String(track.path ?? '').trim();
+        if (!path) continue;
+        if (path.startsWith('gdrive:')) {
+          const folderIds = extractTagValues(track, 'gdrive-folder:');
+          const folderNames = extractTagValues(track, 'gdrive-folder-name:');
+          const fallbackFolders = folderIds.length ? [] : selectedGoogleDriveFolders;
+          const bucket = cloudFolders.get('google_drive')!;
+          for (const folder of (folderIds.length ? folderIds.map((folderId, index) => ({ id: folderId, name: folderNames[index] ?? folderNames[0] ?? 'Google Drive folder' })) : fallbackFolders.map((folder) => ({ id: folder.id, name: folder.name || 'Google Drive folder' })))) {
+            const folderId = String(folder.id ?? '').trim();
+            const folderName = String(folder.name ?? '').trim() || 'Google Drive folder';
+            if (!folderId || bucket.has(folderId)) continue;
+            bucket.set(folderId, {
+              kind: 'google_drive',
+              folderId,
+              folderName,
+            });
+          }
+          continue;
+        }
+        if (path.startsWith('onedrive:')) {
+          const folderIds = extractTagValues(track, 'onedrive-folder:');
+          const folderNames = extractTagValues(track, 'onedrive-folder-name:');
+          const fallbackFolders = folderIds.length ? [] : selectedCloudImportFolders.onedrive;
+          const bucket = cloudFolders.get('onedrive')!;
+          for (const folder of (folderIds.length ? folderIds.map((folderId, index) => ({ id: folderId, name: folderNames[index] ?? folderNames[0] ?? 'OneDrive folder' })) : fallbackFolders.map((folder) => ({ id: folder.id, name: folder.name || 'OneDrive folder' })))) {
+            const folderId = String(folder.id ?? '').trim();
+            const folderName = String(folder.name ?? '').trim() || 'OneDrive folder';
+            if (!folderId || bucket.has(folderId)) continue;
+            bucket.set(folderId, {
+              kind: 'onedrive',
+              folderId,
+              folderName,
+            });
+          }
+          continue;
+        }
+        if (path.startsWith('dropbox:')) {
+          const folderIds = extractTagValues(track, 'dropbox-folder:');
+          const folderNames = extractTagValues(track, 'dropbox-folder-name:');
+          const fallbackFolders = folderIds.length ? [] : selectedCloudImportFolders.dropbox;
+          const bucket = cloudFolders.get('dropbox')!;
+          for (const folder of (folderIds.length ? folderIds.map((folderId, index) => ({ id: folderId, name: folderNames[index] ?? folderNames[0] ?? 'Dropbox folder' })) : fallbackFolders.map((folder) => ({ id: folder.id, name: folder.name || 'Dropbox folder' })))) {
+            const folderId = String(folder.id ?? '').trim();
+            const folderName = String(folder.name ?? '').trim() || 'Dropbox folder';
+            if (bucket.has(folderId)) continue;
+            bucket.set(folderId, {
+              kind: 'dropbox',
+              folderId,
+              folderName,
+            });
+          }
+          continue;
+        }
+
+        const directory = parentDirectoryFromPath(path);
+        if (!directory || localFolders.has(directory)) continue;
+        localFolders.set(directory, {
+          kind: 'local',
+          directory,
+          folderName: directory.split(/[\\/]/).filter(Boolean).pop() ?? directory,
+        });
+      }
+
+      return {
+        local: [...localFolders.values()],
+        google_drive: [...cloudFolders.get('google_drive')!.values()],
+        onedrive: [...cloudFolders.get('onedrive')!.values()],
+        dropbox: [...cloudFolders.get('dropbox')!.values()],
+      };
+    }
+
+    function formatSyncTargetsSummary(targets: ReturnType<typeof collectSongsPaneSyncTargets>) {
+      return [
+        targets.local.length ? `${targets.local.length} local` : '',
+        targets.google_drive.length ? `${targets.google_drive.length} Google Drive` : '',
+        targets.onedrive.length ? `${targets.onedrive.length} OneDrive` : '',
+        targets.dropbox.length ? `${targets.dropbox.length} Dropbox` : '',
+      ].filter(Boolean).join(', ');
+    }
+
     function syncSelectedSourceIndicator() {
       if (!selectedSourceIndicatorEl) return;
       if (!selectedSourceIndicatorVisible) {
@@ -1268,7 +1385,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function isScanActionBusy() {
-      return googleDriveImportBusy || scanCancelInFlight || activeCloudImportProvider != null;
+      return googleDriveImportBusy || folderSyncBusy || scanCancelInFlight || activeCloudImportProvider != null;
     }
 
     function isLocalScanActive() {
@@ -1310,6 +1427,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function syncAddMusicUi() {
       const chooseLabel = 'Add Music';
       const scanBusy = isScanActionBusy();
+      const syncTargets = collectSongsPaneSyncTargets(visibleTracksOrdered());
+      const syncSummary = formatSyncTargetsSummary(syncTargets);
       const busyTitle = scanCancelInFlight
         ? 'Stopping the current scan...'
         : scanSourceMode === 'google_drive'
@@ -1335,8 +1454,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           button.disabled = scanBusy;
           button.title = scanCancelInFlight
             ? busyTitle
-            : (isLocalScanActive() ? 'Stop the current scan.' : '');
+          : (isLocalScanActive() ? 'Stop the current scan.' : '');
         }
+      }
+      if (syncFoldersBtn) {
+        syncFoldersBtn.disabled = folderSyncBusy;
+        syncFoldersBtn.textContent = folderSyncBusy ? 'Syncing…' : 'Sync Folders';
+        syncFoldersBtn.title = folderSyncBusy
+          ? 'Syncing folders already represented in the songs pane.'
+          : syncSummary
+            ? `Rescan ${syncSummary} folders from the songs pane.`
+            : 'Rescan folders already represented in the songs pane.';
       }
       const googleDriveBtn = document.getElementById('add-music-source-google-drive-btn') as HTMLButtonElement | null;
       const googleDriveCopy = googleDriveBtn?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
@@ -2204,11 +2332,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
-    async function importCloudLibrary(provider: CloudImportProvider, options: { folderId?: string | null; folderName?: string | null } = {}) {
+    async function importCloudLibrary(provider: CloudImportProvider, options: { folderId?: string | null; folderName?: string | null; folders?: Array<{ id: string; name: string }> } = {}) {
       const label = cloudProviderLabel(provider);
       const button = document.getElementById(`${provider}-import-btn`) as HTMLButtonElement | null;
+      const explicitFolders = Array.isArray(options.folders) && options.folders.length
+        ? options.folders.map((folder) => ({
+          id: String(folder.id ?? '').trim(),
+          name: String(folder.name ?? '').trim() || 'Untitled folder',
+        })).filter((folder) => Boolean(folder.id))
+        : null;
       const selectedFolderId = String(options.folderId ?? selectedCloudImportFolders[provider][0]?.id ?? '').trim();
       const selectedFolderName = String(options.folderName ?? selectedCloudImportFolders[provider][0]?.name ?? '').trim();
+      const folders = explicitFolders ?? (selectedFolderId ? [{ id: selectedFolderId, name: selectedFolderName || 'Untitled folder' }] : []);
+      const folderIds = folders.map((folder) => folder.id).filter(Boolean);
+      const folderNames = folders.map((folder) => folder.name).filter(Boolean);
+      const scopeLabel = folders.length
+        ? folders.map((folder) => folder.name || folder.id).join(', ')
+        : `All audio files in ${label}`;
       try {
         activeCloudImportProvider = provider;
         setCloudImportStageState(provider, {
@@ -2218,7 +2358,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           current: 0,
           total: 2000,
           meta: `Preparing the import pipeline for up to 2000 audio files`,
-          scopeLabel: selectedFolderName || `All audio files in ${label}`,
+          scopeLabel,
           busy: true,
         });
         setCloudImportStatus(provider, `Importing ${label} metadata…`, 'saving');
@@ -2234,8 +2374,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             maxFiles: 2000,
-            folderId: selectedFolderId || null,
-            folderName: selectedFolderName || null,
+            folderId: folderIds[0] || null,
+            folderName: folderNames[0] || null,
+            folderIds,
+            folderNames,
           }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -2373,7 +2515,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       window.location.href = targetUrl;
     }
 
-    async function importGoogleDriveMetadata() {
+    async function importGoogleDriveMetadata(options: { folders?: Array<{ id: string; name: string }> } = {}) {
       if (!canUseGoogleDriveFeature()) {
         setGoogleDriveImportStatus(googleDriveFeatureStatusLabel(), 'error');
         showToast(googleDriveFeatureStatusLabel(), 'warning');
@@ -2382,6 +2524,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       if (googleDriveImportBusy) return;
       googleDriveImportBusy = true;
+      const folders = options.folders?.length
+        ? options.folders.map((folder) => ({
+          id: String(folder.id ?? '').trim(),
+          name: String(folder.name ?? '').trim() || 'Untitled folder',
+        })).filter((folder) => Boolean(folder.id))
+        : selectedGoogleDriveFolders;
+      const folderIds = folders.map((folder) => folder.id).filter(Boolean);
+      const folderNames = folders.map((folder) => folder.name).filter(Boolean);
+      const folderLabel = folders.length ? folders.map((folder) => folder.name || 'Selected folder').join(', ') : selectedGoogleDriveFolderLabel();
       setScanProgressSource('Google Drive import');
       selectedSourceIndicatorVisible = false;
       syncSelectedSourceIndicator();
@@ -2389,12 +2540,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       setGoogleDriveImportStageState({
         stage: 'discovering',
         label: 'Starting Google Drive import',
-        detail: selectedGoogleDriveFolderLabel(),
+        detail: folderLabel,
         current: 0,
         total: maxFiles,
         meta: `Preparing the import pipeline for up to ${maxFiles} audio files`,
       });
-      googleDriveImportScopeLabel = selectedGoogleDriveFolderLabel();
+      googleDriveImportScopeLabel = folderLabel;
       googleDriveImportFailedCount = 0;
       startGoogleDriveImportProgressPolling();
       const button = document.getElementById('google-drive-import-btn') as HTMLButtonElement | null;
@@ -2404,15 +2555,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       setGoogleDriveImportStatus('Fetching Google Drive metadata and sending it to the server…', 'saving');
       setScanStatus('Importing Google Drive metadata…', 'running');
-      setScanProgress(0, maxFiles, selectedGoogleDriveFolderLabel());
+      setScanProgress(0, maxFiles, folderLabel);
       appendScanLog(
-        `Google Drive import started: scope=${selectedGoogleDriveFolderLabel()}`,
+        `Google Drive import started: scope=${folderLabel}`,
         'info',
         {
           category: 'google-drive-import',
-          folderIds: selectedGoogleDriveFolders.map((f) => f.id),
-          folderId: selectedGoogleDriveFolders[0]?.id || null,
-          folderName: selectedGoogleDriveFolders[0]?.name || null,
+          folderIds,
+          folderId: folderIds[0] || null,
+          folderName: folderNames[0] || null,
         },
         { eventType: 'google_drive_import_started' },
       );
@@ -2422,10 +2573,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             maxFiles,
-            folderIds: selectedGoogleDriveFolders.map((f) => f.id).filter(Boolean),
-            folderNames: selectedGoogleDriveFolders.map((f) => f.name).filter(Boolean),
-            folderId: selectedGoogleDriveFolders[0]?.id || undefined,
-            folderName: selectedGoogleDriveFolders[0]?.name || undefined,
+            folderIds,
+            folderNames,
+            folderId: folderIds[0] || undefined,
+            folderName: folderNames[0] || undefined,
           }),
         });
         const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -9429,6 +9580,71 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       scanPreflightEl.textContent = `Supported audio files: ${validation.audio_file_count ?? 0}${validation.empty ? ' · directory looks empty' : ''}`;
     }
 
+    async function runLocalFolderScan(directory: string) {
+      activeScanStatus = 'queued';
+      setScanProgressSource('Local scan');
+      selectedSourceIndicatorVisible = false;
+      syncSelectedSourceIndicator();
+      syncAddMusicUi();
+      localScanToastLastAt = 0;
+      localScanToastLastPercentBucket = -1;
+      localScanToastLastLabel = '';
+      frozenTrackIdsDuringScan = tracks.length
+        ? [...tracks]
+            .sort(compareTracks)
+            .map((track) => Number(track.id))
+            .filter((id) => Number.isFinite(id))
+        : null;
+      preScanTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
+      hasScanBaseline = tracks.length > 0;
+      ensureBackgroundRefreshLoop();
+      setScanProgressSource('Local scan');
+      setScanStatus('Scanning collection…', 'running');
+      setScanProgress(0, 0, directory);
+      showProgressToast('local-scan-progress', `Scanning collection · ${directory}`, 'info', false);
+      warningBanner.style.display = 'none';
+      resetScanLog();
+      appendScanLog(`Starting scan for ${directory}`);
+
+      try {
+        localStorage.setItem(scanDirectoryKey, directory);
+      } catch {
+        // ignore localStorage failures
+      }
+      pushRecentDirectory(directory);
+
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          directory,
+          fetchAlbumArt: true,
+          fastScan: false,
+          autoDoubleBpm: true,
+          verbose: false,
+          rescanMode: 'smart',
+        }),
+      });
+
+      if (!res.ok) {
+        frozenTrackIdsDuringScan = null;
+        const detail = await res.text();
+        appendScanLog(`Scan request failed: ${detail.slice(0, 200)}`, 'error');
+        throw new Error(detail || 'Scan request failed');
+      }
+
+      const payload = await res.json();
+      const job = payload.job as Record<string, unknown>;
+      activeScanJobId = String(job.id);
+      activeScanStatus = String(job.status ?? 'queued');
+      ensureBackgroundRefreshLoop();
+      syncAddMusicUi();
+      appendScanLog(`Scan job created: ${activeScanJobId}`, 'info');
+      showToast('Scan started.', 'success');
+      await loadScanHistory();
+      await loadScanJob(activeScanJobId, true);
+    }
+
     // ── Scanning ──────────────────────────────────────────────────────────────
     async function triggerScan() {
       if (isLocalScanActive()) {
@@ -9460,82 +9676,113 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         showToast('Choose a music source first.', 'warning');
         return;
       }
-
-      activeScanStatus = 'queued';
-      setScanProgressSource('Local scan');
-      selectedSourceIndicatorVisible = false;
-      syncSelectedSourceIndicator();
-      syncAddMusicUi();
-      localScanToastLastAt = 0;
-      localScanToastLastPercentBucket = -1;
-      localScanToastLastLabel = '';
-      frozenTrackIdsDuringScan = tracks.length
-        ? [...tracks]
-            .sort(compareTracks)
-            .map((track) => Number(track.id))
-            .filter((id) => Number.isFinite(id))
-        : null;
-      preScanTrackIds = new Set(tracks.map((track) => Number(track.id)).filter((id) => Number.isFinite(id)));
-      hasScanBaseline = tracks.length > 0;
-      ensureBackgroundRefreshLoop();
-      setScanProgressSource('Local scan');
-      setScanStatus('Scanning collection…', 'running');
-      setScanProgress(0, 0, directory);
-      showProgressToast('local-scan-progress', `Scanning collection · ${directory}`, 'info', false);
-      warningBanner.style.display = 'none';
-      resetScanLog();
-      appendScanLog(`Starting scan for ${directory}`);
-
       try {
-      try { localStorage.setItem(scanDirectoryKey, directory); } catch { /* ignore */ }
-      pushRecentDirectory(directory);
-
-        const res = await fetch('/api/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            directory,
-            fetchAlbumArt: true,
-            fastScan: false,
-            autoDoubleBpm: true,
-            verbose: false,
-            rescanMode: 'smart',
-          }),
-        });
-
-        if (!res.ok) {
-          frozenTrackIdsDuringScan = null;
-          const detail = await res.text();
-          setScanStatus('Scan failed', 'error');
-          setScanProgress(0, 0, 'Scan request failed');
-          appendScanLog(`Scan request failed: ${detail.slice(0, 200)}`, 'error');
-          showToast('Scan could not be started.', 'error');
-          warningBanner.style.display = 'block';
-          warningBanner.innerHTML = `<strong>Scan failed:</strong> ${esc(detail.slice(0, 400))}`;
-          return;
-        }
-
-        const payload = await res.json();
-        const job = payload.job as Record<string, unknown>;
-        activeScanJobId = String(job.id);
-        activeScanStatus = String(job.status ?? 'queued');
+        await runLocalFolderScan(directory);
+      } catch (error) {
+        activeScanStatus = 'failed';
+        frozenTrackIdsDuringScan = null;
         ensureBackgroundRefreshLoop();
         syncAddMusicUi();
-        appendScanLog(`Scan job created: ${activeScanJobId}`, 'info');
-        showToast('Scan started.', 'success');
-        await loadScanHistory();
-        await loadScanJob(activeScanJobId, true);
-      } catch (error) {
-      activeScanStatus = 'failed';
-      frozenTrackIdsDuringScan = null;
-      ensureBackgroundRefreshLoop();
-      syncAddMusicUi();
-      setScanStatus('Scan failed', 'error');
+        setScanStatus('Scan failed', 'error');
         setScanProgress(0, 0, 'Scan failed');
         appendScanLog(error instanceof Error ? error.message : String(error), 'error');
         showToast('Scan failed.', 'error');
         warningBanner.style.display = 'block';
         warningBanner.innerHTML = `<strong>Scan failed:</strong> ${esc(error instanceof Error ? error.message : String(error))}`;
+      }
+    }
+
+    async function syncFoldersFromSongsPane() {
+      if (folderSyncBusy || isScanActionBusy()) return;
+      const targets = collectSongsPaneSyncTargets(visibleTracksOrdered());
+      const allowedTargets: SyncFolderTarget[] = [];
+      const skippedSources: string[] = [];
+
+      if (targets.local.length) {
+        allowedTargets.push(...targets.local);
+      }
+      if (targets.google_drive.length) {
+        if (googleSignedInUser() && canUseGoogleDriveFeature()) {
+          allowedTargets.push(...targets.google_drive);
+        } else {
+          skippedSources.push('Google Drive');
+        }
+      }
+      if (targets.onedrive.length) {
+        if (cloudProviderRuntimeSummary('onedrive')?.connected) {
+          allowedTargets.push(...targets.onedrive);
+        } else {
+          skippedSources.push('OneDrive');
+        }
+      }
+      if (targets.dropbox.length) {
+        if (cloudProviderRuntimeSummary('dropbox')?.connected) {
+          allowedTargets.push(...targets.dropbox);
+        } else {
+          skippedSources.push('Dropbox');
+        }
+      }
+
+      if (!allowedTargets.length) {
+        const skippedLabel = skippedSources.length ? `${skippedSources.join(', ')} not authenticated` : 'No synced folders found';
+        setScanStatus('Nothing to sync', 'error');
+        showToast(skippedLabel, 'warning');
+        return;
+      }
+
+      folderSyncBusy = true;
+      syncAddMusicUi();
+      setScanProgressSource('Folder sync');
+      setScanStatus('Syncing folders…', 'running');
+      setScanProgress(0, allowedTargets.length, 'Syncing folders…');
+      showToast(`Syncing ${allowedTargets.length} folder${allowedTargets.length === 1 ? '' : 's'} from the songs pane.`, 'info');
+      try {
+        const localTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'local'; directory: string } => target.kind === 'local' && Boolean(target.directory));
+        const googleTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'google_drive'; folderId: string; folderName: string } => target.kind === 'google_drive' && Boolean(target.folderId));
+        const onedriveTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'onedrive'; folderId: string; folderName: string } => target.kind === 'onedrive' && Boolean(target.folderId));
+        const dropboxTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'dropbox'; folderId: string; folderName: string } => target.kind === 'dropbox' && Boolean(target.folderId));
+
+        for (const target of localTargets) {
+          setScanProgressSource('Local scan');
+          setScanStatus(`Syncing local folder…`, 'running');
+          await runLocalFolderScan(target.directory);
+        }
+        if (googleTargets.length) {
+          setScanProgressSource('Google Drive import');
+          setScanStatus('Syncing Google Drive folders…', 'running');
+          await importGoogleDriveMetadata({
+            folders: googleTargets.map((target) => ({ id: target.folderId, name: target.folderName })),
+          });
+        }
+        if (onedriveTargets.length) {
+          setScanProgressSource('OneDrive import');
+          setScanStatus('Syncing OneDrive folders…', 'running');
+          await importCloudLibrary('onedrive', {
+            folders: onedriveTargets.map((target) => ({ id: target.folderId, name: target.folderName })),
+          });
+        }
+        if (dropboxTargets.length) {
+          setScanProgressSource('Dropbox import');
+          setScanStatus('Syncing Dropbox folders…', 'running');
+          await importCloudLibrary('dropbox', {
+            folders: dropboxTargets.map((target) => ({ id: target.folderId, name: target.folderName })),
+          });
+        }
+        if (skippedSources.length) {
+          showToast(`${skippedSources.join(', ')} not authenticated. Skipped.`, 'warning');
+        }
+        await Promise.all([
+          loadTracks(searchEl.value.trim()),
+          loadLibraryOverview(),
+        ]);
+        setScanStatus('Folder sync complete', 'success');
+        showToast('Folder sync complete.', 'success');
+      } catch (error) {
+        setScanStatus('Folder sync failed', 'error');
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        folderSyncBusy = false;
+        syncAddMusicUi();
       }
     }
 
@@ -10187,11 +10434,23 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       void chooseGoogleDriveMusicSource();
     });
+    document.getElementById('add-music-source-google-auth-btn')?.addEventListener('click', () => {
+      openGoogleAuthModal();
+    });
     document.getElementById('add-music-source-onedrive-btn')?.addEventListener('click', () => {
       void chooseCloudMusicSource('onedrive');
     });
+    document.getElementById('add-music-source-onedrive-auth-btn')?.addEventListener('click', () => {
+      void startCloudSignIn('onedrive');
+    });
     document.getElementById('add-music-source-dropbox-btn')?.addEventListener('click', () => {
       void chooseCloudMusicSource('dropbox');
+    });
+    document.getElementById('add-music-source-dropbox-auth-btn')?.addEventListener('click', () => {
+      void startCloudSignIn('dropbox');
+    });
+    document.getElementById('sync-folders-btn')?.addEventListener('click', () => {
+      void syncFoldersFromSongsPane();
     });
     commandPaletteModal?.addEventListener('click', (event) => {
       if (event.target === commandPaletteModal) closeModal(commandPaletteModal);

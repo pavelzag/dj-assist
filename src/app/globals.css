@@ -694,6 +694,12 @@ header input:focus { border-color: rgba(124,92,255,0.5); }
 .filters label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; border: 1px solid var(--line2); border-radius: 6px; padding: 8px 12px; background: rgba(255,255,255,0.02); }
 .filters input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--orange); }
 .filters .badge { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: rgba(255,255,255,0.02); color: var(--muted); font-size: 12px; }
+.filters .sync-folders-btn {
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
 .quick-filter-bar {
   display: inline-flex;
   gap: 6px;
@@ -2105,6 +2111,10 @@ body[data-list-density="compact"] .row span {
   display: grid;
   gap: 10px;
 }
+.add-music-source-option-shell {
+  display: grid;
+  gap: 8px;
+}
 .add-music-source-option {
   appearance: none;
   width: 100%;
@@ -2121,6 +2131,14 @@ body[data-list-density="compact"] .row span {
   cursor: pointer;
   transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
 }
+.add-music-source-option:disabled,
+.add-music-source-option[aria-disabled="true"] {
+  opacity: 0.52;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+  filter: saturate(0.72);
+}
 .add-music-source-option:hover,
 .add-music-source-option:focus-visible {
   transform: translateY(-1px);
@@ -2128,6 +2146,15 @@ body[data-list-density="compact"] .row span {
   background: linear-gradient(180deg, rgba(255,108,0,0.1), rgba(255,108,0,0.04));
   box-shadow: 0 16px 34px rgba(0,0,0,0.18);
   outline: none;
+}
+.add-music-source-option:disabled:hover,
+.add-music-source-option:disabled:focus-visible,
+.add-music-source-option[aria-disabled="true"]:hover,
+.add-music-source-option[aria-disabled="true"]:focus-visible {
+  transform: none;
+  border-color: var(--line2);
+  background: rgba(255,255,255,0.02);
+  box-shadow: none;
 }
 .add-music-source-option-icon {
   display: grid;
@@ -2138,8 +2165,28 @@ body[data-list-density="compact"] .row span {
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.06);
   color: #ffd7b6;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+.add-music-source-option-icon[data-source="local"] {
+  background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04));
+  color: #ffffff;
+}
+.add-music-source-option-icon[data-source="google"] {
+  background:
+    conic-gradient(from 180deg, #4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0 100%);
+  color: #ffffff;
+  border-color: rgba(255,255,255,0.1);
+}
+.add-music-source-option-icon[data-source="onedrive"] {
+  background: linear-gradient(180deg, rgba(0,120,212,0.28), rgba(0,120,212,0.10));
+  color: #d9ecff;
+}
+.add-music-source-option-icon[data-source="dropbox"] {
+  background: linear-gradient(180deg, rgba(0,97,255,0.22), rgba(0,97,255,0.08));
+  color: #dbe8ff;
 }
 .add-music-source-option-copy {
   display: grid;
@@ -2153,6 +2200,40 @@ body[data-list-density="compact"] .row span {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+.add-music-source-option-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 2px;
+  min-width: 0;
+}
+.add-music-source-option-status {
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 0;
+}
+.add-music-source-auth-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.add-music-source-auth-link:hover,
+.add-music-source-auth-link:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+.add-music-source-auth-link:disabled {
+  color: var(--muted);
+  cursor: default;
+  text-decoration: none;
+  opacity: 0.7;
 }
 .quit-app-card {
   max-width: 440px;
@@ -2698,6 +2779,11 @@ body[data-list-density="compact"] .row span {
   .add-music-source-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
   .add-music-source-option { grid-template-columns: 1fr; text-align: center; justify-items: center; }
   .add-music-source-option-copy { justify-items: center; }
+  .add-music-source-option-footer {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
   .quit-app-actions { flex-direction: column-reverse; }
   .quit-app-actions .btn { width: 100%; min-width: 0; }
   .google-drive-browser-shell { grid-template-columns: 1fr; min-height: unset; }

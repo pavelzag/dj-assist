@@ -13,8 +13,12 @@ export default async function AppShell({
   const isDebugFlavor = appFlavor === 'debug';
   const hasProFeatures = appFlavor !== 'free-prod';
   const runtime = await serverRuntimeSummary();
-  const hasOneDriveImport = hasProFeatures && Boolean(runtime.onedriveOauth?.configured);
-  const hasDropboxImport = hasProFeatures && Boolean(runtime.dropboxOauth?.configured);
+  const googleDriveConnected = hasProFeatures && Boolean(runtime.googleDrive?.connected);
+  const googleAuthConfigured = hasProFeatures && Boolean(runtime.googleAuthConfigured);
+  const onedriveConnected = hasProFeatures && Boolean(runtime.onedrive?.connected);
+  const onedriveConfigured = hasProFeatures && Boolean(runtime.onedriveOauth?.configured);
+  const dropboxConnected = hasProFeatures && Boolean(runtime.dropbox?.connected);
+  const dropboxConfigured = hasProFeatures && Boolean(runtime.dropboxOauth?.configured);
   return (
     <>
       <header data-platform="electron">
@@ -56,6 +60,7 @@ export default async function AppShell({
                   </label>
                 )}
               <div className="quick-filter-bar" id="quick-filter-bar" />
+              <button type="button" className="btn secondary sync-folders-btn" id="sync-folders-btn" title="Rescan folders represented in the songs pane">Sync Folders</button>
             </div>
             <div className="header-global-actions">
               {hasProFeatures ? (
@@ -452,44 +457,107 @@ export default async function AppShell({
             </div>
             <div className="add-music-source-options">
               <button className="add-music-source-option" id="add-music-source-local-btn" type="button">
-                <span className="add-music-source-option-icon" aria-hidden="true">⌂</span>
+                <span className="add-music-source-option-icon" data-source="local" aria-hidden="true"></span>
                 <span className="add-music-source-option-copy">
                   <strong>This Mac</strong>
                   <span>Pick a local folder and run the regular desktop scan.</span>
                 </span>
               </button>
               {hasProFeatures ? (
-                <button className="add-music-source-option" id="add-music-source-google-drive-btn" type="button">
-                  <span className="add-music-source-option-icon" aria-hidden="true">G</span>
-                  <span className="add-music-source-option-copy">
-                    <strong>Google Drive</strong>
-                    <span>Browse and import tracks from your Google Drive.</span>
-                  </span>
-                </button>
+                <div className={`add-music-source-option-shell${googleDriveConnected ? ' is-connected' : ' is-locked'}`} data-connected={googleDriveConnected ? 'true' : 'false'}>
+                  <button
+                    className="add-music-source-option"
+                    id="add-music-source-google-drive-btn"
+                    type="button"
+                    disabled={!googleDriveConnected}
+                    aria-disabled={!googleDriveConnected}
+                  >
+                    <span className="add-music-source-option-icon" data-source="google" aria-hidden="true">◢</span>
+                    <span className="add-music-source-option-copy">
+                      <strong>Google Drive</strong>
+                      <span>Browse and import tracks from your Google Drive.</span>
+                    </span>
+                  </button>
+                  <div className="add-music-source-option-footer">
+                    <span className="add-music-source-option-status">{googleDriveConnected ? 'Connected' : 'Not authenticated yet.'}</span>
+                    {!googleDriveConnected ? (
+                      <button
+                        className="add-music-source-auth-link"
+                        id="add-music-source-google-auth-btn"
+                        type="button"
+                        disabled={!googleAuthConfigured}
+                      >
+                        {googleAuthConfigured ? 'Sign in with Google' : 'Google sign-in unavailable'}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
-              {hasOneDriveImport ? (
-                <button className="add-music-source-option" id="add-music-source-onedrive-btn" type="button">
-                  <span className="add-music-source-option-icon" aria-hidden="true">1</span>
-                  <span className="add-music-source-option-copy">
-                    <strong>OneDrive</strong>
-                    <span>Sign in and import audio from OneDrive.</span>
-                  </span>
-                </button>
+              {hasProFeatures ? (
+                <div className={`add-music-source-option-shell${onedriveConnected ? ' is-connected' : ' is-locked'}`} data-connected={onedriveConnected ? 'true' : 'false'}>
+                  <button
+                    className="add-music-source-option"
+                    id="add-music-source-onedrive-btn"
+                    type="button"
+                    disabled={!onedriveConnected}
+                    aria-disabled={!onedriveConnected}
+                  >
+                    <span className="add-music-source-option-icon" data-source="onedrive" aria-hidden="true">☁</span>
+                    <span className="add-music-source-option-copy">
+                      <strong>OneDrive</strong>
+                      <span>Sign in and import audio from OneDrive.</span>
+                    </span>
+                  </button>
+                  <div className="add-music-source-option-footer">
+                    <span className="add-music-source-option-status">{onedriveConnected ? 'Connected' : 'Not authenticated yet.'}</span>
+                    {!onedriveConnected ? (
+                      <button
+                        className="add-music-source-auth-link"
+                        id="add-music-source-onedrive-auth-btn"
+                        type="button"
+                        disabled={!onedriveConfigured}
+                      >
+                        {onedriveConfigured ? 'Sign in with OneDrive' : 'OneDrive not configured'}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
-              {hasDropboxImport ? (
-                <button className="add-music-source-option" id="add-music-source-dropbox-btn" type="button">
-                  <span className="add-music-source-option-icon" aria-hidden="true">D</span>
-                  <span className="add-music-source-option-copy">
-                    <strong>Dropbox</strong>
-                    <span>Sign in and import audio from Dropbox.</span>
-                  </span>
-                </button>
+              {hasProFeatures ? (
+                <div className={`add-music-source-option-shell${dropboxConnected ? ' is-connected' : ' is-locked'}`} data-connected={dropboxConnected ? 'true' : 'false'}>
+                  <button
+                    className="add-music-source-option"
+                    id="add-music-source-dropbox-btn"
+                    type="button"
+                    disabled={!dropboxConnected}
+                    aria-disabled={!dropboxConnected}
+                  >
+                    <span className="add-music-source-option-icon" data-source="dropbox" aria-hidden="true">◈</span>
+                    <span className="add-music-source-option-copy">
+                      <strong>Dropbox</strong>
+                      <span>Sign in and import audio from Dropbox.</span>
+                    </span>
+                  </button>
+                  <div className="add-music-source-option-footer">
+                    <span className="add-music-source-option-status">{dropboxConnected ? 'Connected' : 'Not authenticated yet.'}</span>
+                    {!dropboxConnected ? (
+                      <button
+                        className="add-music-source-auth-link"
+                        id="add-music-source-dropbox-auth-btn"
+                        type="button"
+                        disabled={!dropboxConfigured}
+                      >
+                        {dropboxConfigured ? 'Sign in with Dropbox' : 'Dropbox not configured'}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
             </div>
             {hasProFeatures ? (
               <div className="scan-preflight subtle add-music-source-status">
-                <span>{hasOneDriveImport ? 'OneDrive ready' : 'OneDrive not configured'}</span>
-                <span>{hasDropboxImport ? 'Dropbox ready' : 'Dropbox not configured'}</span>
+                <span>{onedriveConfigured ? (onedriveConnected ? 'OneDrive ready' : 'OneDrive ready to sign in') : 'OneDrive not configured'}</span>
+                <span>{dropboxConfigured ? (dropboxConnected ? 'Dropbox ready' : 'Dropbox ready to sign in') : 'Dropbox not configured'}</span>
               </div>
             ) : null}
           </div>
