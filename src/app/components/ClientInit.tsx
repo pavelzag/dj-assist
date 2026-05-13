@@ -1468,29 +1468,75 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       const googleDriveBtn = document.getElementById('add-music-source-google-drive-btn') as HTMLButtonElement | null;
       const googleDriveCopy = googleDriveBtn?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
+      const googleDriveSummary = googleDriveRuntimeSummary();
+      const googleDriveConnected = Boolean(googleDriveSummary?.connected);
+      const googleAuthConfigured = Boolean(
+        runtimeHealth?.server && typeof runtimeHealth.server === 'object'
+          ? (runtimeHealth.server as Record<string, unknown>).googleAuthConfigured
+          : null,
+      );
       if (googleDriveBtn) {
-        googleDriveBtn.dataset.locked = canUseGoogleDriveFeature() ? 'false' : 'true';
-        googleDriveBtn.title = canUseGoogleDriveFeature() ? 'Browse Google Drive music' : googleDriveFeatureStatusLabel();
+        googleDriveBtn.dataset.locked = googleDriveConnected ? 'false' : 'true';
+        googleDriveBtn.disabled = !googleDriveConnected;
+        googleDriveBtn.setAttribute('aria-disabled', googleDriveConnected ? 'false' : 'true');
+        googleDriveBtn.title = googleDriveConnected
+          ? 'Browse Google Drive music'
+          : googleDriveFeatureStatusLabel();
+        const shell = googleDriveBtn.closest('.add-music-source-option-shell') as HTMLElement | null;
+        if (shell) {
+          shell.dataset.connected = googleDriveConnected ? 'true' : 'false';
+          shell.classList.toggle('is-connected', googleDriveConnected);
+          shell.classList.toggle('is-locked', !googleDriveConnected);
+        }
       }
       if (googleDriveCopy) {
-        googleDriveCopy.textContent = canUseGoogleDriveFeature()
+        googleDriveCopy.textContent = googleDriveConnected
           ? 'Browse a Drive folder and import its audio metadata with read-only access.'
           : googleDriveFeatureStatusLabel();
       }
+      const googleAuthBtn = document.getElementById('add-music-source-google-auth-btn') as HTMLButtonElement | null;
+      if (googleAuthBtn) {
+        googleAuthBtn.disabled = googleDriveConnected ? true : !googleAuthConfigured;
+        googleAuthBtn.textContent = googleDriveConnected
+          ? 'Google connected'
+          : googleAuthConfigured
+            ? 'Sign in with Google'
+            : 'Google sign-in unavailable';
+      }
       for (const provider of ['onedrive', 'dropbox'] as const) {
         const button = document.getElementById(`add-music-source-${provider}-btn`) as HTMLButtonElement | null;
+        const authButton = document.getElementById(`add-music-source-${provider}-auth-btn`) as HTMLButtonElement | null;
         const copy = button?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
         const configured = cloudProviderConfigured(provider);
+        const connected = cloudProviderConnected(provider);
         if (button) {
-          button.dataset.locked = configured ? 'false' : 'true';
-          button.title = configured
+          button.dataset.locked = connected ? 'false' : 'true';
+          button.disabled = !connected;
+          button.setAttribute('aria-disabled', connected ? 'false' : 'true');
+          button.title = connected
             ? `Browse ${cloudProviderLabel(provider)} folders`
             : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
+          const shell = button.closest('.add-music-source-option-shell') as HTMLElement | null;
+          if (shell) {
+            shell.dataset.connected = connected ? 'true' : 'false';
+            shell.classList.toggle('is-connected', connected);
+            shell.classList.toggle('is-locked', !connected);
+          }
         }
         if (copy) {
-          copy.textContent = configured
+          copy.textContent = connected
             ? `Browse a folder and import audio from ${cloudProviderLabel(provider)}.`
-            : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
+            : configured
+              ? `${cloudProviderLabel(provider)} is authenticated. Reopen Add Music if needed.`
+              : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
+        }
+        if (authButton) {
+          authButton.disabled = connected ? true : !configured;
+          authButton.textContent = connected
+            ? `${cloudProviderLabel(provider)} connected`
+            : configured
+              ? `Sign in with ${cloudProviderLabel(provider)}`
+              : `${cloudProviderLabel(provider)} not configured`;
         }
       }
       syncSongsFetchIndicator();
@@ -2286,6 +2332,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return summary && typeof summary === 'object' ? summary as Record<string, unknown> : null;
     }
 
+    function cloudProviderConnected(provider: 'onedrive' | 'dropbox') {
+      const server = runtimeHealth?.server && typeof runtimeHealth.server === 'object'
+        ? runtimeHealth.server as Record<string, unknown>
+        : null;
+      const summary = server?.[provider];
+      return Boolean(summary && typeof summary === 'object' && (summary as Record<string, unknown>).connected);
+    }
+
     function cloudProviderStatusLabel(provider: 'onedrive' | 'dropbox') {
       const summary = cloudProviderRuntimeSummary(provider);
       if (!summary) return `Sign in to connect ${cloudProviderLabel(provider)}.`;
@@ -2325,7 +2379,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           return;
         }
         setTimeout(() => {
-          void loadRuntimeHealth().then(() => renderLibraryPanel());
+          void loadRuntimeHealth().then(() => {
+            syncAddMusicUi();
+            renderLibraryPanel();
+          });
         }, 3000);
       } catch (error) {
         showToast(error instanceof Error ? error.message : String(error), 'error');
