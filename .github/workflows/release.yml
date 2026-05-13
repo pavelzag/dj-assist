@@ -268,6 +268,10 @@ jobs:
         env:
           GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          ONEDRIVE_CLIENT_ID: ${{ vars.ONEDRIVE_CLIENT_ID || secrets.ONEDRIVE_CLIENT_ID }}
+          ONEDRIVE_CLIENT_SECRET: ${{ secrets.ONEDRIVE_CLIENT_SECRET }}
+          DROPBOX_CLIENT_ID: ${{ vars.DROPBOX_CLIENT_ID || secrets.DROPBOX_CLIENT_ID }}
+          DROPBOX_CLIENT_SECRET: ${{ secrets.DROPBOX_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           if [ "${{ matrix.flavor }}" != "free-prod" ] && [ -z "${GOOGLE_CLIENT_ID}" ]; then

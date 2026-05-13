@@ -1079,6 +1079,7 @@ main {
   border-radius: 10px;
   padding: 14px;
   min-width: 0;
+  overflow: visible;
 }
 .library-grid {
   display: grid;
@@ -1086,7 +1087,7 @@ main {
   gap: 12px;
   min-width: 0;
   align-items: start;
-  overflow: hidden;
+  overflow: visible;
 }
 .library-grid > * {
   min-width: 0;
@@ -1419,10 +1420,14 @@ main {
 }
 #panel-track > .detail,
 #panel-sets > .sets-panel,
-#panel-library > .library-panel,
 #panel-activity > .library-panel {
   height: 100%;
   min-height: 0;
+}
+#panel-library > .library-panel {
+  height: auto;
+  min-height: 0;
+  align-self: start;
 }
 .hero {
   position: relative;

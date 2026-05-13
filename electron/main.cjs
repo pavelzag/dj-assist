@@ -45,6 +45,10 @@ function applyBundledBuildEnv() {
   const buildEnv = readBundledBuildEnv();
   const googleClientId = String(buildEnv.GOOGLE_CLIENT_ID ?? '').trim();
   const googleClientSecret = String(buildEnv.GOOGLE_CLIENT_SECRET ?? '').trim();
+  const onedriveClientId = String(buildEnv.ONEDRIVE_CLIENT_ID ?? '').trim();
+  const onedriveClientSecret = String(buildEnv.ONEDRIVE_CLIENT_SECRET ?? '').trim();
+  const dropboxClientId = String(buildEnv.DROPBOX_CLIENT_ID ?? '').trim();
+  const dropboxClientSecret = String(buildEnv.DROPBOX_CLIENT_SECRET ?? '').trim();
   const appFlavor = appFlavorFromEnv(buildEnv);
   if (appFlavor && !process.env.DJ_ASSIST_APP_FLAVOR) {
     process.env.DJ_ASSIST_APP_FLAVOR = appFlavor;
@@ -62,6 +66,18 @@ function applyBundledBuildEnv() {
   }
   if (googleClientSecret && !process.env.GOOGLE_CLIENT_SECRET) {
     process.env.GOOGLE_CLIENT_SECRET = googleClientSecret;
+  }
+  if (onedriveClientId && !process.env.ONEDRIVE_CLIENT_ID) {
+    process.env.ONEDRIVE_CLIENT_ID = onedriveClientId;
+  }
+  if (onedriveClientSecret && !process.env.ONEDRIVE_CLIENT_SECRET) {
+    process.env.ONEDRIVE_CLIENT_SECRET = onedriveClientSecret;
+  }
+  if (dropboxClientId && !process.env.DROPBOX_CLIENT_ID) {
+    process.env.DROPBOX_CLIENT_ID = dropboxClientId;
+  }
+  if (dropboxClientSecret && !process.env.DROPBOX_CLIENT_SECRET) {
+    process.env.DROPBOX_CLIENT_SECRET = dropboxClientSecret;
   }
 }
 
@@ -507,6 +523,32 @@ function logGoogleOauthEnvDiagnostics() {
       `runtime_has_secret=${Boolean(envClientSecret)}`,
       `runtime_client_id_matches_managed=${Boolean(envClientId && managedGoogle?.clientId && envClientId === managedGoogle.clientId)}`,
       `runtime_client_id_matches_build=${Boolean(envClientId && buildClientId && envClientId === buildClientId)}`,
+    ].join(' '),
+  );
+}
+
+function logCloudOauthEnvDiagnostics() {
+  const buildEnv = readBundledBuildEnv();
+  const onedriveBuildClientId = String(buildEnv.ONEDRIVE_CLIENT_ID ?? '').trim();
+  const onedriveBuildClientSecret = String(buildEnv.ONEDRIVE_CLIENT_SECRET ?? '').trim();
+  const dropboxBuildClientId = String(buildEnv.DROPBOX_CLIENT_ID ?? '').trim();
+  const dropboxBuildClientSecret = String(buildEnv.DROPBOX_CLIENT_SECRET ?? '').trim();
+  const envOneDriveClientId = String(process.env.ONEDRIVE_CLIENT_ID ?? '').trim();
+  const envOneDriveClientSecret = String(process.env.ONEDRIVE_CLIENT_SECRET ?? '').trim();
+  const envDropboxClientId = String(process.env.DROPBOX_CLIENT_ID ?? '').trim();
+  const envDropboxClientSecret = String(process.env.DROPBOX_CLIENT_SECRET ?? '').trim();
+  appendMainLog(
+    [
+      'Cloud OAuth env:',
+      `build_env_path=${bundledBuildEnvPath()}`,
+      `onedrive_build_has_client_id=${Boolean(onedriveBuildClientId)}`,
+      `onedrive_build_has_secret=${Boolean(onedriveBuildClientSecret)}`,
+      `dropbox_build_has_client_id=${Boolean(dropboxBuildClientId)}`,
+      `dropbox_build_has_secret=${Boolean(dropboxBuildClientSecret)}`,
+      `onedrive_runtime_has_client_id=${Boolean(envOneDriveClientId)}`,
+      `onedrive_runtime_has_secret=${Boolean(envOneDriveClientSecret)}`,
+      `dropbox_runtime_has_client_id=${Boolean(envDropboxClientId)}`,
+      `dropbox_runtime_has_secret=${Boolean(envDropboxClientSecret)}`,
     ].join(' '),
   );
 }
@@ -1053,6 +1095,7 @@ if (hasSingleInstanceLock) {
     appendMainLog(`App ready. Packaged=${app.isPackaged} resourcesPath=${process.resourcesPath}`);
     applyManagedRuntimeEnv();
     logGoogleOauthEnvDiagnostics();
+    logCloudOauthEnvDiagnostics();
     appendMainLog(
       `Runtime env: db=${process.env.DJ_ASSIST_DB_PATH || 'unset'} python=${process.env.PYTHON_EXECUTABLE || 'unset'} fpcalc=${process.env.FPCALC_PATH || 'unset'}`,
     );

@@ -27,6 +27,10 @@ const buildEnv = {
 if (appFlavor !== 'free-prod') {
   buildEnv.GOOGLE_CLIENT_ID = optionalValue('GOOGLE_CLIENT_ID');
   buildEnv.GOOGLE_CLIENT_SECRET = optionalValue('GOOGLE_CLIENT_SECRET');
+  buildEnv.ONEDRIVE_CLIENT_ID = optionalValue('ONEDRIVE_CLIENT_ID');
+  buildEnv.ONEDRIVE_CLIENT_SECRET = optionalValue('ONEDRIVE_CLIENT_SECRET');
+  buildEnv.DROPBOX_CLIENT_ID = optionalValue('DROPBOX_CLIENT_ID');
+  buildEnv.DROPBOX_CLIENT_SECRET = optionalValue('DROPBOX_CLIENT_SECRET');
 }
 
 fs.writeFileSync(outputPath, `${JSON.stringify(buildEnv, null, 2)}\n`, 'utf8');
