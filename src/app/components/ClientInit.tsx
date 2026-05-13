@@ -6873,7 +6873,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const streamProbeUrl = `/api/tracks/${trackId}/stream`;
       const trackPath = String(track.path ?? '');
       const isGoogleDriveTrack = isGoogleDriveTrackPath(trackPath);
-      const playbackUrl = isGoogleDriveTrack ? streamProbeUrl : (adapter.mediaUrlForPath?.(trackPath) || streamProbeUrl);
+      const isCloudTrack = isGoogleDriveTrack || trackPath.startsWith('onedrive:') || trackPath.startsWith('dropbox:');
+      const playbackUrl = isCloudTrack ? streamProbeUrl : (adapter.mediaUrlForPath?.(trackPath) || streamProbeUrl);
       nextTracksByTrackId[trackId] = Array.isArray(payload.next_tracks) ? payload.next_tracks as Record<string, unknown>[] : [];
       const mult = getMult(trackId);
       const trackTags = Array.isArray(track.custom_tags) ? track.custom_tags as string[] : [];
