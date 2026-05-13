@@ -8892,10 +8892,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         void signInWithGoogle();
       });
       document.getElementById('onedrive-oauth-start-btn')?.addEventListener('click', () => {
-        void chooseCloudMusicSource('onedrive');
+        void startCloudSignIn('onedrive');
       });
       document.getElementById('dropbox-oauth-start-btn')?.addEventListener('click', () => {
-        void chooseCloudMusicSource('dropbox');
+        void startCloudSignIn('dropbox');
       });
       document.getElementById('onedrive-import-btn')?.addEventListener('click', () => {
         void chooseCloudMusicSource('onedrive');
