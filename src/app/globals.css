@@ -1034,7 +1034,13 @@ main {
 }
 .details-pane {
   min-width: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.details-pane > div {
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
 }
 .list, .detail { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .list {
@@ -1440,13 +1446,13 @@ main {
 #panel-sets,
 #panel-library,
 #panel-activity {
-  height: var(--pane-height);
-  overflow: hidden;
+  height: auto;
+  overflow: visible;
 }
 #panel-track > .detail,
 #panel-sets > .sets-panel,
 #panel-activity > .library-panel {
-  height: 100%;
+  height: auto;
   min-height: 0;
 }
 #panel-track > .detail {
@@ -1826,12 +1832,14 @@ body[data-list-density="compact"] .row span {
 
 .details-pane {
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .details-pane > div {
   min-height: 0;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 #panel-track,
 #panel-sets,
@@ -1840,13 +1848,19 @@ body[data-list-density="compact"] .row span {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  overflow: visible;
 }
 .detail,
 .sets-panel,
 .library-panel {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: var(--pane-height);
+  min-height: 0;
+}
+.detail,
+.sets-panel,
+.library-panel {
+  height: auto;
 }
 
 /* ── Sets / Playlists ────────────────────────────────────────────────────── */

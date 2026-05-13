@@ -4,9 +4,6 @@ export const DROPBOX_AUTHORIZE_URL = 'https://www.dropbox.com/oauth2/authorize';
 export const DROPBOX_TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token';
 export const DROPBOX_USERINFO_URL = 'https://api.dropboxapi.com/2/openid/userinfo';
 export const DROPBOX_SCOPES = [
-  'openid',
-  'profile',
-  'email',
   'files.metadata.read',
   'files.content.read',
 ];
