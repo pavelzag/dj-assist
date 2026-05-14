@@ -2108,6 +2108,7 @@ body[data-list-density="compact"] .row span {
   to { opacity: 0; transform: translateY(10px) scale(0.985); }
 }
 .edit-metadata-modal-card { max-width: 680px; }
+.new-set-modal-card { max-width: 560px; width: min(92vw, 560px); }
 .command-palette-card,
 .shortcuts-card,
 .google-auth-upsell-card,

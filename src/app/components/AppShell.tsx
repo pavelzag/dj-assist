@@ -250,6 +250,26 @@ export default async function AppShell({
         </div>
       </div>
 
+      <div className="modal" id="new-set-modal" aria-hidden="true">
+        <div className="modal-card new-set-modal-card">
+          <div className="modal-head">
+            <h3>New Playlist</h3>
+            <button className="close" id="close-new-set-modal" type="button">&times;</button>
+          </div>
+          <div className="metadata-editor">
+            <label className="metadata-wide">
+              <span>Playlist name</span>
+              <input id="detail-new-set-name" placeholder="New playlist name…" />
+            </label>
+            <div className="scan-preflight" id="new-set-modal-status">Enter a name, then create the playlist.</div>
+            <div className="buttons">
+              <button className="btn secondary" id="cancel-new-set-modal-btn" type="button">Cancel</button>
+              <button className="btn" id="create-new-set-modal-btn" type="button">Create</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="modal" id="delete-track-modal" aria-hidden="true">
         <div className="modal-card">
           <div className="modal-head">

@@ -89,6 +89,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const closeEditMetadataBtn = document.getElementById('close-edit-metadata') as HTMLButtonElement | null;
     const editMetadataStatusEl = document.getElementById('edit-metadata-status') as HTMLElement | null;
     const saveEditMetadataBtn = document.getElementById('save-edit-metadata-btn') as HTMLButtonElement | null;
+    const newSetModal = document.getElementById('new-set-modal') as HTMLElement | null;
+    const closeNewSetModalBtn = document.getElementById('close-new-set-modal') as HTMLButtonElement | null;
+    const cancelNewSetModalBtn = document.getElementById('cancel-new-set-modal-btn') as HTMLButtonElement | null;
+    const createNewSetModalBtn = document.getElementById('create-new-set-modal-btn') as HTMLButtonElement | null;
+    const detailNewSetNameInput = document.getElementById('detail-new-set-name') as HTMLInputElement | null;
+    const newSetModalStatusEl = document.getElementById('new-set-modal-status') as HTMLElement | null;
     const deleteTrackModal = document.getElementById('delete-track-modal') as HTMLElement | null;
     const deleteTrackTitleEl = document.getElementById('delete-track-title') as HTMLElement | null;
     const deleteTrackMessageEl = document.getElementById('delete-track-message') as HTMLElement | null;
@@ -119,6 +125,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const tapBpmManualInputEl = document.getElementById('tap-bpm-manual-input') as HTMLInputElement | null;
     const tapBpmStatusEl = document.getElementById('tap-bpm-status') as HTMLElement | null;
     const modalCloseTimers = new WeakMap<HTMLElement, number>();
+    let pendingNewSetTrackId: number | null = null;
+    let pendingNewSetSuggestedName = 'New playlist';
 
     function flashElementClass(el: HTMLElement | null, className: string, durationMs = 180) {
       if (!el) return;
@@ -7327,6 +7335,100 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       openModal(coverModal);
     }
 
+    async function addTrackToPlaylist(trackId: number, setId: number) {
+      const response = await fetch(`/api/sets/${setId}/tracks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ track_id: trackId }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        throw new Error(String(payload.error ?? 'Could not add track to playlist.'));
+      }
+    }
+
+    async function createPlaylistForTrack(trackId: number, name: string) {
+      const cleanName = name.trim();
+      if (!cleanName) throw new Error('Playlist name is required.');
+      const response = await fetch('/api/sets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: cleanName }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        throw new Error(String(payload.error ?? 'Could not create playlist.'));
+      }
+      const payload = await response.json() as { set?: { id?: number; name?: string } };
+      const setId = Number(payload.set?.id ?? 0);
+      if (!setId) throw new Error('Could not create playlist.');
+      await addTrackToPlaylist(trackId, setId);
+      return { setId, name: cleanName };
+    }
+
+    function openCreatePlaylistModal(trackId: number, suggestedName: string) {
+      pendingNewSetTrackId = trackId;
+      pendingNewSetSuggestedName = suggestedName.trim() || 'New playlist';
+      if (detailNewSetNameInput) {
+        detailNewSetNameInput.value = pendingNewSetSuggestedName;
+      }
+      if (newSetModalStatusEl) {
+        newSetModalStatusEl.textContent = 'Enter a name, then create the playlist.';
+        newSetModalStatusEl.dataset.state = 'idle';
+      }
+      openModal(newSetModal);
+      requestAnimationFrame(() => {
+        detailNewSetNameInput?.focus();
+        detailNewSetNameInput?.select();
+      });
+    }
+
+    async function createPlaylistFromModal() {
+      if (pendingNewSetTrackId == null) return;
+      const name = detailNewSetNameInput?.value.trim() || pendingNewSetSuggestedName;
+      if (!name) {
+        if (newSetModalStatusEl) {
+          newSetModalStatusEl.textContent = 'Playlist name is required.';
+          newSetModalStatusEl.dataset.state = 'error';
+        }
+        detailNewSetNameInput?.focus();
+        return;
+      }
+      if (createNewSetModalBtn) {
+        createNewSetModalBtn.disabled = true;
+        createNewSetModalBtn.textContent = 'Creating…';
+      }
+      if (newSetModalStatusEl) {
+        newSetModalStatusEl.textContent = 'Creating playlist and adding the track…';
+        newSetModalStatusEl.dataset.state = 'saving';
+      }
+      try {
+        const created = await createPlaylistForTrack(pendingNewSetTrackId, name);
+        await loadSets();
+        const detailSetSelect = document.getElementById('set-select') as HTMLSelectElement | null;
+        if (detailSetSelect) {
+          detailSetSelect.innerHTML = sets.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+          detailSetSelect.value = String(created.setId);
+        }
+        if (currentPanel === 'sets') {
+          await renderSetsPanel();
+        }
+        showToast(`Created playlist "${name}" and added the track.`, 'success');
+        closeModal(newSetModal);
+      } catch (error) {
+        if (newSetModalStatusEl) {
+          newSetModalStatusEl.textContent = error instanceof Error ? error.message : 'Could not create playlist.';
+          newSetModalStatusEl.dataset.state = 'error';
+        }
+        showToast(error instanceof Error ? error.message : 'Could not create playlist.', 'error');
+      } finally {
+        if (createNewSetModalBtn) {
+          createNewSetModalBtn.disabled = false;
+          createNewSetModalBtn.textContent = 'Create';
+        }
+      }
+    }
+
     // ── Track detail ──────────────────────────────────────────────────────────
     function renderDetail(payload: Record<string, unknown>) {
       const track = payload.track as Record<string, unknown>;
@@ -7672,46 +7774,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const addToSetBtn = document.getElementById('add-to-set-btn');
       const setSelect = document.getElementById('set-select') as HTMLSelectElement | null;
       const createNewSetBtn = document.getElementById('create-new-set-btn');
-      const addTrackToSetById = async (setId: number) => {
-        const response = await fetch(`/api/sets/${setId}/tracks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ track_id: track.id }),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-          throw new Error(String(payload.error ?? 'Could not add track to playlist.'));
-        }
-      };
-      const createPlaylistAndAddTrack = async () => {
-        const suggested = String(track.album ?? track.artist ?? 'New playlist').trim() || 'New playlist';
-        const name = window.prompt('New playlist name', suggested)?.trim();
-        if (!name) return;
-        const response = await fetch('/api/sets', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-          throw new Error(String(payload.error ?? 'Could not create playlist.'));
-        }
-        const payload = await response.json() as { set?: { id?: number; name?: string } };
-        const setId = Number(payload.set?.id ?? 0);
-        if (!setId) throw new Error('Could not create playlist.');
-        await addTrackToSetById(setId);
-        await loadSets();
-        if (currentPanel === 'sets') {
-          await renderSetsPanel();
-        }
-        showToast(`Created playlist "${name}" and added the track.`, 'success');
-      };
       if (addToSetBtn && setSelect) {
         addToSetBtn.addEventListener('click', async () => {
           const setId = parseInt(setSelect.value, 10);
           if (!setId) return;
           try {
-            await addTrackToSetById(setId);
+            await addTrackToPlaylist(Number(track.id), setId);
             addToSetBtn.textContent = '✓ Added';
             showToast('Track added to playlist.', 'success');
             if (currentPanel === 'sets') {
@@ -7724,13 +7792,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         });
       }
       createNewSetBtn?.addEventListener('click', () => {
-        void (async () => {
-          try {
-            await createPlaylistAndAddTrack();
-          } catch (error) {
-            showToast(error instanceof Error ? error.message : 'Could not create playlist.', 'error');
-          }
-        })();
+        openCreatePlaylistModal(Number(track.id), String(track.album ?? track.artist ?? 'New playlist').trim() || 'New playlist');
       });
       document.getElementById('delete-track-btn')?.addEventListener('click', () => {
         openDeleteTracksModal([Number(track.id)], 'single');
@@ -10393,6 +10455,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           closeModal(editMetadataModal);
           return;
         }
+        if (newSetModal?.classList.contains('open')) {
+          closeModal(newSetModal);
+          return;
+        }
         if (commandPaletteModal?.classList.contains('open')) {
           closeModal(commandPaletteModal);
           return;
@@ -10598,6 +10664,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     document.getElementById('close-artwork-candidates-modal')?.addEventListener('click', () => {
       closeModal(artworkCandidatesModal);
+    });
+    closeNewSetModalBtn?.addEventListener('click', () => {
+      closeModal(newSetModal);
+    });
+    cancelNewSetModalBtn?.addEventListener('click', () => {
+      closeModal(newSetModal);
+    });
+    createNewSetModalBtn?.addEventListener('click', () => {
+      void createPlaylistFromModal();
+    });
+    detailNewSetNameInput?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void createPlaylistFromModal();
+      }
+    });
+    newSetModal?.addEventListener('click', (event) => {
+      if (event.target === newSetModal) {
+        closeModal(newSetModal);
+      }
     });
     artworkCandidatesModal?.addEventListener('click', (event) => {
       if (event.target === artworkCandidatesModal) {
