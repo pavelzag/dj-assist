@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { aggregateTracks, getAllTrackRows, getTrackById, getTrackGroupMembers, serializeTrack, serializeTrackGroup, updateTrackBpm, updateTrackMetadata } from '@/lib/db';
+import { aggregateTracks, getAllTrackRows, getTrackById, getTrackGroupMembers, serializeTrack, serializeTrackGroup, updateAlbumArtForTrack, updateTrackBpm, updateTrackMetadata } from '@/lib/db';
 import { getRecommendedNextTracks, type RecommendationIntent } from '@/lib/analyzer';
 import { resolveWorkingPython } from '@/lib/scan';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
@@ -151,6 +151,21 @@ export async function PATCH(
       source_preference: sourcePreference,
     };
     await Promise.all(groupIds.map((id) => updateTrackMetadata(id, patch)));
+    if (
+      body.album_art_url !== undefined ||
+      body.album_art_source !== undefined ||
+      body.album_art_confidence !== undefined ||
+      body.album_art_review_status !== undefined ||
+      body.album_art_review_notes !== undefined
+    ) {
+      await updateAlbumArtForTrack(trackId, {
+        album_art_url: body.album_art_url !== undefined ? String(body.album_art_url ?? '') : undefined,
+        album_art_source: body.album_art_source !== undefined ? String(body.album_art_source ?? '') : undefined,
+        album_art_confidence: body.album_art_confidence !== undefined ? Number(body.album_art_confidence ?? 0) : undefined,
+        album_art_review_status: body.album_art_review_status !== undefined ? String(body.album_art_review_status ?? '') : undefined,
+        album_art_review_notes: body.album_art_review_notes !== undefined ? String(body.album_art_review_notes ?? '') : undefined,
+      });
+    }
   }
 
   const refreshedGroup = (await getTrackGroupMembers(trackId)).filter((track) => googleEnabled || !isCloudTrackPath(track.path));

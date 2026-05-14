@@ -1262,6 +1262,106 @@ export async function propagateAlbumArt(trackId: number): Promise<{ propagated: 
   return { propagated: targets.length, updatedIds: targets.map((r) => Number(r.id)) };
 }
 
+export async function updateAlbumArtForTrack(
+  trackId: number,
+  patch: {
+    album_art_url?: string | null;
+    album_art_source?: string | null;
+    album_art_confidence?: number | null;
+    album_art_review_status?: string | null;
+    album_art_review_notes?: string | null;
+  },
+): Promise<{ updated: number }> {
+  const current = queryOne<Record<string, unknown>>(
+    'SELECT id, album_group_key, artist_canonical, album_canonical, album_art_url, album_art_source, album_art_confidence, album_art_review_status, album_art_review_notes FROM tracks WHERE id = ? LIMIT 1',
+    trackId,
+  );
+  if (!current) return { updated: 0 };
+
+  const albumGroupKey = String(current.album_group_key ?? '').trim();
+  const artistCanonical = String(current.artist_canonical ?? '').trim();
+  const albumCanonical = String(current.album_canonical ?? '').trim();
+  const targetAlbumArtUrl = patch.album_art_url !== undefined
+    ? String(patch.album_art_url ?? '').trim()
+    : String(current.album_art_url ?? '').trim();
+  if (!targetAlbumArtUrl) return { updated: 0 };
+
+  const targetAlbumArtSource = patch.album_art_source !== undefined
+    ? String(patch.album_art_source ?? '').trim()
+    : String(current.album_art_source ?? '').trim();
+  const targetAlbumArtConfidence = patch.album_art_confidence !== undefined
+    ? patch.album_art_confidence
+    : Number(current.album_art_confidence ?? 0) || null;
+  const targetReviewStatus = patch.album_art_review_status !== undefined
+    ? String(patch.album_art_review_status ?? '').trim()
+    : String(current.album_art_review_status ?? '').trim();
+  const targetReviewNotes = patch.album_art_review_notes !== undefined
+    ? String(patch.album_art_review_notes ?? '').trim()
+    : String(current.album_art_review_notes ?? '').trim();
+
+  if (albumGroupKey) {
+    execute(
+      `UPDATE tracks
+          SET album_art_url = ?,
+              album_art_source = ?,
+              album_art_confidence = ?,
+              album_art_review_status = ?,
+              album_art_review_notes = ?
+        WHERE album_group_key = ?`,
+      targetAlbumArtUrl,
+      targetAlbumArtSource || 'manual_upload',
+      targetAlbumArtConfidence,
+      targetReviewStatus || 'approved',
+      targetReviewNotes || 'manual cover applied to album group',
+      albumGroupKey,
+    );
+    return {
+      updated: Number(queryOne<Record<string, unknown>>('SELECT changes() AS count')?.count ?? 0),
+    };
+  }
+
+  if (artistCanonical && albumCanonical) {
+    execute(
+      `UPDATE tracks
+          SET album_art_url = ?,
+              album_art_source = ?,
+              album_art_confidence = ?,
+              album_art_review_status = ?,
+              album_art_review_notes = ?
+        WHERE artist_canonical = ? AND album_canonical = ?`,
+      targetAlbumArtUrl,
+      targetAlbumArtSource || 'manual_upload',
+      targetAlbumArtConfidence,
+      targetReviewStatus || 'approved',
+      targetReviewNotes || 'manual cover applied to album group',
+      artistCanonical,
+      albumCanonical,
+    );
+    return {
+      updated: Number(queryOne<Record<string, unknown>>('SELECT changes() AS count')?.count ?? 0),
+    };
+  }
+
+  execute(
+    `UPDATE tracks
+        SET album_art_url = ?,
+            album_art_source = ?,
+            album_art_confidence = ?,
+            album_art_review_status = ?,
+            album_art_review_notes = ?
+      WHERE id = ?`,
+    targetAlbumArtUrl,
+    targetAlbumArtSource || 'manual_upload',
+    targetAlbumArtConfidence,
+    targetReviewStatus || 'approved',
+    targetReviewNotes || 'manual cover applied to album group',
+    trackId,
+  );
+  return {
+    updated: Number(queryOne<Record<string, unknown>>('SELECT changes() AS count')?.count ?? 0),
+  };
+}
+
 export async function getTracksByIds(ids: number[]): Promise<Track[]> {
   const uniqueIds = [...new Set(ids.filter((id) => Number.isFinite(id)))];
   if (!uniqueIds.length) return [];

@@ -118,6 +118,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const tapBpmConfidenceEl = document.getElementById('tap-bpm-confidence') as HTMLElement | null;
     const tapBpmManualInputEl = document.getElementById('tap-bpm-manual-input') as HTMLInputElement | null;
     const tapBpmStatusEl = document.getElementById('tap-bpm-status') as HTMLElement | null;
+    const modalCloseTimers = new WeakMap<HTMLElement, number>();
+
+    function flashElementClass(el: HTMLElement | null, className: string, durationMs = 180) {
+      if (!el) return;
+      el.classList.remove(className);
+      void el.offsetWidth;
+      el.classList.add(className);
+      window.setTimeout(() => {
+        el.classList.remove(className);
+      }, durationMs);
+    }
     const tapBpmHalfBtn = document.getElementById('tap-bpm-half-btn') as HTMLButtonElement | null;
     const tapBpmDoubleBtn = document.getElementById('tap-bpm-double-btn') as HTMLButtonElement | null;
     const tapBpmResetBtn = document.getElementById('tap-bpm-reset-btn') as HTMLButtonElement | null;
@@ -4010,19 +4021,36 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function openModal(modal: HTMLElement | null) {
       if (!modal) return;
+      const closeTimer = modalCloseTimers.get(modal);
+      if (closeTimer) {
+        window.clearTimeout(closeTimer);
+        modalCloseTimers.delete(modal);
+      }
+      modal.classList.remove('closing');
       modal.classList.add('open');
       modal.setAttribute('aria-hidden', 'false');
     }
 
     function hasOpenModal() {
-      return Boolean(document.querySelector('.modal.open'));
+      return Boolean(document.querySelector('.modal.open, .modal.closing'));
     }
 
     function closeModal(modal: HTMLElement | null) {
       if (!modal) return;
+      const existingTimer = modalCloseTimers.get(modal);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+      modal.classList.add('closing');
       modal.classList.remove('open');
-      modal.setAttribute('aria-hidden', 'true');
-      if (!hasOpenModal()) ensureActiveTrackSelection();
+      modal.setAttribute('aria-hidden', 'false');
+      const timer = window.setTimeout(() => {
+        modal.classList.remove('closing');
+        modal.setAttribute('aria-hidden', 'true');
+        modalCloseTimers.delete(modal);
+        if (!hasOpenModal()) ensureActiveTrackSelection();
+      }, 180);
+      modalCloseTimers.set(modal, timer);
     }
 
     function renderArtworkCandidatesModal() {
@@ -4878,6 +4906,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       } else {
         syncMuteButton();
       }
+      flashElementClass(muteBtn, 'is-toggling', 180);
       showToast(audioMuted ? 'Playback muted.' : 'Playback unmuted.', 'info');
       return true;
     }
@@ -4888,11 +4917,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (heading) {
         heading.innerHTML = `<button type="button" class="nav-link hero-link" data-nav-kind="artist" data-nav-value="${esc(track.artist ?? 'Unknown Artist')}">${esc(track.artist ?? 'Unknown Artist')}</button> - ${esc(track.title ?? 'Untitled')}`;
         bindLibraryNavLinks(heading);
-      }
-      const pathEl = document.getElementById('detail-track-path');
-      if (pathEl) {
-        pathEl.textContent = String(track.path ?? '');
-        pathEl.setAttribute('title', String(track.path ?? ''));
       }
       const metaArtist = document.getElementById('meta-artist') as HTMLInputElement | null;
       if (metaArtist && document.activeElement !== metaArtist) metaArtist.value = String(track.artist ?? '');
@@ -4923,8 +4947,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           : `<div class="cover-placeholder"><div class="icon">♪</div><div>No cover</div><small>${esc(coverLabel)}</small></div>`;
       }
 
-      const coverButton = document.getElementById('cover-btn') as HTMLButtonElement | null;
-      if (coverButton) coverButton.hidden = !artUrl;
       const albumArtChip = document.getElementById('detail-album-art-chip');
       if (albumArtChip) {
         albumArtChip.textContent = artUrl ? 'Album art' : 'No album art';
@@ -6056,7 +6078,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       patch: Record<string, unknown>,
       options: { reloadDetail?: boolean } = {},
     ) {
-      const { reloadDetail = true } = options;
+      const { reloadDetail = false } = options;
       const res = await fetch(`/api/tracks/${trackId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -6069,6 +6091,41 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const trackIndex = tracks.findIndex((item) => Number(item.id) === trackId);
         if (trackIndex !== -1) tracks[trackIndex] = updatedTrack;
         else tracks = [updatedTrack, ...tracks];
+        const albumGroupKey = String(updatedTrack.album_group_key ?? '').trim();
+        const albumArtistCanonical = String(updatedTrack.artist_canonical ?? '').trim();
+        const albumAlbumCanonical = String(updatedTrack.album_canonical ?? '').trim();
+        const shouldSyncAlbumArt = [
+          'album_art_url',
+          'album_art_source',
+          'album_art_confidence',
+          'album_art_review_status',
+          'album_art_review_notes',
+        ].some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+        if (shouldSyncAlbumArt) {
+          const syncedAlbumArtPatch = {
+            album_art_url: updatedTrack.album_art_url,
+            album_art_source: updatedTrack.album_art_source,
+            album_art_confidence: updatedTrack.album_art_confidence,
+            album_art_review_status: updatedTrack.album_art_review_status,
+            album_art_review_notes: updatedTrack.album_art_review_notes,
+          };
+          tracks = tracks.map((item) => {
+            const itemAlbumGroupKey = String(item.album_group_key ?? '').trim();
+            const itemArtistCanonical = String(item.artist_canonical ?? '').trim();
+            const itemAlbumCanonical = String(item.album_canonical ?? '').trim();
+            const matchesAlbumGroup = Boolean(albumGroupKey) && itemAlbumGroupKey === albumGroupKey;
+            const matchesAlbumCanonical = !albumGroupKey
+              && Boolean(albumArtistCanonical)
+              && Boolean(albumAlbumCanonical)
+              && itemArtistCanonical === albumArtistCanonical
+              && itemAlbumCanonical === albumAlbumCanonical;
+            if (!matchesAlbumGroup && !matchesAlbumCanonical) return item;
+            return {
+              ...item,
+              ...syncedAlbumArtPatch,
+            };
+          });
+        }
         refreshMetadataSuggestionLists();
         renderList(tracks);
         if (activeTrackId === trackId) preserveHighlightedTrack(trackId, { ensureVisible: true });
@@ -6150,7 +6207,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       trackId: number,
       options: { force?: boolean; reloadDetail?: boolean; suppressPropagationToast?: boolean } = {},
     ) {
-      const { force = false, reloadDetail = true, suppressPropagationToast = false } = options;
+      const { force = false, reloadDetail = false, suppressPropagationToast = false } = options;
       appendScanLog(`Reanalyze Art started for track ${trackId}`, 'info', {
         category: 'reanalyze-art',
         trackId,
@@ -6504,7 +6561,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           album_art_review_status: 'approved',
           album_art_review_notes: source === 'manual_paste' ? 'manual image pasted from clipboard' : 'manual image uploaded from file',
         },
-        { reloadDetail: true },
+        { reloadDetail: false },
       );
       if (!payload?.track) {
         appendScanLog(`Manual cover art save failed for track ${trackId}`, 'error', {
@@ -7244,6 +7301,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const artUrl = String(track.album_art_url ?? '').trim();
       if (!artUrl) return;
       const trackId = Number(track.id ?? 0);
+      flashElementClass(document.getElementById('detail-hero-cover') as HTMLElement | null, 'is-pressed', 170);
       coverImage.src = artUrl;
       coverTitle.textContent = String(track.spotify_album_name ?? track.album ?? 'Album cover');
       if (coverSubtitle) {
@@ -7266,8 +7324,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           });
         });
       }
-      coverModal.classList.add('open');
-      coverModal.setAttribute('aria-hidden', 'false');
+      openModal(coverModal);
     }
 
     // ── Track detail ──────────────────────────────────────────────────────────
@@ -7413,9 +7470,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <span><strong>Length</strong> ${formatDuration(track.duration)}</span>
               <span>${formatBitrate(track.bitrate)}</span>
             </div>
-            <div class="meta meta-path">
-              <span id="detail-track-path" title="${esc(trackSourceSummary(track))}">${esc(trackSourceSummary(track))}</span>
-            </div>
             <div class="chips">
               ${albumNameFor(track) ? `<button type="button" class="chip nav-chip" data-nav-kind="album" data-nav-value="${esc(albumNameFor(track))}" data-nav-artist="${esc(track.artist ?? '')}">${esc(albumNameFor(track))}</button>` : ''}
               ${trackSourcesMarkup(track)}
@@ -7438,7 +7492,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <button class="btn" id="play-btn" type="button"><span class="btn-icon">▶</span> Play</button>
               <button class="btn" id="reanalyze-bpm-btn" type="button">Reanalyze BPM</button>
               <button class="btn" id="reanalyze-art-btn" type="button">Reanalyze Art</button>
-              ${track.album_art_url ? '<button class="btn" id="cover-btn" type="button">Album Cover</button>' : ''}
               <button class="btn" id="open-tunebat-btn" type="button" title="Open this track on Tunebat">Tunebat</button>
               ${track.youtube_url ? '<button class="btn" id="open-youtube-btn" type="button">YouTube</button>' : ''}
               ${sets.length > 0 ? `
@@ -7791,7 +7844,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const playBtn = document.getElementById('play-btn') as HTMLButtonElement | null;
       const reanalyzeBpmBtn = document.getElementById('reanalyze-bpm-btn') as HTMLButtonElement | null;
       const reanalyzeArtBtn = document.getElementById('reanalyze-art-btn') as HTMLButtonElement | null;
-      const coverBtn = document.getElementById('cover-btn') as HTMLButtonElement | null;
       const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
       const resumeKey = `dj-assist-resume-${track.id}`;
       let lastResumeStateWriteAt = 0;
@@ -8013,8 +8065,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             const index = tracks.findIndex((item) => Number(item.id) === trackId);
             if (index !== -1) tracks[index] = { ...tracks[index], ...refreshed };
             renderList(tracks);
+            if (selectedDetailTrackId === trackId || activeTrackId === trackId) {
+              updateRenderedTrackDetail(refreshed);
+              updateNowPlayingBar(document.getElementById('local-audio') as HTMLAudioElement | null);
+            }
           }
-          await loadTrackDetail(String(trackId), false);
           appendScanLog(`Reanalyze BPM finished for track ${trackId}`, 'success', {
             category: 'reanalyze-bpm',
             trackId,
@@ -8049,7 +8104,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         reanalyzeArtBtn.disabled = true;
         reanalyzeArtBtn.textContent = 'Analyzing…';
         try {
-          const { payload, refreshed } = await reanalyzeArtForTrack(trackId, { force: false, reloadDetail: true });
+          const { payload, refreshed } = await reanalyzeArtForTrack(trackId, { force: false, reloadDetail: false });
           showToast(
             String(payload.message ?? (refreshed?.album_art_url ? 'Artwork updated.' : 'No art found.')),
             refreshed?.album_art_url ? 'success' : 'warning',
@@ -8145,7 +8200,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
       if (track.album_art_url) {
         const openArtwork = () => openArtworkModalForTrack(track);
-        coverBtn?.addEventListener('click', openArtwork);
         document.getElementById('detail-hero-cover')?.addEventListener('click', openArtwork);
       }
       document.getElementById('open-tunebat-btn')?.addEventListener('click', async () => {
@@ -10538,9 +10592,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
 
     // ── Cover modal ───────────────────────────────────────────────────────────
-    closeCover.addEventListener('click', () => { coverModal.classList.remove('open'); coverModal.setAttribute('aria-hidden', 'true'); });
+    closeCover.addEventListener('click', () => { closeModal(coverModal); });
     coverModal.addEventListener('click', (e) => {
-      if (e.target === coverModal) { coverModal.classList.remove('open'); coverModal.setAttribute('aria-hidden', 'true'); }
+      if (e.target === coverModal) { closeModal(coverModal); }
     });
     document.getElementById('close-artwork-candidates-modal')?.addEventListener('click', () => {
       closeModal(artworkCandidatesModal);
