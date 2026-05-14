@@ -2176,29 +2176,36 @@ body[data-list-density="compact"] .row span {
   line-height: 1;
   letter-spacing: -0.03em;
   text-shadow: 0 1px 0 rgba(0,0,0,0.14);
+  overflow: hidden;
+}
+.add-music-source-option-icon svg {
+  width: 28px;
+  height: 28px;
+  display: block;
 }
 .add-music-source-option-icon[data-source="local"] {
   background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04));
   color: #ffffff;
 }
 .add-music-source-option-icon[data-source="google"] {
-  background:
-    radial-gradient(circle at 28% 28%, rgba(255,255,255,0.42), transparent 24%),
-    conic-gradient(from 180deg, #4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0 100%);
+  background: rgba(255,255,255,0.92);
   color: #ffffff;
-  border-color: rgba(255,255,255,0.1);
+  border-color: rgba(66,133,244,0.24);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.56);
 }
 .add-music-source-option-icon[data-source="onedrive"] {
   background:
     radial-gradient(circle at 30% 28%, rgba(255,255,255,0.22), transparent 28%),
-    linear-gradient(180deg, rgba(0,120,212,0.30), rgba(0,120,212,0.10));
-  color: #d9ecff;
+    linear-gradient(180deg, rgba(0,120,212,0.32), rgba(0,120,212,0.12));
+  color: #ffffff;
+  border-color: rgba(0,120,212,0.22);
 }
 .add-music-source-option-icon[data-source="dropbox"] {
   background:
     radial-gradient(circle at 30% 28%, rgba(255,255,255,0.18), transparent 26%),
-    linear-gradient(180deg, rgba(0,97,255,0.24), rgba(0,97,255,0.08));
-  color: #dbe8ff;
+    linear-gradient(180deg, rgba(0,97,255,0.26), rgba(0,97,255,0.08));
+  color: #ffffff;
+  border-color: rgba(0,97,255,0.22);
 }
 .add-music-source-option-copy {
   display: grid;

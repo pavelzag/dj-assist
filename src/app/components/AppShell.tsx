@@ -472,7 +472,15 @@ export default async function AppShell({
                     disabled={!googleDriveConnected}
                     aria-disabled={!googleDriveConnected}
                   >
-                    <span className="add-music-source-option-icon" data-source="google" aria-hidden="true">☁</span>
+                    <span className="add-music-source-option-icon" data-source="google" aria-hidden="true">
+                      <svg viewBox="0 0 64 64" role="img" focusable="false">
+                        <path d="M18 13h12l14 24H32z" fill="#34a853" />
+                        <path d="M44 13l12 20-10 16-14-24z" fill="#4285f4" />
+                        <path d="M18 13L8 33l10 16 14-24z" fill="#fbbc05" />
+                        <path d="M18 13h12l14 24-14 24H22L8 33z" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinejoin="round" opacity="0.9" />
+                        <path d="M32 34l12 10-12 10-12-10z" fill="#ea4335" />
+                      </svg>
+                    </span>
                     <span className="add-music-source-option-copy">
                       <strong>Google Drive</strong>
                       <span>Browse and import tracks from your Google Drive.</span>
@@ -502,7 +510,12 @@ export default async function AppShell({
                     disabled={!onedriveConnected}
                     aria-disabled={!onedriveConnected}
                   >
-                    <span className="add-music-source-option-icon" data-source="onedrive" aria-hidden="true">☁</span>
+                    <span className="add-music-source-option-icon" data-source="onedrive" aria-hidden="true">
+                      <svg viewBox="0 0 64 64" role="img" focusable="false">
+                        <path d="M19 44h25c7 0 12-4.3 12-10s-4.4-10-10-10c-2.6-7.3-9.1-12-17-12-8.9 0-16.4 5.5-18.7 13.3C4.8 26.3 2 30.8 2 36.2 2 41.6 6.8 46 12.8 46H19z" fill="#ffffff" opacity="0.95" />
+                        <path d="M19 44h25c7 0 12-4.3 12-10s-4.4-10-10-10c-2.6-7.3-9.1-12-17-12-8.9 0-16.4 5.5-18.7 13.3C4.8 26.3 2 30.8 2 36.2 2 41.6 6.8 46 12.8 46H19z" fill="none" stroke="#cfe6ff" strokeWidth="2.5" strokeLinejoin="round" />
+                      </svg>
+                    </span>
                     <span className="add-music-source-option-copy">
                       <strong>OneDrive</strong>
                       <span>Sign in and import audio from OneDrive.</span>
@@ -532,7 +545,16 @@ export default async function AppShell({
                     disabled={!dropboxConnected}
                     aria-disabled={!dropboxConnected}
                   >
-                    <span className="add-music-source-option-icon" data-source="dropbox" aria-hidden="true">☁</span>
+                    <span className="add-music-source-option-icon" data-source="dropbox" aria-hidden="true">
+                      <svg viewBox="0 0 64 64" role="img" focusable="false">
+                        <path d="M20 10L8 18l12 8 12-8z" fill="#0f63ff" />
+                        <path d="M44 10L32 18l12 8 12-8z" fill="#0f63ff" />
+                        <path d="M20 26L8 34l12 8 12-8z" fill="#0f63ff" />
+                        <path d="M44 26L32 34l12 8 12-8z" fill="#0f63ff" />
+                        <path d="M32 34l12 8-12 8-12-8z" fill="#6ea8ff" />
+                        <path d="M32 18l12 8-12 8-12-8z" fill="#d7e4ff" opacity="0.95" />
+                      </svg>
+                    </span>
                     <span className="add-music-source-option-copy">
                       <strong>Dropbox</strong>
                       <span>Sign in and import audio from Dropbox.</span>

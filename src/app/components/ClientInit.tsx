@@ -4860,6 +4860,40 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (icon) icon.textContent = muted ? '🔇' : '🔊';
     }
 
+    function playbackUrlForTrack(track: Record<string, unknown>, trackId: number) {
+      const trackPath = String(track.path ?? '').trim();
+      const isGoogleDriveTrack = isGoogleDriveTrackPath(trackPath);
+      const isCloudTrack = isGoogleDriveTrack || trackPath.startsWith('onedrive:') || trackPath.startsWith('dropbox:');
+      return isCloudTrack
+        ? `/api/tracks/${trackId}/stream`
+        : (adapter.mediaUrlForPath?.(trackPath) || `/api/tracks/${trackId}/stream`);
+    }
+
+    async function primeAndPlayTrack(trackId: number) {
+      const track = tracks.find((item) => Number(item.id) === trackId) ?? null;
+      if (!track) return false;
+      const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
+      if (!audio) return false;
+      const playbackUrl = playbackUrlForTrack(track, trackId);
+      audio.dataset.trackId = String(trackId);
+      audio.dataset.probeUrl = `/api/tracks/${trackId}/stream`;
+      if (String(audio.src ?? '') !== playbackUrl) {
+        audio.src = playbackUrl;
+      }
+      try {
+        audio.load();
+      } catch {
+        // Best-effort only.
+      }
+      updateNowPlayingBar(audio);
+      try {
+        await audio.play();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     function toggleCurrentAudioMute() {
       const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
       if (!audio && nowPlayingTrackId == null) return false;
@@ -10259,6 +10293,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function selectTrack(id: string, autoPlay = false, ensureVisible = false, detailDelayMs = 0, options?: { flash?: boolean }) {
       applyTrackSelection(id, ensureVisible, Boolean(options?.flash));
+      if (autoPlay) {
+        void primeAndPlayTrack(Number(id));
+      }
       scheduleTrackDetailLoad(id, autoPlay, detailDelayMs);
     }
 
