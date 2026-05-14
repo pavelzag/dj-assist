@@ -235,7 +235,12 @@ async function handleDropboxFixedCallback(
     },
   });
 
-  let profile = { id: 'dropbox-account' };
+  let profile: {
+    id: string;
+    email?: string;
+    name?: string;
+    picture?: string;
+  } = { id: 'dropbox-account' };
   try {
     profile = await fetchDropboxProfile(String(tokens.accessToken ?? '').trim());
   } catch (profileError) {
