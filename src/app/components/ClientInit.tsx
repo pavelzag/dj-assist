@@ -4869,12 +4869,26 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         : (adapter.mediaUrlForPath?.(trackPath) || `/api/tracks/${trackId}/stream`);
     }
 
+    function logPlaybackDebug(message: string, level: 'info' | 'warning' | 'error' | 'success' = 'info', context?: Record<string, unknown>) {
+      appendScanLog(message, level, { category: 'playback', ...(context ?? {}) });
+    }
+
     async function primeAndPlayTrack(trackId: number) {
       const track = tracks.find((item) => Number(item.id) === trackId) ?? null;
       if (!track) return false;
       const audio = document.getElementById('local-audio') as HTMLAudioElement | null;
       if (!audio) return false;
       const playbackUrl = playbackUrlForTrack(track, trackId);
+      logPlaybackDebug(`Prime playback requested for track ${trackId}`, 'info', {
+        trackId,
+        title: String(track.title ?? ''),
+        artist: String(track.artist ?? ''),
+        path: String(track.path ?? ''),
+        playbackUrl,
+        readyState: Number(audio.readyState ?? 0),
+        networkState: Number(audio.networkState ?? 0),
+        currentSrc: String(audio.currentSrc ?? ''),
+      });
       audio.dataset.trackId = String(trackId);
       audio.dataset.probeUrl = `/api/tracks/${trackId}/stream`;
       if (String(audio.src ?? '') !== playbackUrl) {
@@ -4888,8 +4902,20 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       updateNowPlayingBar(audio);
       try {
         await audio.play();
+        logPlaybackDebug(`Prime playback started for track ${trackId}`, 'success', {
+          trackId,
+          src: String(audio.currentSrc ?? audio.src ?? ''),
+          readyState: Number(audio.readyState ?? 0),
+          networkState: Number(audio.networkState ?? 0),
+        });
         return true;
       } catch {
+        logPlaybackDebug(`Prime playback blocked for track ${trackId}`, 'warning', {
+          trackId,
+          src: String(audio.currentSrc ?? audio.src ?? ''),
+          readyState: Number(audio.readyState ?? 0),
+          networkState: Number(audio.networkState ?? 0),
+        });
         return false;
       }
     }
@@ -7857,21 +7883,25 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           updateNowPlayingBar(localAudio);
         });
         localAudio.addEventListener('waiting', () => {
-          appendScanLog(`Playback buffer waiting for track ${trackId}`, 'warning', {
+          logPlaybackDebug(`Playback buffer waiting for track ${trackId}`, 'warning', {
             category: 'playback',
             trackId,
             currentTime: Number(localAudio.currentTime ?? 0),
             readyState: Number(localAudio.readyState ?? 0),
             networkState: Number(localAudio.networkState ?? 0),
+            src: String(localAudio.currentSrc ?? localAudio.src ?? ''),
+            probeUrl: String(localAudio.dataset.probeUrl ?? ''),
           });
         });
         localAudio.addEventListener('stalled', () => {
-          appendScanLog(`Playback stalled for track ${trackId}`, 'warning', {
+          logPlaybackDebug(`Playback stalled for track ${trackId}`, 'warning', {
             category: 'playback',
             trackId,
             currentTime: Number(localAudio.currentTime ?? 0),
             readyState: Number(localAudio.readyState ?? 0),
             networkState: Number(localAudio.networkState ?? 0),
+            src: String(localAudio.currentSrc ?? localAudio.src ?? ''),
+            probeUrl: String(localAudio.dataset.probeUrl ?? ''),
           });
         });
         localAudio.addEventListener('error', () => {
@@ -7893,7 +7923,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' :
             `unknown(${code})`;
 
-          appendScanLog(`Audio error for track ${trackId}: ${label}`, 'error', {
+          logPlaybackDebug(`Audio error for track ${trackId}: ${label}`, 'error', {
             category: 'playback',
             trackId,
             errorCode: code,
@@ -7906,7 +7936,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           });
 
           if (isGoogleDriveTrack) {
-            appendScanLog(`Audio probe skipped for Google Drive track ${trackId}: no local playback file yet.`, 'warning', {
+            logPlaybackDebug(`Audio probe skipped for Google Drive track ${trackId}: no local playback file yet.`, 'warning', {
               category: 'playback',
               trackId,
               path: trackPath,
@@ -7915,9 +7945,17 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           }
 
           const probeUrl = localAudio.dataset.probeUrl || streamProbeUrl;
+          logPlaybackDebug(`Audio probe requested for track ${trackId}`, 'info', {
+            category: 'playback',
+            trackId,
+            probeUrl,
+            src: String(localAudio.currentSrc ?? localAudio.src ?? ''),
+            readyState: Number(localAudio.readyState ?? 0),
+            networkState: Number(localAudio.networkState ?? 0),
+          });
           fetch(probeUrl, { headers: { Range: 'bytes=0-0' } })
             .then(async (response) => {
-              appendScanLog(`Audio probe response for track ${trackId}`, 'info', {
+              logPlaybackDebug(`Audio probe response for track ${trackId}`, 'info', {
                 category: 'playback',
                 trackId,
                 probeUrl,
@@ -7932,7 +7970,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               await pruneMissingTracks([trackId]);
             })
             .catch((probeErr) => {
-              appendScanLog(`Audio probe fetch failed for track ${trackId}: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`, 'error', {
+              logPlaybackDebug(`Audio probe fetch failed for track ${trackId}: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`, 'error', {
                 category: 'playback',
                 trackId,
                 probeUrl,
@@ -10176,6 +10214,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     async function loadTrackDetail(id: string, autoPlay = false) {
       const requestedTrackId = Number(id);
       const requestToken = ++trackDetailRequestToken;
+      logPlaybackDebug(`Track detail request started for track ${requestedTrackId}`, 'info', {
+        trackId: requestedTrackId,
+        autoPlay,
+        requestToken,
+        activeTrackId,
+      });
       trackDetailAbortController?.abort();
       const abortController = new AbortController();
       trackDetailAbortController = abortController;
@@ -10204,16 +10248,45 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       try {
         const res = await fetch(`/api/tracks/${id}?${params.toString()}`, { signal: abortController.signal });
         payload = await res.json();
+        logPlaybackDebug(`Track detail response received for track ${requestedTrackId}`, 'info', {
+          trackId: requestedTrackId,
+          autoPlay,
+          requestToken,
+          status: res.status,
+          ok: res.ok,
+          contentType: res.headers.get('content-type'),
+          responseKeys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : [],
+        });
       } catch (error) {
         if (abortController.signal.aborted) return;
+        logPlaybackDebug(`Track detail request failed for track ${requestedTrackId}`, 'error', {
+          trackId: requestedTrackId,
+          autoPlay,
+          requestToken,
+          error: error instanceof Error ? error.message : String(error),
+        });
         showToast(error instanceof Error ? error.message : 'Could not load track details.', 'error');
         return;
       }
-      if (requestToken !== trackDetailRequestToken || activeTrackId !== requestedTrackId) return;
+      if (requestToken !== trackDetailRequestToken || activeTrackId !== requestedTrackId) {
+        logPlaybackDebug(`Track detail response ignored for track ${requestedTrackId}`, 'warning', {
+          trackId: requestedTrackId,
+          autoPlay,
+          requestToken,
+          latestRequestToken: trackDetailRequestToken,
+          activeTrackId,
+        });
+        return;
+      }
       if (trackDetailAbortController === abortController) {
         trackDetailAbortController = null;
       }
       selectedDetailTrackId = requestedTrackId;
+      logPlaybackDebug(`Track detail render started for track ${requestedTrackId}`, 'info', {
+        trackId: requestedTrackId,
+        autoPlay,
+        hasAudioSnapshot: Boolean(audioSnapshot),
+      });
       renderDetail(payload);
       let restoredPlayback = false;
       if (audioSnapshot) {
@@ -10234,7 +10307,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               try {
                 await restoredAudio.play();
                 restoredPlayback = true;
+                logPlaybackDebug(`Track detail playback restored for track ${requestedTrackId}`, 'success', {
+                  trackId: requestedTrackId,
+                  autoPlay,
+                });
               } catch {
+                logPlaybackDebug(`Track detail playback restore blocked for track ${requestedTrackId}`, 'warning', {
+                  trackId: requestedTrackId,
+                  autoPlay,
+                });
                 // Best effort only; if playback is blocked, keep the re-rendered
                 // detail pane without interrupting the user's existing state.
               }
@@ -10254,6 +10335,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       updateNowPlayingBar();
       if (autoPlay && !restoredPlayback) {
         const localAudio = document.getElementById('local-audio') as HTMLAudioElement | null;
+        logPlaybackDebug(`Track detail autoplay fallback for track ${requestedTrackId}`, 'info', {
+          trackId: requestedTrackId,
+          hasAudio: Boolean(localAudio),
+          readyState: Number(localAudio?.readyState ?? 0),
+          networkState: Number(localAudio?.networkState ?? 0),
+        });
         localAudio?.play().catch(() => {});
       }
 
@@ -10292,6 +10379,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     async function selectTrack(id: string, autoPlay = false, ensureVisible = false, detailDelayMs = 0, options?: { flash?: boolean }) {
+      logPlaybackDebug(`Track selection requested for track ${id}`, 'info', {
+        trackId: Number(id),
+        autoPlay,
+        ensureVisible,
+        detailDelayMs,
+        flash: Boolean(options?.flash),
+        activeTrackId,
+      });
       applyTrackSelection(id, ensureVisible, Boolean(options?.flash));
       if (autoPlay) {
         void primeAndPlayTrack(Number(id));

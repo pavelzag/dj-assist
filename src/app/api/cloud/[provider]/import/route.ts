@@ -210,6 +210,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       folderName: folderName || undefined,
       signal: requestSignal,
     });
+    logCloudImport(provider, 'info', `${provider}_local_import_done`, {
+      folderId: folderId || null,
+      folderName: folderName || null,
+      imported: localImport.imported,
+      updated: localImport.updated,
+      total: filteredFiles.length,
+    });
     await logCloudProgress(provider, 'info', `Imported ${localImport.imported} new tracks and updated ${localImport.updated} existing tracks.`, {
       event: 'local_import_completed',
       imported: localImport.imported,
@@ -273,6 +280,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
 
     const userData = await effectiveUserData();
     const syncedTracks = await getTracksByPaths(filteredFiles.map((file) => cloudTrackPath(provider, file.id)));
+    logCloudImport(provider, 'info', `${provider}_upload_start`, {
+      folderId: folderId || null,
+      folderName: folderName || null,
+      syncedTracks: syncedTracks.length,
+      enriched,
+      failed,
+      reused,
+    });
     const uploadResponse = await fetch(`${serverUrl}/api/v1/ingest`, {
       method: 'POST',
       headers: {
@@ -322,6 +337,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     });
     const raw = await uploadResponse.text();
     const payload = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    logCloudImport(provider, 'info', `${provider}_upload_done`, {
+      folderId: folderId || null,
+      folderName: folderName || null,
+      status: uploadResponse.status,
+      ok: uploadResponse.ok,
+      tracksReceived: Number(payload.tracks_received ?? 0),
+    });
     if (!uploadResponse.ok) {
       throw new Error(String(payload.error ?? raw ?? `Cloud import failed status=${uploadResponse.status}`));
     }
@@ -349,8 +371,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     });
   } catch (error) {
     if (request.signal.aborted || String((error as Error)?.message ?? '').toLowerCase().includes('cancelled')) {
+      logCloudImport(provider, 'warn', `${provider}_cancelled`, {
+        folderId: folderId || null,
+        folderName: folderName || null,
+      });
       return NextResponse.json({ error: 'Import cancelled' }, { status: 499 });
     }
+    logCloudImport(provider, 'error', `${provider}_failed`, {
+      folderId: folderId || null,
+      folderName: folderName || null,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },
       { status: 400 },
