@@ -2171,10 +2171,11 @@ body[data-list-density="compact"] .row span {
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.06);
   color: #ffd7b6;
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.03em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.14);
 }
 .add-music-source-option-icon[data-source="local"] {
   background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04));
@@ -2182,16 +2183,21 @@ body[data-list-density="compact"] .row span {
 }
 .add-music-source-option-icon[data-source="google"] {
   background:
+    radial-gradient(circle at 28% 28%, rgba(255,255,255,0.42), transparent 24%),
     conic-gradient(from 180deg, #4285f4 0 25%, #34a853 0 50%, #fbbc05 0 75%, #ea4335 0 100%);
   color: #ffffff;
   border-color: rgba(255,255,255,0.1);
 }
 .add-music-source-option-icon[data-source="onedrive"] {
-  background: linear-gradient(180deg, rgba(0,120,212,0.28), rgba(0,120,212,0.10));
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255,255,255,0.22), transparent 28%),
+    linear-gradient(180deg, rgba(0,120,212,0.30), rgba(0,120,212,0.10));
   color: #d9ecff;
 }
 .add-music-source-option-icon[data-source="dropbox"] {
-  background: linear-gradient(180deg, rgba(0,97,255,0.22), rgba(0,97,255,0.08));
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255,255,255,0.18), transparent 26%),
+    linear-gradient(180deg, rgba(0,97,255,0.24), rgba(0,97,255,0.08));
   color: #dbe8ff;
 }
 .add-music-source-option-copy {

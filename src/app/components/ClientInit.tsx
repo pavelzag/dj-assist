@@ -168,6 +168,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       listShowKey: boolean;
       listShowLength: boolean;
       listShowRecent: boolean;
+      listShowSourcePath: boolean;
     };
     const defaultPreferences: Preferences = {
       autoplayOnSelect: true,
@@ -183,6 +184,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       listShowKey: true,
       listShowLength: true,
       listShowRecent: true,
+      listShowSourcePath: true,
     };
     let activeTrackId: number | null = null;
     let activeScanJobId: string | null = null;
@@ -461,6 +463,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           listShowKey: parsed.listShowKey !== false,
           listShowLength: parsed.listShowLength !== false,
           listShowRecent: parsed.listShowRecent !== false,
+          listShowSourcePath: parsed.listShowSourcePath !== false,
         };
       } catch {
         return { ...defaultPreferences };
@@ -1396,6 +1399,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return googleDriveImportBusy || folderSyncBusy || scanCancelInFlight || activeCloudImportProvider != null;
     }
 
+    function hasActiveScanOrImport() {
+      return isScanActionBusy() || isLocalScanActive();
+    }
+
     function isLocalScanActive() {
       return scanSourceMode === 'local' && (activeScanStatus === 'queued' || activeScanStatus === 'running');
     }
@@ -1457,6 +1464,18 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (activeCloudImportProvider != null) {
         await cancelActiveCloudImport(activeCloudImportProvider);
         return;
+      }
+    }
+
+    async function waitForScanOrImportIdle(timeoutMs = 15000) {
+      const startedAt = Date.now();
+      while (hasActiveScanOrImport()) {
+        if (Date.now() - startedAt >= timeoutMs) {
+          break;
+        }
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 100);
+        });
       }
     }
 
@@ -4153,7 +4172,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         { label: 'Review Missing Art', meta: 'Review', run: () => startReviewMode('art') },
         { label: 'Review Missing Key', meta: 'Review', run: () => startReviewMode('key') },
         { label: 'Review Unreadable Files', meta: 'Review', run: () => startReviewMode('decode') },
-        { label: 'Open Collection', meta: 'Panel', run: () => openPanel('library') },
+        { label: 'Open Settings', meta: 'Panel', run: () => openPanel('library') },
         { label: 'Open Playlists', meta: 'Panel', run: () => openPanel('sets') },
         { label: 'Focus Search', meta: 'Navigation', run: () => searchEl.focus() },
         { label: 'Show Keyboard Shortcuts', meta: 'Help', run: () => openModal(shortcutsModal) },
@@ -4258,7 +4277,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (preferences.listShowBitrate) parts.push(formatBitrate(track.bitrate));
       if (preferences.listShowTags && Array.isArray(track.custom_tags) && track.custom_tags.length) parts.push(esc((track.custom_tags as string[]).join(', ')));
       if (preferences.listShowBpmSource && track.bpm_source) parts.push(`BPM ${esc(track.bpm_source)}`);
-      parts.push(esc(trackSourceSummary(track)));
+      if (preferences.listShowSourcePath) parts.push(esc(trackSourceSummary(track)));
       return parts;
     }
 
@@ -4321,7 +4340,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         </div>
       `);
       if (preferences.listShowKey) metrics.push(`<div class="row-metric"><strong>${esc(track.effective_key ?? '--')}</strong><span>Key</span></div>`);
-      metrics.push(`<div class="row-metric"><strong>${formatDuration(track.duration)}</strong><span>Length</span></div>`);
+      if (preferences.listShowLength) metrics.push(`<div class="row-metric"><strong>${formatDuration(track.duration)}</strong><span>Length</span></div>`);
       if (preferences.listShowRecent && recentNewTrackIds.has(Number(track.id))) metrics.push(`<div class="row-metric row-metric-accent"><strong>New</strong><span>Added now</span></div>`);
       while (metrics.length < 3) metrics.push('<div class="row-metric row-metric-empty"></div>');
       return metrics.slice(0, 3).join('');
@@ -5774,7 +5793,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (quitAppInFlight) return;
       quitAppInFlight = true;
       try {
-        await cancelActiveScanOrImport();
+        if (hasActiveScanOrImport()) {
+          await cancelActiveScanOrImport();
+          await waitForScanOrImportIdle();
+        }
         await adapter.confirmQuit();
       } finally {
         quitAppInFlight = false;
@@ -6865,6 +6887,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           preferences.listShowKey,
           preferences.listShowLength,
           preferences.listShowRecent,
+          preferences.listShowSourcePath,
         ].join('|'),
       });
     }
@@ -7024,7 +7047,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           : duplicateTrackIds.size
             ? ` | Duplicates: <strong>${duplicateTrackIds.size}</strong>`
             : '';
-        statusbar.innerHTML = `Collection: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${duplicateLabel}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
+        statusbar.innerHTML = `Settings: <strong>${tracks.length}</strong> | Visible: <strong>${sorted.length}</strong>${activeQuickFilter ? ` | Filter: <strong>${esc(activeQuickFilterLabel())}</strong>` : ''}${recentNewTrackIds.size ? ` | New: <strong>${recentNewTrackIds.size}</strong>` : ''}${duplicateLabel}${activeArtistScope ? ` | Artist: <strong>${esc(activeArtistScope)}</strong>` : ''}${activeAlbumScope ? ` | Album: <strong>${esc(activeAlbumScope)}</strong>` : ''} | <button type="button" class="statusbar-action" id="statusbar-select-all-visible-btn">Select All Visible</button>`;
       }
       if (!items.length) {
         listIsVirtualized = false;
@@ -7416,11 +7439,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                     ${setOptions}
                   </select>
                   <button class="btn" id="add-to-set-btn" type="button">+ Add to playlist</button>
+                  <button class="btn secondary" id="create-new-set-btn" type="button">+ New playlist</button>
                   <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
                 </div>
               ` : `
                 <div style="display:inline-flex;gap:6px;align-items:center;">
-                  <button class="btn" id="open-sets-btn" type="button">+ Add to playlist</button>
+                  <button class="btn" id="create-new-set-btn" type="button">+ New playlist</button>
                   <button class="btn danger" id="delete-track-btn" type="button">Delete</button>
                 </div>
               `}
@@ -7586,36 +7610,67 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       // "Add to playlist" button
       const addToSetBtn = document.getElementById('add-to-set-btn');
       const setSelect = document.getElementById('set-select') as HTMLSelectElement | null;
+      const createNewSetBtn = document.getElementById('create-new-set-btn');
+      const addTrackToSetById = async (setId: number) => {
+        const response = await fetch(`/api/sets/${setId}/tracks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ track_id: track.id }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+          throw new Error(String(payload.error ?? 'Could not add track to playlist.'));
+        }
+      };
+      const createPlaylistAndAddTrack = async () => {
+        const suggested = String(track.album ?? track.artist ?? 'New playlist').trim() || 'New playlist';
+        const name = window.prompt('New playlist name', suggested)?.trim();
+        if (!name) return;
+        const response = await fetch('/api/sets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+          throw new Error(String(payload.error ?? 'Could not create playlist.'));
+        }
+        const payload = await response.json() as { set?: { id?: number; name?: string } };
+        const setId = Number(payload.set?.id ?? 0);
+        if (!setId) throw new Error('Could not create playlist.');
+        await addTrackToSetById(setId);
+        await loadSets();
+        if (currentPanel === 'sets') {
+          await renderSetsPanel();
+        }
+        showToast(`Created playlist "${name}" and added the track.`, 'success');
+      };
       if (addToSetBtn && setSelect) {
         addToSetBtn.addEventListener('click', async () => {
           const setId = parseInt(setSelect.value, 10);
           if (!setId) return;
-          const response = await fetch(`/api/sets/${setId}/tracks`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ track_id: track.id }),
-          });
-          if (!response.ok) {
-            const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-            showToast(String(payload.error ?? 'Could not add track to playlist.'), 'error');
-            return;
+          try {
+            await addTrackToSetById(setId);
+            addToSetBtn.textContent = '✓ Added';
+            showToast('Track added to playlist.', 'success');
+            if (currentPanel === 'sets') {
+              await renderSetsPanel();
+            }
+            setTimeout(() => { addToSetBtn.textContent = '+ Add to playlist'; }, 1500);
+          } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Could not add track to playlist.', 'error');
           }
-          addToSetBtn.textContent = '✓ Added';
-          showToast('Track added to playlist.', 'success');
-          if (currentPanel === 'sets') {
-            await renderSetsPanel();
-          }
-          setTimeout(() => { addToSetBtn.textContent = '+ Add to playlist'; }, 1500);
         });
       }
-
-      // Switch to sets panel if "Add to playlist" clicked with no sets
-      const openSetsBtn = document.getElementById('open-sets-btn');
-      if (openSetsBtn) {
-        openSetsBtn.addEventListener('click', () => {
-          document.querySelector('[data-panel="sets"]')?.dispatchEvent(new MouseEvent('click'));
-        });
-      }
+      createNewSetBtn?.addEventListener('click', () => {
+        void (async () => {
+          try {
+            await createPlaylistAndAddTrack();
+          } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Could not create playlist.', 'error');
+          }
+        })();
+      });
       document.getElementById('delete-track-btn')?.addEventListener('click', () => {
         openDeleteTracksModal([Number(track.id)], 'single');
       });
@@ -8507,9 +8562,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         }
         input.value = '';
         await renderSetsPanel();
-        if (activeTrackId != null) {
-          await loadTrackDetail(String(activeTrackId), false);
-        }
       };
       btn.addEventListener('click', create);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
@@ -8879,7 +8931,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             <div class="preferences-list">
               <label class="preference-row"><input id="pref-autoplay-on-select" type="checkbox" ${preferences.autoplayOnSelect ? 'checked' : ''} /><span>Autoplay when selecting tracks</span></label>
               <label class="preference-row"><input id="pref-load-library-on-startup" type="checkbox" ${preferences.loadLibraryOnStartup ? 'checked' : ''} /><span>Load existing library on startup</span></label>
-              <label class="preference-row"><input id="pref-collapse-scan-log" type="checkbox" ${preferences.collapseScanLog ? 'checked' : ''} /><span>Keep scan log collapsed by default</span></label>
               <label class="preference-row"><input id="pref-scan-progress-toasts" type="checkbox" ${preferences.scanProgressToasts ? 'checked' : ''} /><span>Show scan progress toasts</span></label>
               <label class="preference-field">
                 <span>Default list density</span>
@@ -8892,11 +8943,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
                 <strong>Track list columns</strong>
                 <label class="preference-row"><input id="pref-col-album" type="checkbox" ${preferences.listShowAlbum ? 'checked' : ''} /><span>Album</span></label>
                 <label class="preference-row"><input id="pref-col-bitrate" type="checkbox" ${preferences.listShowBitrate ? 'checked' : ''} /><span>Bitrate</span></label>
-                <label class="preference-row"><input id="pref-col-tags" type="checkbox" ${preferences.listShowTags ? 'checked' : ''} /><span>Tags</span></label>
                 <label class="preference-row"><input id="pref-col-bpm-source" type="checkbox" ${preferences.listShowBpmSource ? 'checked' : ''} /><span>BPM source</span></label>
                 <label class="preference-row"><input id="pref-col-key" type="checkbox" ${preferences.listShowKey ? 'checked' : ''} /><span>Key</span></label>
                 <label class="preference-row"><input id="pref-col-length" type="checkbox" ${preferences.listShowLength ? 'checked' : ''} /><span>Length</span></label>
-                <label class="preference-row"><input id="pref-col-recent" type="checkbox" ${preferences.listShowRecent ? 'checked' : ''} /><span>Recent marker</span></label>
+                <label class="preference-row"><input id="pref-col-source-path" type="checkbox" ${preferences.listShowSourcePath ? 'checked' : ''} /><span>Show song path in songs pane</span></label>
               </div>
             </div>
           </section>
@@ -9060,10 +9110,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         preferences.loadLibraryOnStartup = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
       });
-      document.getElementById('pref-collapse-scan-log')?.addEventListener('change', (event) => {
-        preferences.collapseScanLog = (event.currentTarget as HTMLInputElement).checked;
-        savePreferences();
-      });
       document.getElementById('pref-scan-progress-toasts')?.addEventListener('change', (event) => {
         preferences.scanProgressToasts = (event.currentTarget as HTMLInputElement).checked;
         savePreferences();
@@ -9087,11 +9133,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       };
       bindColumnPreference('pref-col-album', 'listShowAlbum');
       bindColumnPreference('pref-col-bitrate', 'listShowBitrate');
-      bindColumnPreference('pref-col-tags', 'listShowTags');
       bindColumnPreference('pref-col-bpm-source', 'listShowBpmSource');
       bindColumnPreference('pref-col-key', 'listShowKey');
       bindColumnPreference('pref-col-length', 'listShowLength');
-      bindColumnPreference('pref-col-recent', 'listShowRecent');
+      bindColumnPreference('pref-col-source-path', 'listShowSourcePath');
       document.getElementById('scan-profile-save-btn')?.addEventListener('click', () => {
         void submitScanProfileSettings();
       });
@@ -9386,7 +9431,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
               <button type="button" class="chip nav-chip" id="copy-activity-log-btn">Copy Backend Logs (C)</button>
               <button type="button" class="chip nav-chip" id="activity-log-filter-all" aria-pressed="true">All Logs</button>
               <button type="button" class="chip nav-chip" id="activity-log-filter-bpm-missing" aria-pressed="false">BPM Failures Only</button>
-              <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Collection</button>
+              <button type="button" class="chip nav-chip" id="activity-open-collection-btn">Open Settings</button>
             </div>
             <div class="collapsible-log-section" id="activity-log-section-body">
               <div class="scan-progress-file bottom" id="scan-progress-file">No scan in progress</div>
@@ -10004,15 +10049,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (!res.ok) {
         const message = String(response?.error ?? `Track refresh failed (${res.status})`);
         warningBanner.style.display = 'block';
-        warningBanner.innerHTML = `<strong>Collection refresh failed:</strong> ${esc(message.slice(0, 400))}`;
-        appendScanLog(`Collection refresh failed: ${message.slice(0, 200)}`, 'error');
+        warningBanner.innerHTML = `<strong>Settings refresh failed:</strong> ${esc(message.slice(0, 400))}`;
+        appendScanLog(`Settings refresh failed: ${message.slice(0, 200)}`, 'error');
         return;
       }
       if (!response || typeof response !== 'object') {
         const message = 'Track refresh returned an invalid response.';
         warningBanner.style.display = 'block';
-        warningBanner.innerHTML = `<strong>Collection refresh failed:</strong> ${esc(message)}`;
-        appendScanLog(`Collection refresh failed: ${message}`, 'error');
+        warningBanner.innerHTML = `<strong>Settings refresh failed:</strong> ${esc(message)}`;
+        appendScanLog(`Settings refresh failed: ${message}`, 'error');
         return;
       }
       tracks = Array.isArray(response.tracks) ? response.tracks as Record<string, unknown>[] : [];

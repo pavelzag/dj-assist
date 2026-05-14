@@ -113,7 +113,7 @@ export default async function AppShell({
           <div className="panel-tabs">
             <button type="button" className="panel-tab active" id="tab-track" data-panel="track">Track</button>
             <button type="button" className="panel-tab" id="tab-sets" data-panel="sets">Playlists</button>
-            <button type="button" className="panel-tab" id="tab-library" data-panel="library">Collection</button>
+            <button type="button" className="panel-tab" id="tab-library" data-panel="library">Settings</button>
             {isDebugFlavor ? <button type="button" className="panel-tab" id="tab-activity" data-panel="activity">Activity</button> : null}
           </div>
           <div id="panel-track">
@@ -472,7 +472,7 @@ export default async function AppShell({
                     disabled={!googleDriveConnected}
                     aria-disabled={!googleDriveConnected}
                   >
-                    <span className="add-music-source-option-icon" data-source="google" aria-hidden="true">◢</span>
+                    <span className="add-music-source-option-icon" data-source="google" aria-hidden="true">☁</span>
                     <span className="add-music-source-option-copy">
                       <strong>Google Drive</strong>
                       <span>Browse and import tracks from your Google Drive.</span>
@@ -532,7 +532,7 @@ export default async function AppShell({
                     disabled={!dropboxConnected}
                     aria-disabled={!dropboxConnected}
                   >
-                    <span className="add-music-source-option-icon" data-source="dropbox" aria-hidden="true">◈</span>
+                    <span className="add-music-source-option-icon" data-source="dropbox" aria-hidden="true">☁</span>
                     <span className="add-music-source-option-copy">
                       <strong>Dropbox</strong>
                       <span>Sign in and import audio from Dropbox.</span>
