@@ -473,12 +473,12 @@ export default async function AppShell({
                     aria-disabled={!googleDriveConnected}
                   >
                     <span className="add-music-source-option-icon" data-source="google" aria-hidden="true">
-                      <svg viewBox="0 0 64 64" role="img" focusable="false">
-                        <path d="M18 13h12l14 24H32z" fill="#34a853" />
-                        <path d="M44 13l12 20-10 16-14-24z" fill="#4285f4" />
-                        <path d="M18 13L8 33l10 16 14-24z" fill="#fbbc05" />
-                        <path d="M18 13h12l14 24-14 24H22L8 33z" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinejoin="round" opacity="0.9" />
-                        <path d="M32 34l12 10-12 10-12-10z" fill="#ea4335" />
+                      <svg viewBox="0 0 64 64" role="img" focusable="false" preserveAspectRatio="xMidYMid meet">
+                        <path d="M13 16h16l6 10-8 14H11l-5-10z" fill="#34a853" />
+                        <path d="M29 16h22l9 14-8 14H27l-8-14z" fill="#4285f4" />
+                        <path d="M11 40h23l-6 10H5z" fill="#fbbc05" />
+                        <path d="M29 16h22L35 54H17l12-20z" fill="#ea4335" opacity="0.92" />
+                        <path d="M13 16h38l9 14-6 10H16L5 30z" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="1.6" strokeLinejoin="round" opacity="0.8" />
                       </svg>
                     </span>
                     <span className="add-music-source-option-copy">
@@ -511,9 +511,9 @@ export default async function AppShell({
                     aria-disabled={!onedriveConnected}
                   >
                     <span className="add-music-source-option-icon" data-source="onedrive" aria-hidden="true">
-                      <svg viewBox="0 0 64 64" role="img" focusable="false">
-                        <path d="M19 44h25c7 0 12-4.3 12-10s-4.4-10-10-10c-2.6-7.3-9.1-12-17-12-8.9 0-16.4 5.5-18.7 13.3C4.8 26.3 2 30.8 2 36.2 2 41.6 6.8 46 12.8 46H19z" fill="#ffffff" opacity="0.95" />
-                        <path d="M19 44h25c7 0 12-4.3 12-10s-4.4-10-10-10c-2.6-7.3-9.1-12-17-12-8.9 0-16.4 5.5-18.7 13.3C4.8 26.3 2 30.8 2 36.2 2 41.6 6.8 46 12.8 46H19z" fill="none" stroke="#cfe6ff" strokeWidth="2.5" strokeLinejoin="round" />
+                      <svg viewBox="0 0 64 64" role="img" focusable="false" preserveAspectRatio="xMidYMid meet">
+                        <path d="M18 42h24c7 0 12-4.4 12-10s-4.3-10-10.1-10c-2.5-7.1-8.9-11.8-16.7-11.8-8.6 0-15.7 5.3-18 12.8C5 24.7 2 29.3 2 34.6 2 40 6.7 44 12.7 44H18z" fill="rgba(255,255,255,0.9)" opacity="0.88" />
+                        <path d="M18 42h24c7 0 12-4.4 12-10s-4.3-10-10.1-10c-2.5-7.1-8.9-11.8-16.7-11.8-8.6 0-15.7 5.3-18 12.8C5 24.7 2 29.3 2 34.6 2 40 6.7 44 12.7 44H18z" fill="none" stroke="#b8dcff" strokeWidth="1.8" strokeLinejoin="round" opacity="0.92" />
                       </svg>
                     </span>
                     <span className="add-music-source-option-copy">
@@ -546,13 +546,13 @@ export default async function AppShell({
                     aria-disabled={!dropboxConnected}
                   >
                     <span className="add-music-source-option-icon" data-source="dropbox" aria-hidden="true">
-                      <svg viewBox="0 0 64 64" role="img" focusable="false">
-                        <path d="M20 10L8 18l12 8 12-8z" fill="#0f63ff" />
-                        <path d="M44 10L32 18l12 8 12-8z" fill="#0f63ff" />
-                        <path d="M20 26L8 34l12 8 12-8z" fill="#0f63ff" />
-                        <path d="M44 26L32 34l12 8 12-8z" fill="#0f63ff" />
-                        <path d="M32 34l12 8-12 8-12-8z" fill="#6ea8ff" />
-                        <path d="M32 18l12 8-12 8-12-8z" fill="#d7e4ff" opacity="0.95" />
+                      <svg viewBox="0 0 64 64" role="img" focusable="false" preserveAspectRatio="xMidYMid meet">
+                        <path d="M32 10L18 18l14 8 14-8z" fill="rgba(255,255,255,0.95)" opacity="0.9" />
+                        <path d="M32 26L18 34l14 8 14-8z" fill="#8fb9ff" opacity="0.9" />
+                        <path d="M32 42L18 50l14 8 14-8z" fill="#0f63ff" opacity="0.92" />
+                        <path d="M32 10L48 19l-16 9-16-9z" fill="none" stroke="#c9ddff" strokeWidth="1.8" strokeLinejoin="round" opacity="0.92" />
+                        <path d="M32 26L48 35l-16 9-16-9z" fill="none" stroke="#dbe8ff" strokeWidth="1.6" strokeLinejoin="round" opacity="0.8" />
+                        <path d="M32 42L48 51l-16 9-16-9z" fill="none" stroke="#b6d1ff" strokeWidth="1.6" strokeLinejoin="round" opacity="0.8" />
                       </svg>
                     </span>
                     <span className="add-music-source-option-copy">
