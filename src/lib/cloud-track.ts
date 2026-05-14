@@ -1,6 +1,5 @@
 import { parseCloudTrackPath, type CloudSourceKind } from '@/lib/cloud-source';
 import { ensureLocalGoogleDriveTrackFile } from '@/lib/google-drive-cache';
-import { ensureLocalOneDriveTrackFile } from '@/lib/onedrive-cache';
 import { ensureLocalDropboxTrackFile } from '@/lib/dropbox-cache';
 
 export async function ensureLocalCloudTrackFile(
@@ -25,9 +24,5 @@ export async function ensureLocalCloudTrackFileByKind(
   if (kind === 'google_drive') {
     return ensureLocalGoogleDriveTrackFile(fileId, knownMetadata);
   }
-  if (kind === 'onedrive') {
-    return ensureLocalOneDriveTrackFile(fileId, knownMetadata);
-  }
   return ensureLocalDropboxTrackFile(fileId, knownMetadata);
 }
-

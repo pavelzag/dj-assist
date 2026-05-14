@@ -720,7 +720,6 @@ export function serializeTrack(
     source_kinds: [cloudSourceKindFromPath(track.path) ?? 'local'],
     has_local_source: !cloudSourceKindFromPath(track.path),
     has_google_drive_source: cloudSourceKindFromPath(track.path) === 'google_drive',
-    has_one_drive_source: cloudSourceKindFromPath(track.path) === 'onedrive',
     has_dropbox_source: cloudSourceKindFromPath(track.path) === 'dropbox',
     has_cloud_source: Boolean(cloudSourceKindFromPath(track.path)),
   };
@@ -858,7 +857,6 @@ export function serializeTrackGroup(
     source_kinds: [...new Set(combinedSources.map((source) => source.kind))],
     has_local_source: combinedSources.some((source) => source.kind === 'local'),
     has_google_drive_source: combinedSources.some((source) => source.kind === 'google_drive'),
-    has_one_drive_source: combinedSources.some((source) => source.kind === 'onedrive'),
     has_dropbox_source: combinedSources.some((source) => source.kind === 'dropbox'),
     has_cloud_source: combinedSources.some((source) => source.kind !== 'local'),
     source_track_ids: tracks.map((track) => track.id),

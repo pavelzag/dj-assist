@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getClientId, effectiveServerSettings, getOneDriveAccessToken, getDropboxAccessToken, effectiveUserData } from '@/lib/runtime-settings';
+import { effectiveServerSettings, getDropboxAccessToken } from '@/lib/runtime-settings';
 import { normalizeCloudSourceKind, cloudTrackPath } from '@/lib/cloud-source';
 import { importCloudTracks, purgeIgnoredCloudTracks, reuseExistingAlbumArtForTrack, updateCloudTrackLocalMetadata, getTracksByPaths } from '@/lib/db';
 import { readLocalAudioMetadata } from '@/lib/google-drive-cache';
-import { ensureLocalOneDriveTrackFile } from '@/lib/onedrive-cache';
 import { ensureLocalDropboxTrackFile } from '@/lib/dropbox-cache';
-import { listOneDriveAudioFiles } from '@/lib/onedrive-files';
 import { listDropboxAudioFiles } from '@/lib/dropbox-files';
 import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
 import { proFeaturesEnabled } from '@/lib/app-flavor';
@@ -56,7 +54,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
   }
   const { provider: rawProvider } = await context.params;
   const provider = normalizeCloudSourceKind(rawProvider);
-  if (!provider || provider === 'google_drive') {
+  if (provider !== 'dropbox') {
     return NextResponse.json({ error: `Unsupported cloud provider: ${rawProvider}` }, { status: 404 });
   }
 
@@ -78,118 +76,109 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       return NextResponse.json({ error: 'Server URL is not configured.' }, { status: 400 });
     }
 
-    const accessTokenResult = provider === 'onedrive'
-      ? await getOneDriveAccessToken()
-      : await getDropboxAccessToken();
+    const accessTokenResult = await getDropboxAccessToken();
     const accessToken = accessTokenResult.accessToken;
-    if (provider === 'onedrive' || provider === 'dropbox') {
-      const scopes = Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [];
-      logCloudImport(provider, 'info', `${provider}_auth_ready`, {
-        provider,
-        hasAccessToken: Boolean(accessToken),
-        hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
-        accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
-        scopeCount: scopes.length,
-        scopes,
-        authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
-        email: accessTokenResult.auth.email ?? null,
-        name: accessTokenResult.auth.name ?? null,
-        emailVerified: accessTokenResult.auth.emailVerified ?? null,
-        hasIdToken: Boolean(accessTokenResult.auth.idToken),
-        hasPicture: Boolean(accessTokenResult.auth.picture),
-        authUpdatedAt: accessTokenResult.auth.updatedAt ?? null,
-        tokenSummary: {
-          accessToken: Boolean(accessToken),
-          refreshToken: Boolean(accessTokenResult.auth.refreshToken),
-          expiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
-        },
-      });
-      await logCloudProgress(provider, 'info', `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} auth resolved for import.`, {
-        event: 'auth_ready',
-        provider,
-        hasAccessToken: Boolean(accessToken),
-        hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
-        accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
-        scopeCount: scopes.length,
-        scopes,
-        authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
-        email: accessTokenResult.auth.email ?? null,
-        name: accessTokenResult.auth.name ?? null,
-        emailVerified: accessTokenResult.auth.emailVerified ?? null,
-        hasIdToken: Boolean(accessTokenResult.auth.idToken),
-        hasPicture: Boolean(accessTokenResult.auth.picture),
-        authUpdatedAt: accessTokenResult.auth.updatedAt ?? null,
-        tokenSummary: {
-          accessToken: Boolean(accessToken),
-          refreshToken: Boolean(accessTokenResult.auth.refreshToken),
-          expiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
-        },
-      });
-    }
-    logCloudImport(provider, 'info', `${provider}_listing_request`, {
+    const scopes = Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [];
+    logCloudImport('dropbox', 'info', 'dropbox_auth_ready', {
+      provider: 'dropbox',
+      hasAccessToken: Boolean(accessToken),
+      hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
+      accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+      scopeCount: scopes.length,
+      scopes,
+      authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
+      email: accessTokenResult.auth.email ?? null,
+      name: accessTokenResult.auth.name ?? null,
+      emailVerified: accessTokenResult.auth.emailVerified ?? null,
+      hasIdToken: Boolean(accessTokenResult.auth.idToken),
+      hasPicture: Boolean(accessTokenResult.auth.picture),
+      authUpdatedAt: accessTokenResult.auth.updatedAt ?? null,
+      tokenSummary: {
+        accessToken: Boolean(accessToken),
+        refreshToken: Boolean(accessTokenResult.auth.refreshToken),
+        expiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+      },
+    });
+    await logCloudProgress('dropbox', 'info', 'Dropbox auth resolved for import.', {
+      event: 'auth_ready',
+      provider: 'dropbox',
+      hasAccessToken: Boolean(accessToken),
+      hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
+      accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+      scopeCount: scopes.length,
+      scopes,
+      authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
+      email: accessTokenResult.auth.email ?? null,
+      name: accessTokenResult.auth.name ?? null,
+      emailVerified: accessTokenResult.auth.emailVerified ?? null,
+      hasIdToken: Boolean(accessTokenResult.auth.idToken),
+      hasPicture: Boolean(accessTokenResult.auth.picture),
+      authUpdatedAt: accessTokenResult.auth.updatedAt ?? null,
+      tokenSummary: {
+        accessToken: Boolean(accessToken),
+        refreshToken: Boolean(accessTokenResult.auth.refreshToken),
+        expiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
+      },
+    });
+
+    logCloudImport('dropbox', 'info', 'dropbox_listing_request', {
       folderId: folderId || null,
       folderName: folderName || null,
       maxFiles,
       requestedFolderIds: folderIds.length ? folderIds : null,
       authScopes: Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [],
-      authSource: provider,
+      authSource: 'dropbox',
       hasAccessToken: Boolean(accessToken),
       hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
       accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
       authIdMasked: String(accessTokenResult.auth.id ?? '').trim().slice(0, 6) || null,
     });
     if (requestSignal.aborted) throw new Error('Import cancelled');
-    const filesResponse = provider === 'onedrive'
-      ? await listOneDriveAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles, signal: requestSignal })
-      : await listDropboxAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles, signal: requestSignal });
+    const filesResponse = await listDropboxAudioFiles({ accessToken, folderId, allFolderIds: folderIds, limit: maxFiles, signal: requestSignal });
     const filteredFiles = filesResponse.files;
-    if (provider === 'onedrive' || provider === 'dropbox') {
-      logCloudImport(provider, 'info', `${provider}_listing_ready`, {
+    logCloudImport('dropbox', 'info', 'dropbox_listing_ready', {
+      folderId: folderId || null,
+      folderName: folderName || null,
+      maxFiles,
+      requestedFolderIds: folderIds.length ? folderIds : null,
+      fileCount: filteredFiles.length,
+      hasNextPage: Boolean(filesResponse.nextPageToken),
+      note: filteredFiles.length === 0
+        ? 'No audio files were returned by the provider listing step.'
+        : 'Audio files were returned by the provider listing step.',
+    });
+    await logCloudProgress('dropbox', 'info', `Dropbox listing returned ${filteredFiles.length} audio files.`, {
+      event: 'listing_ready',
+      folderId: folderId || null,
+      folderName: folderName || null,
+      maxFiles,
+      requestedFolderIds: folderIds.length ? folderIds : null,
+      fileCount: filteredFiles.length,
+      hasNextPage: Boolean(filesResponse.nextPageToken),
+      note: filteredFiles.length === 0
+        ? 'No audio files were returned by the provider listing step.'
+        : 'Audio files were returned by the provider listing step.',
+    });
+    if (filteredFiles.length === 0) {
+      logCloudImport('dropbox', 'warn', 'dropbox_listing_empty', {
         folderId: folderId || null,
         folderName: folderName || null,
         maxFiles,
         requestedFolderIds: folderIds.length ? folderIds : null,
-        fileCount: filteredFiles.length,
-        hasNextPage: Boolean(filesResponse.nextPageToken),
-        note: filteredFiles.length === 0
-          ? 'No audio files were returned by the provider listing step.'
-          : 'Audio files were returned by the provider listing step.',
+        authScopes: Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [],
+        authSource: 'dropbox',
+        hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
+        hint: 'Dropbox returned no audio files after filtering. Check whether the files are in a visible Dropbox scope, have supported audio extensions, or are inside the selected folder.',
       });
-      await logCloudProgress(provider, 'info', `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} listing returned ${filteredFiles.length} audio files.`, {
-        event: 'listing_ready',
-        folderId: folderId || null,
-        folderName: folderName || null,
-        maxFiles,
-        requestedFolderIds: folderIds.length ? folderIds : null,
-        fileCount: filteredFiles.length,
-        hasNextPage: Boolean(filesResponse.nextPageToken),
-        note: filteredFiles.length === 0
-          ? 'No audio files were returned by the provider listing step.'
-          : 'Audio files were returned by the provider listing step.',
-      });
-      if (filteredFiles.length === 0) {
-        logCloudImport(provider, 'warn', `${provider}_listing_empty`, {
-          folderId: folderId || null,
-          folderName: folderName || null,
-          maxFiles,
-          requestedFolderIds: folderIds.length ? folderIds : null,
-          authScopes: Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [],
-          authSource: provider,
-          hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
-          hint: provider === 'dropbox'
-            ? 'Dropbox returned no audio files after filtering. Check whether the files are in a visible Dropbox scope, have supported audio extensions, or are inside the selected folder.'
-            : 'OneDrive returned no audio files after filtering. Check whether the files are in a visible OneDrive scope, have supported audio extensions, or are inside the selected folder.',
-        });
-      }
     }
     if (requestSignal.aborted) throw new Error('Import cancelled');
-    logCloudImport(provider, 'info', 'started', {
+    logCloudImport('dropbox', 'info', 'started', {
       folderId: folderId || null,
       folderName: folderName || null,
       maxFiles,
       fileCount: filteredFiles.length,
     });
-    await logCloudProgress(provider, 'info', `Starting ${provider} import for ${folderName || folderId || 'all audio files'}.`, {
+    await logCloudProgress('dropbox', 'info', `Starting Dropbox import for ${folderName || folderId || 'all audio files'}.`, {
       event: 'started',
       folderId: folderId || null,
       folderName: folderName || null,
@@ -199,7 +188,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     if (requestSignal.aborted) throw new Error('Import cancelled');
 
     const localImport = await importCloudTracks({
-      kind: provider,
+      kind: 'dropbox',
       files: filteredFiles.map((file) => ({
         id: file.id,
         name: file.name,
@@ -210,14 +199,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
       folderName: folderName || undefined,
       signal: requestSignal,
     });
-    logCloudImport(provider, 'info', `${provider}_local_import_done`, {
+    logCloudImport('dropbox', 'info', 'dropbox_local_import_done', {
       folderId: folderId || null,
       folderName: folderName || null,
       imported: localImport.imported,
       updated: localImport.updated,
       total: filteredFiles.length,
     });
-    await logCloudProgress(provider, 'info', `Imported ${localImport.imported} new tracks and updated ${localImport.updated} existing tracks.`, {
+    await logCloudProgress('dropbox', 'info', `Imported ${localImport.imported} new tracks and updated ${localImport.updated} existing tracks.`, {
       event: 'local_import_completed',
       imported: localImport.imported,
       updated: localImport.updated,
@@ -230,14 +219,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     for (let index = 0; index < filteredFiles.length; index += 1) {
       if (requestSignal.aborted) throw new Error('Import cancelled');
       const file = filteredFiles[index];
-      const filePath = cloudTrackPath(provider, file.id);
+      const filePath = cloudTrackPath('dropbox', file.id);
       try {
-        const localFile = provider === 'onedrive'
-          ? await ensureLocalOneDriveTrackFile(file.id, file, requestSignal)
-          : await ensureLocalDropboxTrackFile(file.id, file, requestSignal);
+        const localFile = await ensureLocalDropboxTrackFile(file.id, file, requestSignal);
         if (requestSignal.aborted) throw new Error('Import cancelled');
         const metadata = await readLocalAudioMetadata(localFile.localPath, localFile.name);
-        await updateCloudTrackLocalMetadata(provider, file.id, {
+        await updateCloudTrackLocalMetadata('dropbox', file.id, {
           title: metadata.title,
           artist: metadata.artist,
           album: metadata.album,
@@ -260,126 +247,55 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
         enriched += 1;
       } catch (error) {
         failed += 1;
-        await logCloudProgress(provider, 'warning', `Embedded metadata read failed for ${file.name}: ${error instanceof Error ? error.message : String(error)}`, {
-          event: 'local_metadata_failed',
+        logCloudImport('dropbox', 'warn', 'dropbox_enrichment_failed', {
           fileId: file.id,
-          name: file.name,
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      if ((index + 1) % 25 === 0) {
-        await logCloudProgress(provider, 'info', `${index + 1}/${filteredFiles.length} files processed.`, {
-          event: 'progress',
-          processed: index + 1,
-          total: filteredFiles.length,
-        });
-      }
     }
 
-    await purgeIgnoredCloudTracks(provider);
-
-    const userData = await effectiveUserData();
-    const syncedTracks = await getTracksByPaths(filteredFiles.map((file) => cloudTrackPath(provider, file.id)));
-    logCloudImport(provider, 'info', `${provider}_upload_start`, {
+    if (requestSignal.aborted) throw new Error('Import cancelled');
+    logCloudImport('dropbox', 'info', 'completed', {
       folderId: folderId || null,
       folderName: folderName || null,
-      syncedTracks: syncedTracks.length,
+      imported: localImport.imported,
+      updated: localImport.updated,
       enriched,
       failed,
       reused,
+      tracksReceived: filteredFiles.length,
     });
-    const uploadResponse = await fetch(`${serverUrl}/api/v1/ingest`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'dj-assist-client',
-      },
-      body: JSON.stringify({
-        client_id: await getClientId(),
-        user_data: userData,
-        sent_at: new Date().toISOString(),
-        tracks: syncedTracks.map((track) => ({
-          client_track_id: track.file_hash || track.path || String(track.id),
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          duration: track.duration,
-          bitrate: track.bitrate,
-          bpm: track.bpm,
-          bpm_confidence: track.bpm_confidence,
-          key: track.key,
-          key_numeric: track.key_numeric,
-          spotify_id: track.spotify_id,
-          spotify_uri: track.spotify_uri,
-          spotify_url: track.spotify_url,
-          spotify_tempo: track.spotify_tempo,
-          spotify_key: track.spotify_key,
-          spotify_mode: track.spotify_mode,
-          bpm_source: track.bpm_source,
-          analysis_status: track.analysis_status,
-          analysis_error: track.analysis_error,
-          decode_failed: track.decode_failed,
-          file_hash: track.file_hash,
-          file_size: track.file_size,
-          file_mtime: track.file_mtime,
-          effective_bpm: track.bpm ?? track.spotify_tempo,
-          effective_key: track.key || track.spotify_key || track.key_numeric,
-          artwork_url: track.album_art_url && !String(track.album_art_url).startsWith('data:') ? track.album_art_url : null,
-          artwork_source: track.album_art_source,
-          artwork_status: track.album_art_url ? 'present' : 'missing',
-          album_art_url: track.album_art_url && !String(track.album_art_url).startsWith('data:') ? track.album_art_url : null,
-          album_art_source: track.album_art_source,
-          album_art_status: track.album_art_url ? 'present' : 'missing',
-        })),
-        usage_events: [],
-      }),
-      signal: requestSignal,
-    });
-    const raw = await uploadResponse.text();
-    const payload = raw ? JSON.parse(raw) as Record<string, unknown> : {};
-    logCloudImport(provider, 'info', `${provider}_upload_done`, {
-      folderId: folderId || null,
-      folderName: folderName || null,
-      status: uploadResponse.status,
-      ok: uploadResponse.ok,
-      tracksReceived: Number(payload.tracks_received ?? 0),
-    });
-    if (!uploadResponse.ok) {
-      throw new Error(String(payload.error ?? raw ?? `Cloud import failed status=${uploadResponse.status}`));
-    }
-
-    await logCloudProgress(provider, 'success', `Cloud import complete: ${enriched} enriched, ${failed} failed, ${reused} album-art reuse${reused === 1 ? '' : 's'}.`, {
+    await logCloudProgress('dropbox', 'success', `Cloud import complete: ${enriched} enriched, ${failed} failed, ${reused} album-art reuses.`, {
       event: 'completed',
       imported: localImport.imported,
       updated: localImport.updated,
       enriched,
       failed,
       reused,
-      tracksReceived: Number(payload.tracks_received ?? 0),
+      tracksReceived: filteredFiles.length,
     });
+
+    await purgeIgnoredCloudTracks('dropbox');
 
     return NextResponse.json({
       ok: true,
-      provider,
-      drive_files_scanned: filteredFiles.length,
-      local_tracks_imported: localImport.imported,
-      local_tracks_updated: localImport.updated,
-      local_metadata_enriched: enriched,
-      local_metadata_failed: failed,
-      local_album_art_reused: reused,
-      tracks_received: Number(payload.tracks_received ?? 0),
+      provider: 'dropbox',
+      imported: localImport.imported,
+      updated: localImport.updated,
+      enriched,
+      failed,
+      reused,
+      files: filteredFiles.length,
     });
   } catch (error) {
-    if (request.signal.aborted || String((error as Error)?.message ?? '').toLowerCase().includes('cancelled')) {
-      logCloudImport(provider, 'warn', `${provider}_cancelled`, {
-        folderId: folderId || null,
-        folderName: folderName || null,
+    if (error instanceof Error && error.message === 'Import cancelled') {
+      await logCloudProgress('dropbox', 'warning', 'Dropbox import cancelled.', {
+        event: 'cancelled',
       });
-      return NextResponse.json({ error: 'Import cancelled' }, { status: 499 });
+      return NextResponse.json({ ok: false, cancelled: true, error: 'Import cancelled' }, { status: 400 });
     }
-    logCloudImport(provider, 'error', `${provider}_failed`, {
-      folderId: folderId || null,
-      folderName: folderName || null,
+    await logCloudProgress('dropbox', 'error', `Dropbox import failed: ${error instanceof Error ? error.message : String(error)}`, {
+      event: 'failed',
       error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json(

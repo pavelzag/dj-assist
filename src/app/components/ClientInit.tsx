@@ -21,11 +21,11 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     };
     type ScanSourceMode = 'local' | 'google_drive' | CloudImportProvider;
     type GoogleDriveImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
-    type CloudImportProvider = 'onedrive' | 'dropbox';
+    type CloudImportProvider = 'dropbox';
     type CloudImportStage = 'idle' | 'discovering' | 'importing' | 'enriching' | 'syncing' | 'complete' | 'error';
     type ArtworkAnalysisState = 'idle' | 'running' | 'success' | 'error';
     type SyncFolderTarget = {
-      kind: 'local' | 'google_drive' | 'onedrive' | 'dropbox';
+      kind: 'local' | 'google_drive' | 'dropbox';
       folderId?: string | null;
       folderName?: string | null;
       directory?: string | null;
@@ -264,11 +264,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     let cloudFoldersBusy = false;
     let cloudFolderFilesBusy = false;
     let selectedCloudImportFolders: Record<CloudImportProvider, Array<{ id: string; name: string }>> = {
-      onedrive: [],
       dropbox: [],
     };
     let savedCloudFolderBrowserState: Record<CloudImportProvider, Array<{ id: string; name: string }>> = {
-      onedrive: [],
       dropbox: [],
     };
     let googleDriveFolderTrail: Array<{ id: string; name: string }> = [];
@@ -339,21 +337,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       uiSignature: string;
       metadataActivityTimestamp: string;
     }> = {
-      onedrive: {
-        stage: 'idle',
-        label: 'Ready to import',
-        detail: 'Sign in and choose a OneDrive source.',
-        current: 0,
-        total: 0,
-        meta: 'No import running',
-        busy: false,
-        statusMessage: 'Ready to import.',
-        statusState: 'idle',
-        scopeLabel: 'All audio files in OneDrive',
-        toastSignature: '',
-        uiSignature: '',
-        metadataActivityTimestamp: '',
-      },
       dropbox: {
         stage: 'idle',
         label: 'Ready to import',
@@ -371,7 +354,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       },
     };
     const cloudImportAbortControllers: Record<CloudImportProvider, AbortController | null> = {
-      onedrive: null,
       dropbox: null,
     };
     let scanProgressSourceLabel = 'Local scan';
@@ -737,7 +719,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (preferences.scanProgressToasts) return;
       removeToastByKey('local-scan-progress');
       removeToastByKey('google-drive-import-progress');
-      removeToastByKey('onedrive-import-progress');
       removeToastByKey('dropbox-import-progress');
       removeToastByKey('artwork-analysis-progress');
     }
@@ -747,7 +728,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function showProgressToast(
-      toastKey: 'local-scan-progress' | 'google-drive-import-progress' | 'onedrive-import-progress' | 'dropbox-import-progress' | 'artwork-analysis-progress',
+      toastKey: 'local-scan-progress' | 'google-drive-import-progress' | 'dropbox-import-progress' | 'artwork-analysis-progress',
       message: string,
       tone: 'info' | 'success' | 'warning' | 'error' = 'info',
       done = false,
@@ -1233,10 +1214,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function collectSongsPaneSyncTargets(items: Record<string, unknown>[]) {
       const localFolders = new Map<string, SyncFolderTarget>();
-      const cloudFolders = new Map<SyncFolderTarget['kind'], Map<string, SyncFolderTarget>>();
-      for (const kind of ['google_drive', 'onedrive', 'dropbox'] as const) {
-        cloudFolders.set(kind, new Map<string, SyncFolderTarget>());
-      }
+      const cloudFolders = new Map<'google_drive' | 'dropbox', Map<string, SyncFolderTarget>>();
+      cloudFolders.set('google_drive', new Map<string, SyncFolderTarget>());
+      cloudFolders.set('dropbox', new Map<string, SyncFolderTarget>());
 
       for (const track of items) {
         const path = String(track.path ?? '').trim();
@@ -1252,23 +1232,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             if (!folderId || bucket.has(folderId)) continue;
             bucket.set(folderId, {
               kind: 'google_drive',
-              folderId,
-              folderName,
-            });
-          }
-          continue;
-        }
-        if (path.startsWith('onedrive:')) {
-          const folderIds = extractTagValues(track, 'onedrive-folder:');
-          const folderNames = extractTagValues(track, 'onedrive-folder-name:');
-          const fallbackFolders = folderIds.length ? [] : selectedCloudImportFolders.onedrive;
-          const bucket = cloudFolders.get('onedrive')!;
-          for (const folder of (folderIds.length ? folderIds.map((folderId, index) => ({ id: folderId, name: folderNames[index] ?? folderNames[0] ?? 'OneDrive folder' })) : fallbackFolders.map((folder) => ({ id: folder.id, name: folder.name || 'OneDrive folder' })))) {
-            const folderId = String(folder.id ?? '').trim();
-            const folderName = String(folder.name ?? '').trim() || 'OneDrive folder';
-            if (!folderId || bucket.has(folderId)) continue;
-            bucket.set(folderId, {
-              kind: 'onedrive',
               folderId,
               folderName,
             });
@@ -1305,7 +1268,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return {
         local: [...localFolders.values()],
         google_drive: [...cloudFolders.get('google_drive')!.values()],
-        onedrive: [...cloudFolders.get('onedrive')!.values()],
         dropbox: [...cloudFolders.get('dropbox')!.values()],
       };
     }
@@ -1314,7 +1276,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return [
         targets.local.length ? `${targets.local.length} local` : '',
         targets.google_drive.length ? `${targets.google_drive.length} Google Drive` : '',
-        targets.onedrive.length ? `${targets.onedrive.length} OneDrive` : '',
         targets.dropbox.length ? `${targets.dropbox.length} Dropbox` : '',
       ].filter(Boolean).join(', ');
     }
@@ -1329,7 +1290,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
       const actionLabel = addMusicStartLabel();
       const renderSelectedSourceIndicator = (
-        sourceKind: 'local' | 'google_drive' | 'onedrive' | 'dropbox',
+        sourceKind: 'local' | 'google_drive' | 'dropbox',
         sourceName: string,
         sourceLabel: string,
         message: string,
@@ -1359,7 +1320,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         );
         return;
       }
-      if (scanSourceMode === 'onedrive' || scanSourceMode === 'dropbox') {
+      if (scanSourceMode === 'dropbox') {
         const selected = selectedCloudImportFolders[scanSourceMode][0] ?? null;
         renderSelectedSourceIndicator(
           scanSourceMode,
@@ -1390,7 +1351,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         return 'Stop Scan';
       }
       if (scanSourceMode === 'google_drive') return 'Import from Google Drive';
-      if (scanSourceMode === 'onedrive') return 'Import from OneDrive';
       if (scanSourceMode === 'dropbox') return 'Import from Dropbox';
       return 'Start Scan';
     }
@@ -1595,41 +1555,40 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             ? 'Sign in with Google'
             : 'Google sign-in unavailable';
       }
-      for (const provider of ['onedrive', 'dropbox'] as const) {
-        const button = document.getElementById(`add-music-source-${provider}-btn`) as HTMLButtonElement | null;
-        const authButton = document.getElementById(`add-music-source-${provider}-auth-btn`) as HTMLButtonElement | null;
-        const copy = button?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
-        const configured = cloudProviderConfigured(provider);
-        const connected = cloudProviderConnected(provider);
-        if (button) {
-          button.dataset.locked = connected ? 'false' : 'true';
-          button.disabled = !connected;
-          button.setAttribute('aria-disabled', connected ? 'false' : 'true');
-          button.title = connected
-            ? `Browse ${cloudProviderLabel(provider)} folders`
+      const provider = 'dropbox' as const;
+      const button = document.getElementById(`add-music-source-${provider}-btn`) as HTMLButtonElement | null;
+      const authButton = document.getElementById(`add-music-source-${provider}-auth-btn`) as HTMLButtonElement | null;
+      const copy = button?.querySelector('.add-music-source-option-copy span') as HTMLElement | null;
+      const configured = cloudProviderConfigured(provider);
+      const connected = cloudProviderConnected(provider);
+      if (button) {
+        button.dataset.locked = connected ? 'false' : 'true';
+        button.disabled = !connected;
+        button.setAttribute('aria-disabled', connected ? 'false' : 'true');
+        button.title = connected
+          ? `Browse ${cloudProviderLabel(provider)} folders`
+          : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
+        const shell = button.closest('.add-music-source-option-shell') as HTMLElement | null;
+        if (shell) {
+          shell.dataset.connected = connected ? 'true' : 'false';
+          shell.classList.toggle('is-connected', connected);
+          shell.classList.toggle('is-locked', !connected);
+        }
+      }
+      if (copy) {
+        copy.textContent = connected
+          ? `Browse a folder and import audio from ${cloudProviderLabel(provider)}.`
+          : configured
+            ? `${cloudProviderLabel(provider)} is authenticated. Reopen Add Music if needed.`
             : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
-          const shell = button.closest('.add-music-source-option-shell') as HTMLElement | null;
-          if (shell) {
-            shell.dataset.connected = connected ? 'true' : 'false';
-            shell.classList.toggle('is-connected', connected);
-            shell.classList.toggle('is-locked', !connected);
-          }
-        }
-        if (copy) {
-          copy.textContent = connected
-            ? `Browse a folder and import audio from ${cloudProviderLabel(provider)}.`
-            : configured
-              ? `${cloudProviderLabel(provider)} is authenticated. Reopen Add Music if needed.`
-              : `Configure ${cloudProviderLabel(provider)} credentials in GitHub Actions to enable this source.`;
-        }
-        if (authButton) {
-          authButton.disabled = connected ? true : !configured;
-          authButton.textContent = connected
-            ? `${cloudProviderLabel(provider)} connected`
-            : configured
-              ? `Sign in with ${cloudProviderLabel(provider)}`
-              : `${cloudProviderLabel(provider)} not configured`;
-        }
+      }
+      if (authButton) {
+        authButton.disabled = connected ? true : !configured;
+        authButton.textContent = connected
+          ? `${cloudProviderLabel(provider)} connected`
+          : configured
+            ? `Sign in with ${cloudProviderLabel(provider)}`
+            : `${cloudProviderLabel(provider)} not configured`;
       }
       syncSongsFetchIndicator();
     }
@@ -1791,8 +1750,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
-    function cloudImportToastKey(provider: CloudImportProvider) {
-      return provider === 'onedrive' ? 'onedrive-import-progress' : 'dropbox-import-progress';
+    function cloudImportToastKey(_provider: CloudImportProvider) {
+      return 'dropbox-import-progress';
     }
 
     function setCloudImportStatus(provider: CloudImportProvider, message: string, state: 'idle' | 'saving' | 'success' | 'error' = 'idle') {
@@ -1835,14 +1794,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const state = cloudImportState[provider];
       state.stage = 'idle';
       state.label = 'Ready to import';
-      state.detail = provider === 'onedrive'
-        ? 'Sign in and choose a OneDrive source.'
-        : 'Sign in and choose a Dropbox source.';
+      state.detail = 'Sign in and choose a Dropbox source.';
       state.current = 0;
       state.total = 0;
       state.meta = 'No import running';
       state.busy = false;
-      state.scopeLabel = provider === 'onedrive' ? 'All audio files in OneDrive' : 'All audio files in Dropbox';
+      state.scopeLabel = 'All audio files in Dropbox';
       state.statusMessage = 'Ready to import.';
       state.statusState = 'idle';
       state.toastSignature = '';
@@ -1903,9 +1860,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function isCloudImportToastEvent(provider: CloudImportProvider, event: string) {
-      if (provider === 'onedrive') {
-        return ['started', 'local_import_completed', 'progress', 'local_metadata_failed', 'completed'].includes(event);
-      }
       return ['started', 'local_import_completed', 'progress', 'local_metadata_failed', 'completed'].includes(event);
     }
 
@@ -2027,10 +1981,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function startCloudImportProgressPolling(provider: CloudImportProvider) {
       const state = cloudImportState[provider];
-      const otherProvider: CloudImportProvider = provider === 'onedrive' ? 'dropbox' : 'onedrive';
-      if (cloudImportProgressTimers[otherProvider] != null) {
-        stopCloudImportProgressPolling(otherProvider);
-      }
       const timer = cloudImportProgressTimers[provider];
       if (timer) {
         window.clearInterval(timer);
@@ -2408,15 +2358,15 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
-    function cloudProviderLabel(provider: 'onedrive' | 'dropbox') {
-      return provider === 'onedrive' ? 'OneDrive' : 'Dropbox';
+    function cloudProviderLabel(provider: 'dropbox') {
+      return provider === 'dropbox' ? 'Dropbox' : 'Dropbox';
     }
 
-    function cloudProviderSettingsKey(provider: 'onedrive' | 'dropbox') {
-      return provider === 'onedrive' ? 'onedriveOauth' : 'dropboxOauth';
+    function cloudProviderSettingsKey(provider: 'dropbox') {
+      return provider === 'dropbox' ? 'dropboxOauth' : 'dropboxOauth';
     }
 
-    function cloudProviderRuntimeSummary(provider: 'onedrive' | 'dropbox') {
+    function cloudProviderRuntimeSummary(provider: 'dropbox') {
       const server = runtimeHealth?.server && typeof runtimeHealth.server === 'object'
         ? runtimeHealth.server as Record<string, unknown>
         : null;
@@ -2424,7 +2374,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return summary && typeof summary === 'object' ? summary as Record<string, unknown> : null;
     }
 
-    function cloudProviderConnected(provider: 'onedrive' | 'dropbox') {
+    function cloudProviderConnected(provider: 'dropbox') {
       const server = runtimeHealth?.server && typeof runtimeHealth.server === 'object'
         ? runtimeHealth.server as Record<string, unknown>
         : null;
@@ -2432,14 +2382,14 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       return Boolean(summary && typeof summary === 'object' && (summary as Record<string, unknown>).connected);
     }
 
-    function cloudProviderStatusLabel(provider: 'onedrive' | 'dropbox') {
+    function cloudProviderStatusLabel(provider: 'dropbox') {
       const summary = cloudProviderRuntimeSummary(provider);
       if (!summary) return `Sign in to connect ${cloudProviderLabel(provider)}.`;
       if (summary.configured) return `${cloudProviderLabel(provider)} OAuth configured.`;
       return `Sign in to connect ${cloudProviderLabel(provider)}.`;
     }
 
-    function cloudProviderConfigured(provider: 'onedrive' | 'dropbox') {
+    function cloudProviderConfigured(provider: 'dropbox') {
       const summary = cloudProviderRuntimeSummary(provider);
       return Boolean(summary?.configured);
     }
@@ -2449,7 +2399,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       if (hideDuplicateCopiesEl) hideDuplicateCopiesEl.checked = Boolean(preferences.hideDuplicateCopies);
     }
 
-    async function startCloudSignIn(provider: 'onedrive' | 'dropbox') {
+    async function startCloudSignIn(provider: 'dropbox') {
       const label = cloudProviderLabel(provider);
       try {
         const desktopApi = (window as Window & {
@@ -3408,22 +3358,21 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const raw = localStorage.getItem(cloudFolderBrowserStateKey);
         if (!raw) return;
         const parsed = JSON.parse(raw) as Record<string, unknown>;
-        for (const provider of ['onedrive', 'dropbox'] as const) {
-          const trail = Array.isArray(parsed?.[provider])
-            ? (parsed[provider] as unknown[])
-              .map((entry) => {
-                if (!entry || typeof entry !== 'object') return null;
-                const item = entry as Record<string, unknown>;
-                const id = String(item.id ?? '').trim();
-                const name = String(item.name ?? '').trim();
-                return id ? { id, name: name || 'Untitled folder' } : null;
-              })
-              .filter((item): item is { id: string; name: string } => Boolean(item))
-            : [];
-          savedCloudFolderBrowserState[provider] = trail;
-        }
+        const provider = 'dropbox' as const;
+        const trail = Array.isArray(parsed?.[provider])
+          ? (parsed[provider] as unknown[])
+            .map((entry) => {
+              if (!entry || typeof entry !== 'object') return null;
+              const item = entry as Record<string, unknown>;
+              const id = String(item.id ?? '').trim();
+              const name = String(item.name ?? '').trim();
+              return id ? { id, name: name || 'Untitled folder' } : null;
+            })
+            .filter((item): item is { id: string; name: string } => Boolean(item))
+          : [];
+        savedCloudFolderBrowserState[provider] = trail;
       } catch {
-        savedCloudFolderBrowserState = { onedrive: [], dropbox: [] };
+        savedCloudFolderBrowserState = { dropbox: [] };
       }
     }
 
@@ -3982,7 +3931,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         syncSelectedSourceIndicator();
         return;
       }
-      if (scanSourceMode === 'onedrive' || scanSourceMode === 'dropbox') {
+      if (scanSourceMode === 'dropbox') {
         const selected = selectedCloudImportFolders[scanSourceMode][0] ?? null;
         renderDismissibleSelectedSource(`${cloudProviderLabel(scanSourceMode)} source: ${selected?.name || `All audio files in ${cloudProviderLabel(scanSourceMode)}`}`);
         syncSelectedSourceIndicator();
@@ -4648,8 +4597,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         const path = String(track.path ?? '').trim().toLowerCase();
         if (!path) return 0;
         if (path.startsWith('gdrive:')) return 1;
-        if (path.startsWith('onedrive:')) return 2;
-        if (path.startsWith('dropbox:')) return 3;
+        if (path.startsWith('dropbox:')) return 2;
         return 0;
       };
       duplicateTrackIds = new Set(
@@ -4863,7 +4811,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     function playbackUrlForTrack(track: Record<string, unknown>, trackId: number) {
       const trackPath = String(track.path ?? '').trim();
       const isGoogleDriveTrack = isGoogleDriveTrackPath(trackPath);
-      const isCloudTrack = isGoogleDriveTrack || trackPath.startsWith('onedrive:') || trackPath.startsWith('dropbox:');
+      const isCloudTrack = isGoogleDriveTrack || trackPath.startsWith('dropbox:');
       return isCloudTrack
         ? `/api/tracks/${trackId}/stream`
         : (adapter.mediaUrlForPath?.(trackPath) || `/api/tracks/${trackId}/stream`);
@@ -7333,7 +7281,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const streamProbeUrl = `/api/tracks/${trackId}/stream`;
       const trackPath = String(track.path ?? '');
       const isGoogleDriveTrack = isGoogleDriveTrackPath(trackPath);
-      const isCloudTrack = isGoogleDriveTrack || trackPath.startsWith('onedrive:') || trackPath.startsWith('dropbox:');
+      const isCloudTrack = isGoogleDriveTrack || trackPath.startsWith('dropbox:');
       const playbackUrl = isCloudTrack ? streamProbeUrl : (adapter.mediaUrlForPath?.(trackPath) || streamProbeUrl);
       nextTracksByTrackId[trackId] = Array.isArray(payload.next_tracks) ? payload.next_tracks as Record<string, unknown>[] : [];
       const mult = getMult(trackId);
@@ -8764,7 +8712,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       const googleOauthConfigured = googleOauth?.configured === true;
       const googleDrive = googleDriveRuntimeSummary();
       const googleUser = googleSignedInUser();
-      const onedriveOauth = cloudProviderRuntimeSummary('onedrive');
       const dropboxOauth = cloudProviderRuntimeSummary('dropbox');
       const accountUser = serverAccountSession?.user && typeof serverAccountSession.user === 'object'
         ? serverAccountSession.user as Record<string, unknown>
@@ -8821,57 +8768,44 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
             </div>
           </section>
       ` : '';
-      const cloudProviderImportCardsMarkup = hasProFeatures ? (['onedrive', 'dropbox'] as const).map((provider) => {
-        const label = cloudProviderLabel(provider);
-        const summary = provider === 'onedrive' ? onedriveOauth : dropboxOauth;
-        const clientId = String(summary?.client_id_masked ?? '');
-        const hasSecret = Boolean(summary?.has_secret);
-        const configured = Boolean(summary?.configured);
-        const state = cloudImportState[provider];
-        const percent = state.total > 0
-          ? Math.min(100, (state.current / Math.max(1, state.total)) * 100)
-          : state.busy
-            ? 100
-            : 0;
-        return `
+      const cloudProviderImportCardsMarkup = hasProFeatures ? `
           <section class="library-card">
-            <div class="scan-log-head"><strong>${esc(label)} Import</strong></div>
-            <div class="scan-preflight">${esc(label)} can be used as a cloud import source in pro builds.</div>
-            <div class="scan-preflight" id="${provider}-oauth-status">${esc(cloudProviderStatusLabel(provider))}</div>
-            <div class="scan-preflight">${configured ? `Configured${clientId ? ` · ${clientId}` : ''}${hasSecret ? ' · secret saved' : ''}` : 'Not configured yet.'}</div>
-            <div class="google-drive-import-progress-card cloud-import-progress-card" id="${provider}-import-progress-card" data-state="${esc(state.stage)}"${state.stage === 'idle' && !state.busy ? ' hidden' : ''}>
+            <div class="scan-log-head"><strong>Dropbox Import</strong></div>
+            <div class="scan-preflight">Dropbox can be used as a cloud import source in pro builds.</div>
+            <div class="scan-preflight" id="dropbox-oauth-status">${esc(cloudProviderStatusLabel('dropbox'))}</div>
+            <div class="scan-preflight">${dropboxOauth?.configured ? `Configured${String(dropboxOauth?.client_id_masked ?? '') ? ` · ${String(dropboxOauth?.client_id_masked ?? '')}` : ''}${Boolean(dropboxOauth?.has_secret) ? ' · secret saved' : ''}` : 'Not configured yet.'}</div>
+            <div class="google-drive-import-progress-card cloud-import-progress-card" id="dropbox-import-progress-card" data-state="${esc(cloudImportState.dropbox.stage)}"${cloudImportState.dropbox.stage === 'idle' && !cloudImportState.dropbox.busy ? ' hidden' : ''}>
               <div class="google-drive-import-progress-head cloud-import-progress-head">
                 <div>
-                  <strong id="${provider}-import-stage-label">${esc(state.label)}</strong>
-                  <span id="${provider}-import-stage-detail">${esc(state.detail)}</span>
+                  <strong id="dropbox-import-stage-label">${esc(cloudImportState.dropbox.label)}</strong>
+                  <span id="dropbox-import-stage-detail">${esc(cloudImportState.dropbox.detail)}</span>
                 </div>
-                <strong id="${provider}-import-stage-count">${state.total > 0 ? esc(`${state.current} / ${state.total}`) : (state.busy ? 'Working…' : '--')}</strong>
+                <strong id="dropbox-import-stage-count">${cloudImportState.dropbox.total > 0 ? esc(`${cloudImportState.dropbox.current} / ${cloudImportState.dropbox.total}`) : (cloudImportState.dropbox.busy ? 'Working…' : '--')}</strong>
               </div>
               <div class="google-drive-import-stage-line cloud-import-stage-line">
                 <span>Current stage</span>
-                <strong id="${provider}-import-stage-badge">${esc(state.label)}</strong>
+                <strong id="dropbox-import-stage-badge">${esc(cloudImportState.dropbox.label)}</strong>
               </div>
               <div class="google-drive-import-progress-track cloud-import-progress-track">
                 <div
-                  class="google-drive-import-progress-bar cloud-import-progress-bar ${state.total > 0 ? '' : (state.busy ? 'indeterminate' : '')}"
-                  id="${provider}-import-stage-bar"
-                  data-indeterminate="${state.total > 0 ? 'false' : (state.busy ? 'true' : 'false')}"
-                  style="width:${state.total > 0 ? `${percent}%` : (state.busy ? '100%' : '0%')}"
+                  class="google-drive-import-progress-bar cloud-import-progress-bar ${cloudImportState.dropbox.total > 0 ? '' : (cloudImportState.dropbox.busy ? 'indeterminate' : '')}"
+                  id="dropbox-import-stage-bar"
+                  data-indeterminate="${cloudImportState.dropbox.total > 0 ? 'false' : (cloudImportState.dropbox.busy ? 'true' : 'false')}"
+                  style="width:${cloudImportState.dropbox.total > 0 ? `${Math.min(100, (cloudImportState.dropbox.current / Math.max(1, cloudImportState.dropbox.total)) * 100)}%` : (cloudImportState.dropbox.busy ? '100%' : '0%')}"
                 ></div>
               </div>
               <div class="google-drive-import-progress-meta cloud-import-progress-meta">
-                <span id="${provider}-import-stage-meta">${esc(state.meta)}</span>
-                <span id="${provider}-import-stage-mode">${state.total > 0 ? 'Measured progress' : (state.busy ? 'Stage progress' : 'Waiting')}</span>
-                <span id="${provider}-import-stage-scope">${esc(state.scopeLabel)}</span>
+                <span id="dropbox-import-stage-meta">${esc(cloudImportState.dropbox.meta)}</span>
+                <span id="dropbox-import-stage-mode">${cloudImportState.dropbox.total > 0 ? 'Measured progress' : (cloudImportState.dropbox.busy ? 'Stage progress' : 'Waiting')}</span>
+                <span id="dropbox-import-stage-scope">${esc(cloudImportState.dropbox.scopeLabel)}</span>
               </div>
             </div>
             <div class="buttons">
-              <button type="button" class="btn secondary" id="${provider}-oauth-start-btn">${configured ? `Sign in with ${label}` : `Sign in with ${label}`}</button>
-              <button type="button" class="btn" id="${provider}-import-btn" ${configured ? '' : 'disabled'}>Browse ${label} Folder</button>
+              <button type="button" class="btn secondary" id="dropbox-oauth-start-btn">${dropboxOauth?.configured ? 'Sign in with Dropbox' : 'Sign in with Dropbox'}</button>
+              <button type="button" class="btn" id="dropbox-import-btn" ${dropboxOauth?.configured ? '' : 'disabled'}>Browse Dropbox Folder</button>
             </div>
           </section>
-        `;
-      }).join('') : '';
+      ` : '';
       const recentImportsMarkup = isDebugFlavor ? `
         <section class="library-card">
           <div class="scan-log-head"><strong>Recent Imports</strong></div>
@@ -9408,14 +9342,8 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
         void signInWithGoogle();
       });
-      document.getElementById('onedrive-oauth-start-btn')?.addEventListener('click', () => {
-        void startCloudSignIn('onedrive');
-      });
       document.getElementById('dropbox-oauth-start-btn')?.addEventListener('click', () => {
         void startCloudSignIn('dropbox');
-      });
-      document.getElementById('onedrive-import-btn')?.addEventListener('click', () => {
-        void chooseCloudMusicSource('onedrive');
       });
       document.getElementById('dropbox-import-btn')?.addEventListener('click', () => {
         void chooseCloudMusicSource('dropbox');
@@ -10030,13 +9958,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           skippedSources.push('Google Drive');
         }
       }
-      if (targets.onedrive.length) {
-        if (cloudProviderRuntimeSummary('onedrive')?.connected) {
-          allowedTargets.push(...targets.onedrive);
-        } else {
-          skippedSources.push('OneDrive');
-        }
-      }
       if (targets.dropbox.length) {
         if (cloudProviderRuntimeSummary('dropbox')?.connected) {
           allowedTargets.push(...targets.dropbox);
@@ -10061,7 +9982,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       try {
         const localTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'local'; directory: string } => target.kind === 'local' && Boolean(target.directory));
         const googleTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'google_drive'; folderId: string; folderName: string } => target.kind === 'google_drive' && Boolean(target.folderId));
-        const onedriveTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'onedrive'; folderId: string; folderName: string } => target.kind === 'onedrive' && Boolean(target.folderId));
         const dropboxTargets = allowedTargets.filter((target): target is SyncFolderTarget & { kind: 'dropbox'; folderId: string; folderName: string } => target.kind === 'dropbox' && Boolean(target.folderId));
 
         for (const target of localTargets) {
@@ -10074,13 +9994,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           setScanStatus('Syncing Google Drive folders…', 'running');
           await importGoogleDriveMetadata({
             folders: googleTargets.map((target) => ({ id: target.folderId, name: target.folderName })),
-          });
-        }
-        if (onedriveTargets.length) {
-          setScanProgressSource('OneDrive import');
-          setScanStatus('Syncing OneDrive folders…', 'running');
-          await importCloudLibrary('onedrive', {
-            folders: onedriveTargets.map((target) => ({ id: target.folderId, name: target.folderName })),
           });
         }
         if (dropboxTargets.length) {
@@ -10821,12 +10734,6 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     document.getElementById('add-music-source-google-auth-btn')?.addEventListener('click', () => {
       openGoogleAuthModal();
-    });
-    document.getElementById('add-music-source-onedrive-btn')?.addEventListener('click', () => {
-      void chooseCloudMusicSource('onedrive');
-    });
-    document.getElementById('add-music-source-onedrive-auth-btn')?.addEventListener('click', () => {
-      void startCloudSignIn('onedrive');
     });
     document.getElementById('add-music-source-dropbox-btn')?.addEventListener('click', () => {
       void chooseCloudMusicSource('dropbox');

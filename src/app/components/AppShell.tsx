@@ -15,8 +15,6 @@ export default async function AppShell({
   const runtime = await serverRuntimeSummary();
   const googleDriveConnected = hasProFeatures && Boolean(runtime.googleDrive?.connected);
   const googleAuthConfigured = hasProFeatures && Boolean(runtime.googleAuthConfigured);
-  const onedriveConnected = hasProFeatures && Boolean(runtime.onedrive?.connected);
-  const onedriveConfigured = hasProFeatures && Boolean(runtime.onedriveOauth?.configured);
   const dropboxConnected = hasProFeatures && Boolean(runtime.dropbox?.connected);
   const dropboxConfigured = hasProFeatures && Boolean(runtime.dropboxOauth?.configured);
   return (
@@ -474,11 +472,8 @@ export default async function AppShell({
                   >
                     <span className="add-music-source-option-icon" data-source="google" aria-hidden="true">
                       <svg viewBox="0 0 64 64" role="img" focusable="false" preserveAspectRatio="xMidYMid meet">
-                        <path d="M13 16h16l6 10-8 14H11l-5-10z" fill="#34a853" />
-                        <path d="M29 16h22l9 14-8 14H27l-8-14z" fill="#4285f4" />
-                        <path d="M11 40h23l-6 10H5z" fill="#fbbc05" />
-                        <path d="M29 16h22L35 54H17l12-20z" fill="#ea4335" opacity="0.92" />
-                        <path d="M13 16h38l9 14-6 10H16L5 30z" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="1.6" strokeLinejoin="round" opacity="0.8" />
+                        <path d="M24 44h20c6.1 0 11-4.2 11-9.5 0-4.7-3.7-8.6-8.5-9.3-1.7-7.2-7.9-12.2-15.5-12.2-8.2 0-15 5.7-16.6 13.4-5.3.4-9.4 4.6-9.4 9.8 0 5.3 4.6 9.8 10.3 9.8H24z" fill="rgba(255,255,255,0.92)" />
+                        <path d="M24 44h20c6.1 0 11-4.2 11-9.5 0-4.7-3.7-8.6-8.5-9.3-1.7-7.2-7.9-12.2-15.5-12.2-8.2 0-15 5.7-16.6 13.4-5.3.4-9.4 4.6-9.4 9.8 0 5.3 4.6 9.8 10.3 9.8H24z" fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth="1.8" strokeLinejoin="round" opacity="0.92" />
                       </svg>
                     </span>
                     <span className="add-music-source-option-copy">
@@ -502,41 +497,6 @@ export default async function AppShell({
                 </div>
               ) : null}
               {hasProFeatures ? (
-                <div className={`add-music-source-option-shell${onedriveConnected ? ' is-connected' : ' is-locked'}`} data-connected={onedriveConnected ? 'true' : 'false'}>
-                  <button
-                    className="add-music-source-option"
-                    id="add-music-source-onedrive-btn"
-                    type="button"
-                    disabled={!onedriveConnected}
-                    aria-disabled={!onedriveConnected}
-                  >
-                    <span className="add-music-source-option-icon" data-source="onedrive" aria-hidden="true">
-                      <svg viewBox="0 0 64 64" role="img" focusable="false" preserveAspectRatio="xMidYMid meet">
-                        <path d="M18 42h24c7 0 12-4.4 12-10s-4.3-10-10.1-10c-2.5-7.1-8.9-11.8-16.7-11.8-8.6 0-15.7 5.3-18 12.8C5 24.7 2 29.3 2 34.6 2 40 6.7 44 12.7 44H18z" fill="rgba(255,255,255,0.9)" opacity="0.88" />
-                        <path d="M18 42h24c7 0 12-4.4 12-10s-4.3-10-10.1-10c-2.5-7.1-8.9-11.8-16.7-11.8-8.6 0-15.7 5.3-18 12.8C5 24.7 2 29.3 2 34.6 2 40 6.7 44 12.7 44H18z" fill="none" stroke="#b8dcff" strokeWidth="1.8" strokeLinejoin="round" opacity="0.92" />
-                      </svg>
-                    </span>
-                    <span className="add-music-source-option-copy">
-                      <strong>OneDrive</strong>
-                      <span>Sign in and import audio from OneDrive.</span>
-                    </span>
-                  </button>
-                  <div className="add-music-source-option-footer">
-                    <span className="add-music-source-option-status">{onedriveConnected ? 'Connected' : 'Not authenticated yet.'}</span>
-                    {!onedriveConnected ? (
-                      <button
-                        className="add-music-source-auth-link"
-                        id="add-music-source-onedrive-auth-btn"
-                        type="button"
-                        disabled={!onedriveConfigured}
-                      >
-                        {onedriveConfigured ? 'Sign in with OneDrive' : 'OneDrive not configured'}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-              {hasProFeatures ? (
                 <div className={`add-music-source-option-shell${dropboxConnected ? ' is-connected' : ' is-locked'}`} data-connected={dropboxConnected ? 'true' : 'false'}>
                   <button
                     className="add-music-source-option"
@@ -547,12 +507,12 @@ export default async function AppShell({
                   >
                     <span className="add-music-source-option-icon" data-source="dropbox" aria-hidden="true">
                       <svg viewBox="0 0 64 64" role="img" focusable="false" preserveAspectRatio="xMidYMid meet">
-                        <path d="M32 10L18 18l14 8 14-8z" fill="rgba(255,255,255,0.95)" opacity="0.9" />
-                        <path d="M32 26L18 34l14 8 14-8z" fill="#8fb9ff" opacity="0.9" />
-                        <path d="M32 42L18 50l14 8 14-8z" fill="#0f63ff" opacity="0.92" />
-                        <path d="M32 10L48 19l-16 9-16-9z" fill="none" stroke="#c9ddff" strokeWidth="1.8" strokeLinejoin="round" opacity="0.92" />
-                        <path d="M32 26L48 35l-16 9-16-9z" fill="none" stroke="#dbe8ff" strokeWidth="1.6" strokeLinejoin="round" opacity="0.8" />
-                        <path d="M32 42L48 51l-16 9-16-9z" fill="none" stroke="#b6d1ff" strokeWidth="1.6" strokeLinejoin="round" opacity="0.8" />
+                        <path d="M32 10 18 18l14 8 14-8z" fill="rgba(255,255,255,0.92)" />
+                        <path d="M32 26 18 34l14 8 14-8z" fill="rgba(255,255,255,0.8)" />
+                        <path d="M32 42 18 50l14 8 14-8z" fill="rgba(255,255,255,0.68)" />
+                        <path d="M32 10 48 19 32 28 16 19z" fill="none" stroke="rgba(255,255,255,0.92)" strokeWidth="1.8" strokeLinejoin="round" opacity="0.92" />
+                        <path d="M32 26 48 35 32 44 16 35z" fill="none" stroke="rgba(255,255,255,0.84)" strokeWidth="1.6" strokeLinejoin="round" opacity="0.86" />
+                        <path d="M32 42 48 51 32 60 16 51z" fill="none" stroke="rgba(255,255,255,0.72)" strokeWidth="1.6" strokeLinejoin="round" opacity="0.8" />
                       </svg>
                     </span>
                     <span className="add-music-source-option-copy">
@@ -578,7 +538,6 @@ export default async function AppShell({
             </div>
             {hasProFeatures ? (
               <div className="scan-preflight subtle add-music-source-status">
-                <span>{onedriveConfigured ? (onedriveConnected ? 'OneDrive ready' : 'OneDrive ready to sign in') : 'OneDrive not configured'}</span>
                 <span>{dropboxConfigured ? (dropboxConnected ? 'Dropbox ready' : 'Dropbox ready to sign in') : 'Dropbox not configured'}</span>
               </div>
             ) : null}

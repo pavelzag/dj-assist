@@ -1,21 +1,18 @@
-export type CloudSourceKind = 'google_drive' | 'onedrive' | 'dropbox';
+export type CloudSourceKind = 'google_drive' | 'dropbox';
 
 const CLOUD_SOURCE_LABELS: Record<CloudSourceKind, string> = {
   google_drive: 'Google Drive',
-  onedrive: 'OneDrive',
   dropbox: 'Dropbox',
 };
 
 const CLOUD_SOURCE_PREFIXES: Record<CloudSourceKind, string> = {
   google_drive: 'gdrive',
-  onedrive: 'onedrive',
   dropbox: 'dropbox',
 };
 
 export function normalizeCloudSourceKind(value: unknown): CloudSourceKind | null {
   const raw = String(value ?? '').trim().toLowerCase();
   if (raw === 'google_drive' || raw === 'gdrive' || raw === 'google') return 'google_drive';
-  if (raw === 'onedrive' || raw === 'one_drive' || raw === 'microsoft') return 'onedrive';
   if (raw === 'dropbox' || raw === 'dbx') return 'dropbox';
   return null;
 }

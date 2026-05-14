@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { googleFeaturesEnabled } from '@/lib/app-flavor';
 import { normalizeCloudSourceKind } from '@/lib/cloud-source';
-import { getOneDriveAccessToken, getDropboxAccessToken } from '@/lib/runtime-settings';
-import { listOneDriveFolderChildren } from '@/lib/onedrive-files';
+import { getDropboxAccessToken } from '@/lib/runtime-settings';
 import { listDropboxFolderChildren } from '@/lib/dropbox-files';
 import { appendClientDiagnosticLog, logServerEvent } from '@/lib/app-log';
 import { maskValue } from '@/lib/auth-log';
@@ -18,21 +17,20 @@ export async function GET(
   }
   const { provider: rawProvider } = await context.params;
   const provider = normalizeCloudSourceKind(rawProvider);
-  if (!provider || provider === 'google_drive') {
+  if (provider !== 'dropbox') {
     return NextResponse.json({ error: `Unsupported cloud provider: ${rawProvider}` }, { status: 404 });
   }
+
   try {
     const { searchParams } = new URL(request.url);
     const parentId = String(searchParams.get('parentId') ?? '').trim();
     const search = String(searchParams.get('search') ?? '').trim();
     const limit = Math.min(Math.max(Math.trunc(Number(searchParams.get('limit') ?? 1000) || 1000), 1), 2000);
-    const accessTokenResult = provider === 'onedrive'
-      ? await getOneDriveAccessToken()
-      : await getDropboxAccessToken();
+    const accessTokenResult = await getDropboxAccessToken();
     const accessToken = accessTokenResult.accessToken;
     const scopes = Array.isArray(accessTokenResult.auth.scopes) ? accessTokenResult.auth.scopes : [];
     const authSummary = {
-      provider,
+      provider: 'dropbox',
       hasAccessToken: Boolean(accessToken),
       hasRefreshToken: Boolean(accessTokenResult.auth.refreshToken),
       accessTokenExpiresAt: accessTokenResult.auth.accessTokenExpiresAt ?? null,
@@ -50,7 +48,7 @@ export async function GET(
     void logServerEvent({
       level: 'info',
       category: 'cloud-folder',
-      message: `[cloud-folder:${provider}] ${JSON.stringify({
+      message: `[cloud-folder:dropbox] ${JSON.stringify({
         timestamp: new Date().toISOString(),
         event: 'folder_children_request',
         ...authSummary,
@@ -65,15 +63,13 @@ export async function GET(
       timestamp: new Date().toISOString(),
       level: 'info',
       source: 'renderer',
-      category: `cloud-folder-${provider}`,
-      message: `${provider === 'onedrive' ? 'OneDrive' : 'Dropbox'} folder request queued.`,
+      category: 'cloud-folder-dropbox',
+      message: 'Dropbox folder request queued.',
       context: authSummary,
     }).catch(() => {});
-    const payload = provider === 'onedrive'
-      ? await listOneDriveFolderChildren({ accessToken, parentId, search, limit })
-      : await listDropboxFolderChildren({ accessToken, parentId, search, limit });
+    const payload = await listDropboxFolderChildren({ accessToken, parentId, search, limit });
     return NextResponse.json({
-      provider,
+      provider: 'dropbox',
       parentId: parentId || null,
       folders: payload.folders,
       files: payload.files,
