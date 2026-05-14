@@ -1750,7 +1750,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
       }
     }
 
-    function cloudImportToastKey(_provider: CloudImportProvider) {
+    function cloudImportToastKey(_provider: CloudImportProvider): 'dropbox-import-progress' {
       return 'dropbox-import-progress';
     }
 
