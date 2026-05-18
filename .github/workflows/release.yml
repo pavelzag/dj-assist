@@ -283,8 +283,9 @@ jobs:
             echo "APPLE_API_KEY_P8 and APPLE_API_KEY_ID must be set for notarization." >&2
             exit 1
           fi
-          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-          printf '%s' "${APPLE_API_KEY_P8}" > "$api_key_path"
+          apple_api_key_id="$(printf '%s' "${APPLE_API_KEY_ID}" | tr -d '\r\n[:space:]')"
+          api_key_path="$RUNNER_TEMP/AuthKey_${apple_api_key_id}.p8"
+          printf '%s\n' "${APPLE_API_KEY_P8}" > "$api_key_path"
           chmod 600 "$api_key_path"
           echo "APPLE_API_KEY=$api_key_path" >> "$GITHUB_ENV"
 
@@ -314,6 +315,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          export APPLE_API_KEY_ID="$(printf '%s' "${APPLE_API_KEY_ID}" | tr -d '\r\n[:space:]')"
+          export APPLE_API_ISSUER="$(printf '%s' "${APPLE_API_ISSUER}" | tr -d '\r\n[:space:]')"
+          export APPLE_TEAM_ID="$(printf '%s' "${APPLE_TEAM_ID}" | tr -d '\r\n[:space:]')"
           if [ "${{ matrix.flavor }}" != "free-prod" ] && [ -z "${GOOGLE_CLIENT_ID}" ]; then
             echo "GOOGLE_CLIENT_ID must be set as a repository variable or secret for release builds." >&2
             exit 1
