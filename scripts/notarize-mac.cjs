@@ -16,7 +16,6 @@ module.exports = async function notarizeMac(context) {
   const baseOptions = {
     appBundleId: context.packager.appInfo.id,
     appPath,
-    teamId,
   };
 
   if (appleApiKey && appleApiKeyId) {
@@ -36,6 +35,7 @@ module.exports = async function notarizeMac(context) {
       tool: 'notarytool',
       appleId,
       appleIdPassword: applePassword,
+      teamId,
     });
     return;
   }

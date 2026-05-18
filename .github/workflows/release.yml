@@ -193,6 +193,48 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Validate Apple signing and notarization secrets
+        env:
+          APPLE_SIGNING_CERT_P12_BASE64: ${{ secrets.APPLE_SIGNING_CERT_P12_BASE64 }}
+          APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          required_vars=(
+            APPLE_SIGNING_CERT_P12_BASE64
+            APPLE_SIGNING_CERT_PASSWORD
+            APPLE_API_KEY_P8
+            APPLE_API_KEY_ID
+            APPLE_API_ISSUER
+            APPLE_TEAM_ID
+          )
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              echo "${var_name} must be set for macOS signing/notarization." >&2
+              exit 1
+            fi
+          done
+          apple_api_key_id="$(printf '%s' "${APPLE_API_KEY_ID}" | tr -d '\r\n[:space:]')"
+          apple_api_issuer="$(printf '%s' "${APPLE_API_ISSUER}" | tr -d '\r\n[:space:]')"
+          apple_team_id="$(printf '%s' "${APPLE_TEAM_ID}" | tr -d '\r\n[:space:]')"
+          if [ -z "${apple_api_key_id}" ] || [ -z "${apple_api_issuer}" ] || [ -z "${apple_team_id}" ]; then
+            echo "APPLE_API_KEY_ID, APPLE_API_ISSUER, and APPLE_TEAM_ID must not be blank after trimming whitespace." >&2
+            exit 1
+          fi
+          cert_path="$RUNNER_TEMP/apple-signing-cert-verify.p12"
+          printf '%s' "${APPLE_SIGNING_CERT_P12_BASE64}" | base64 --decode > "$cert_path"
+          file "$cert_path"
+          openssl pkcs12 -in "$cert_path" -passin "pass:${APPLE_SIGNING_CERT_PASSWORD}" -info -noout >/dev/null
+          api_key_path="$RUNNER_TEMP/AuthKey_${apple_api_key_id}.p8"
+          printf '%s\n' "${APPLE_API_KEY_P8}" > "$api_key_path"
+          chmod 600 "$api_key_path"
+          grep -q '^-----BEGIN PRIVATE KEY-----$' "$api_key_path"
+          grep -q '^-----END PRIVATE KEY-----$' "$api_key_path"
+          echo "Apple signing and notarization credentials validated."
+
       - name: Restore Electron caches
         uses: actions/cache@v5
         with:
@@ -257,10 +299,6 @@ jobs:
           APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -z "${APPLE_SIGNING_CERT_P12_BASE64}" ] || [ -z "${APPLE_SIGNING_CERT_PASSWORD}" ]; then
-            echo "APPLE_SIGNING_CERT_P12_BASE64 and APPLE_SIGNING_CERT_PASSWORD must be set for macOS signing." >&2
-            exit 1
-          fi
           cert_path="$RUNNER_TEMP/apple-signing-cert.p12"
           keychain_path="$RUNNER_TEMP/app-signing.keychain-db"
           keychain_password="$(openssl rand -base64 24)"
@@ -279,10 +317,6 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
         run: |
           set -euo pipefail
-          if [ -z "${APPLE_API_KEY_P8}" ] || [ -z "${APPLE_API_KEY_ID}" ]; then
-            echo "APPLE_API_KEY_P8 and APPLE_API_KEY_ID must be set for notarization." >&2
-            exit 1
-          fi
           apple_api_key_id="$(printf '%s' "${APPLE_API_KEY_ID}" | tr -d '\r\n[:space:]')"
           api_key_path="$RUNNER_TEMP/AuthKey_${apple_api_key_id}.p8"
           printf '%s\n' "${APPLE_API_KEY_P8}" > "$api_key_path"
