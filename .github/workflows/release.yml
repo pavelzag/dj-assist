@@ -171,13 +171,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - flavor: debug
-            targets: zip
-          - flavor: free-prod
-            targets: dmg zip
-          - flavor: pro-prod
-            targets: dmg zip
+        flavor:
+          - debug
+          - free-prod
+          - pro-prod
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'true'
       USE_HARD_LINKS: 'false'
@@ -375,15 +372,8 @@ jobs:
             echo "GOOGLE_CLIENT_ID must be set as a repository variable or secret for release builds." >&2
             exit 1
           fi
-          export DJ_ASSIST_APP_FLAVOR="${{ matrix.flavor }}"
-          export NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR="${{ matrix.flavor }}"
           node scripts/prepare-app-icon.cjs
-          npm run prepare:build-env
-          npm run build
-          npm run prepare:standalone-assets
-          npm run prepare:python-bundle
-          npm run prepare:audio-tools
-          node scripts/electron-builder-flavored.cjs ${{ matrix.targets }}
+          npm run dist:mac:${{ matrix.flavor }}
 
       - name: Verify artifact upload network
         run: |
@@ -426,6 +416,8 @@ jobs:
       - build-macos
     if: "${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || (github.ref_type == 'branch' && github.ref_name == 'master') }}"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download macOS build artifacts
         uses: actions/download-artifact@v6
@@ -437,7 +429,7 @@ jobs:
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v3
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_TOKEN != '' && secrets.GH_RELEASE_TOKEN || github.token }}
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
           target_commitish: ${{ needs.prepare-release.outputs.sha }}
