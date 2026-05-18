@@ -111,7 +111,7 @@
       "icon": "electron/assets/app-icon.png"
     },
     "dmg": {
-      "size": "3g"
+      "size": "6g"
     }
   }
 }

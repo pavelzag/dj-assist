@@ -171,10 +171,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavor:
-          - debug
-          - free-prod
-          - pro-prod
+        include:
+          - flavor: debug
+            targets: zip
+          - flavor: free-prod
+            targets: dmg zip
+          - flavor: pro-prod
+            targets: dmg zip
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'true'
       USE_HARD_LINKS: 'false'
@@ -372,8 +375,15 @@ jobs:
             echo "GOOGLE_CLIENT_ID must be set as a repository variable or secret for release builds." >&2
             exit 1
           fi
+          export DJ_ASSIST_APP_FLAVOR="${{ matrix.flavor }}"
+          export NEXT_PUBLIC_DJ_ASSIST_APP_FLAVOR="${{ matrix.flavor }}"
           node scripts/prepare-app-icon.cjs
-          npm run dist:mac:${{ matrix.flavor }}
+          npm run prepare:build-env
+          npm run build
+          npm run prepare:standalone-assets
+          npm run prepare:python-bundle
+          npm run prepare:audio-tools
+          node scripts/electron-builder-flavored.cjs ${{ matrix.targets }}
 
       - name: Verify artifact upload network
         run: |
