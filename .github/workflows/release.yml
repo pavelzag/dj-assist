@@ -245,6 +245,10 @@ jobs:
           chmod 600 "$api_key_path"
           grep -q '^-----BEGIN PRIVATE KEY-----$' "$api_key_path"
           grep -q '^-----END PRIVATE KEY-----$' "$api_key_path"
+          xcrun notarytool history \
+            --key "$api_key_path" \
+            --key-id "$apple_api_key_id" \
+            --issuer "$apple_api_issuer" >/dev/null
           echo "Apple signing and notarization credentials validated."
 
       - name: Restore Electron caches
