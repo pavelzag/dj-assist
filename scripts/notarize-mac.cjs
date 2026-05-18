@@ -17,8 +17,12 @@ module.exports = async function notarizeMac(context) {
     appBundleId: context.packager.appInfo.id,
     appPath,
   };
+  const startedAt = new Date();
 
   if (appleApiKey && appleApiKeyId) {
+    console.log(
+      `[notarize] Starting notarization for ${appPath} at ${startedAt.toISOString()} using App Store Connect API key ${appleApiKeyId}`
+    );
     await notarize({
       ...baseOptions,
       tool: 'notarytool',
@@ -26,10 +30,16 @@ module.exports = async function notarizeMac(context) {
       appleApiKeyId,
       ...(appleApiIssuer ? { appleApiIssuer } : {}),
     });
+    console.log(
+      `[notarize] Completed notarization for ${appPath} at ${new Date().toISOString()}`
+    );
     return;
   }
 
   if (appleId && applePassword && teamId) {
+    console.log(
+      `[notarize] Starting notarization for ${appPath} at ${startedAt.toISOString()} using Apple ID ${appleId}`
+    );
     await notarize({
       ...baseOptions,
       tool: 'notarytool',
@@ -37,6 +47,9 @@ module.exports = async function notarizeMac(context) {
       appleIdPassword: applePassword,
       teamId,
     });
+    console.log(
+      `[notarize] Completed notarization for ${appPath} at ${new Date().toISOString()}`
+    );
     return;
   }
 
