@@ -74,6 +74,8 @@ function toBoolean(value: unknown): boolean | null {
 }
 
 type SqlitePrimitive = string | number | bigint | null | Uint8Array;
+const SQLITE_BUSY_MAX_ATTEMPTS = 8;
+const SQLITE_BUSY_RETRY_BASE_MS = 150;
 
 function isSqliteBusyError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -96,13 +98,25 @@ function sleepSync(milliseconds: number): void {
   Atomics.wait(view, 0, 0, duration);
 }
 
+function withSqliteBusyRetry<T>(fn: () => T, maxAttempts = SQLITE_BUSY_MAX_ATTEMPTS): T {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return fn();
+    } catch (error) {
+      if (!isSqliteBusyError(error) || attempt === maxAttempts) throw error;
+      sleepSync(attempt * SQLITE_BUSY_RETRY_BASE_MS);
+    }
+  }
+  throw new Error('Unreachable SQLite retry state.');
+}
+
 function getDb(): DatabaseSync {
   if (!global._sqliteConn) {
     const dbPath = resolveSqlitePath();
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     db.exec('PRAGMA foreign_keys = ON');
-    db.exec('PRAGMA busy_timeout = 5000');
+    db.exec('PRAGMA busy_timeout = 15000');
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA synchronous = NORMAL');
     global._sqliteConn = db;
@@ -279,23 +293,25 @@ function ensureSchema(): void {
 
 function queryAll<T extends Record<string, unknown>>(sql: string, ...params: SqlitePrimitive[]): T[] {
   ensureSchema();
-  return getDb().prepare(sql).all(...params) as T[];
+  return withSqliteBusyRetry(() => getDb().prepare(sql).all(...params) as T[]);
 }
 
 function queryOne<T extends Record<string, unknown>>(sql: string, ...params: SqlitePrimitive[]): T | null {
   ensureSchema();
-  return (getDb().prepare(sql).get(...params) as T | undefined) ?? null;
+  return withSqliteBusyRetry(() => (getDb().prepare(sql).get(...params) as T | undefined) ?? null);
 }
 
 function execute(sql: string, ...params: SqlitePrimitive[]): void {
   ensureSchema();
-  getDb().prepare(sql).run(...params);
+  withSqliteBusyRetry(() => {
+    getDb().prepare(sql).run(...params);
+  });
 }
 
 function transaction<T>(fn: () => T): T {
   ensureSchema();
   const db = getDb();
-  const maxAttempts = 4;
+  const maxAttempts = SQLITE_BUSY_MAX_ATTEMPTS;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       db.exec('BEGIN IMMEDIATE');
@@ -313,7 +329,7 @@ function transaction<T>(fn: () => T): T {
       }
     } catch (error) {
       if (!isSqliteBusyError(error) || attempt === maxAttempts) throw error;
-      sleepSync(attempt * 150);
+      sleepSync(attempt * SQLITE_BUSY_RETRY_BASE_MS);
     }
   }
   throw new Error('Unreachable transaction retry state.');
