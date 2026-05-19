@@ -169,6 +169,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     const preferencesKey = 'dj-assist-preferences';
     const recentNewTrackIdsKey = 'dj-assist-recent-new-track-ids';
     const googleAuthUpsellDismissedKey = 'dj-assist-google-auth-upsell-dismissed';
+    const proUpgradeUrl = 'https://djassist.xyz/pro';
     const gdriveFavoritesKey = 'dj-assist-gdrive-favorites';
     const cloudFolderBrowserStateKey = 'dj-assist-cloud-folder-browser-state';
     const activityScanLogCollapsedKey = 'dj-assist-activity-scan-log-collapsed';
@@ -2099,7 +2100,7 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     }
 
     function hasServerEntitlement(capability: string) {
-      if (isDebugFlavor || appFlavor === 'pro-prod') return true;
+      if (isDebugFlavor) return true;
       return serverEntitlements.has(capability);
     }
 
@@ -2109,10 +2110,33 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     function googleDriveFeatureStatusLabel() {
       if (isDebugFlavor) return 'Available in debug build.';
-      if (appFlavor === 'pro-prod') return 'Google Drive import is available.';
       if (canUseGoogleDriveFeature()) return 'Google Drive import is available.';
-      if (googleSignedInUser()) return 'Google Drive import is not available for this account.';
-      return 'Sign in with Google to use Google Drive.';
+      if (googleSignedInUser()) return 'Google Drive import requires a Pro account. Visit djassist.xyz/pro to upgrade.';
+      return 'Sign in with Google to check whether your account has Google Drive access.';
+    }
+
+    async function openProUpgradePage() {
+      const desktopApi = (window as Window & {
+        djAssistDesktop?: {
+          openExternal?: (url: string) => Promise<boolean>;
+        };
+      }).djAssistDesktop;
+      if (desktopApi?.openExternal) {
+        const result = await desktopApi.openExternal(proUpgradeUrl);
+        if (result === false) {
+          showToast('Could not open the Pro plans page.', 'error');
+          return false;
+        }
+        return true;
+      }
+      window.location.href = proUpgradeUrl;
+      return true;
+    }
+
+    async function openGoogleDriveUpgradeFlow() {
+      setGoogleDriveImportStatus(googleDriveFeatureStatusLabel(), 'error');
+      showToast('Google Drive import requires a Pro account.', 'warning');
+      await openProUpgradePage();
     }
 
     function formatCapabilityLabel(capability: string) {
@@ -2216,9 +2240,9 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
           : 'Sign in to connect your DJ Assist account.';
       }
       if (signInLabel) {
-        signInLabel.textContent = user ? 'Reconnect Google' : 'Sign in with Google';
+        signInLabel.textContent = user && !canUseGoogleDriveFeature() ? 'View Pro Plans' : user ? 'Reconnect Google' : 'Sign in with Google';
       }
-      if (signInBtn) signInBtn.hidden = Boolean(user);
+      if (signInBtn) signInBtn.hidden = Boolean(user) && canUseGoogleDriveFeature();
       if (signOutBtn) signOutBtn.hidden = !user;
       if (declineBtn) declineBtn.hidden = true;
       openModal(googleAuthUpsellModal);
@@ -2665,9 +2689,13 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function importGoogleDriveMetadata(options: { folders?: Array<{ id: string; name: string }> } = {}) {
       if (!canUseGoogleDriveFeature()) {
-        setGoogleDriveImportStatus(googleDriveFeatureStatusLabel(), 'error');
-        showToast(googleDriveFeatureStatusLabel(), 'warning');
-        openGoogleAuthModal();
+        if (googleSignedInUser()) {
+          await openGoogleDriveUpgradeFlow();
+        } else {
+          setGoogleDriveImportStatus(googleDriveFeatureStatusLabel(), 'error');
+          showToast(googleDriveFeatureStatusLabel(), 'warning');
+          openGoogleAuthModal();
+        }
         return;
       }
       if (googleDriveImportBusy) return;
@@ -3335,8 +3363,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
 
     async function openGoogleDriveFolderModal() {
       if (!canUseGoogleDriveFeature()) {
-        showToast(googleDriveFeatureStatusLabel(), 'warning');
-        openGoogleAuthModal();
+        if (googleSignedInUser()) {
+          await openGoogleDriveUpgradeFlow();
+        } else {
+          showToast(googleDriveFeatureStatusLabel(), 'warning');
+          openGoogleAuthModal();
+        }
         return;
       }
       openModal(googleDriveFolderModal);
@@ -9456,6 +9488,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
         confirmGoogleDriveFolderSelection();
       });
       document.getElementById('google-drive-connect-btn')?.addEventListener('click', () => {
+        if (googleSignedInUser() && !canUseGoogleDriveFeature()) {
+          void openProUpgradePage();
+          return;
+        }
         void signInWithGoogle();
       });
       document.getElementById('dropbox-oauth-start-btn')?.addEventListener('click', () => {
@@ -10866,8 +10902,12 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     document.getElementById('add-music-source-google-drive-btn')?.addEventListener('click', () => {
       if (!canUseGoogleDriveFeature()) {
-        showToast(googleDriveFeatureStatusLabel(), 'warning');
-        openGoogleAuthModal();
+        if (googleSignedInUser()) {
+          void openGoogleDriveUpgradeFlow();
+        } else {
+          showToast(googleDriveFeatureStatusLabel(), 'warning');
+          openGoogleAuthModal();
+        }
         return;
       }
       void chooseGoogleDriveMusicSource();
@@ -10955,6 +10995,10 @@ export default function ClientInit({ adapter }: { adapter: PlatformAdapter }) {
     });
     document.getElementById('google-auth-upsell-sign-in-btn')?.addEventListener('click', () => {
       dismissGoogleAuthUpsell();
+      if (googleSignedInUser() && !canUseGoogleDriveFeature()) {
+        void openProUpgradePage();
+        return;
+      }
       void signInWithGoogle();
     });
     document.getElementById('google-auth-modal-sign-out-btn')?.addEventListener('click', () => {
