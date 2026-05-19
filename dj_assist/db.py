@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 import os
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, create_engine, func, inspect, text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, create_engine, event, func, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, selectinload
 
@@ -124,6 +124,21 @@ class SetTrack(Base):
 
 class Database:
     @staticmethod
+    def _is_sqlite_url(database_url: str) -> bool:
+        return database_url.startswith("sqlite:")
+
+    @staticmethod
+    def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute("PRAGMA busy_timeout = 15000")
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA synchronous = NORMAL")
+        finally:
+            cursor.close()
+
+    @staticmethod
     def _apply_track_fields(target: Track, data: dict, *, skip_empty: bool) -> None:
         for key, value in data.items():
             if skip_empty and value in (None, ""):
@@ -206,7 +221,13 @@ class Database:
 
     def __init__(self, db_path: Optional[str] = None):
         database_url = resolve_database_url(db_path)
-        self.engine = create_engine(database_url, pool_pre_ping=True)
+        self.is_sqlite = self._is_sqlite_url(database_url)
+        engine_kwargs = {"pool_pre_ping": True}
+        if self.is_sqlite:
+            engine_kwargs["connect_args"] = {"timeout": 15}
+        self.engine = create_engine(database_url, **engine_kwargs)
+        if self.is_sqlite:
+            event.listen(self.engine, "connect", self._configure_sqlite_connection)
         Base.metadata.create_all(self.engine)
         self._migrate_tracks_table()
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)

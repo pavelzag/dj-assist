@@ -1273,7 +1273,7 @@ def scan_directory(
     scan_workers = _scan_concurrency()
     analysis_workers = _analysis_workers()
     artwork_workers = _artwork_workers() if defer_artwork else 1
-    commit_batch_size = _db_commit_batch_size()
+    commit_batch_size = 1 if getattr(db, "is_sqlite", False) else _db_commit_batch_size()
     lookup_allowed, _ = _lookup_server_allowed()
     server_sync_enabled = _server_enabled()
     server_failure_streak = 0

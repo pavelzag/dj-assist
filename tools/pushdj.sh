@@ -7,6 +7,7 @@ CURRENT_STEP=0
 SCRIPT_STARTED_AT=$SECONDS
 DOWNLOAD_ASSETS=false
 DOWNLOAD_ROOT="$HOME/Downloads/dj-assist"
+REQUEST_NOTARIZATION=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,6 +58,31 @@ format_elapsed() {
   local minutes=$(( total_seconds / 60 ))
   local seconds=$(( total_seconds % 60 ))
   printf '%02d:%02d' "$minutes" "$seconds"
+}
+
+prompt_yes_no() {
+  local prompt=$1
+  local default=${2:-N}
+  local reply=''
+
+  if [[ ! -t 0 ]]; then
+    [[ "$default" == "Y" ]]
+    return
+  fi
+
+  while true; do
+    printf '%s [%s/%s] ' "$prompt" "${default:l}" "$([[ "$default" == "Y" ]] && printf 'n' || printf 'y')"
+    read -r reply
+    reply=${reply:-$default}
+    case "${reply:l}" in
+      y|yes)
+        return 0
+        ;;
+      n|no)
+        return 1
+        ;;
+    esac
+  done
 }
 
 format_bytes() {
@@ -116,9 +142,13 @@ start_step "Pushing to GitHub"
 git push
 finish_step
 
+if prompt_yes_no "Request Apple notarization for this release workflow?" "N"; then
+  REQUEST_NOTARIZATION=true
+fi
+
 start_step "Dispatching release workflow"
 head_sha=$(git rev-parse HEAD)
-gh workflow run release.yml --ref master
+gh workflow run release.yml --ref master -f notarize="$REQUEST_NOTARIZATION"
 finish_step
 
 start_step "Waiting for workflow run to appear"
